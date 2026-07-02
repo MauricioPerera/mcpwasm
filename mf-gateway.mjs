@@ -29,6 +29,10 @@ import { AsyncToolHost } from "./host-async.mjs";
 import { handleMcpMessageAsync } from "./mcp-core-async.mjs";
 
 const DEMO_ORIGIN = "https://llmstxt-demo-site.rckflr.workers.dev";
+// TAREA22: docs-site (publica skills-memory + snapshot BM25). En Miniflare no
+// hay binding DOCS -> makeFetchImpl cae a fetch global -> red real al docs-site
+// (igual que el demo-site). En prod el binding DOCS bypassa el error 1042.
+const DOCS_ORIGIN = "https://llmstxt-docs.rckflr.workers.dev";
 
 const mf = new Miniflare({
   scriptPath: fileURLToPath(new URL("./dist-gateway/worker.js", import.meta.url)),
@@ -40,7 +44,7 @@ const mf = new Miniflare({
   compatibilityDate: "2026-06-01",
   compatibilityFlags: ["nodejs_compat"],
   bindings: {
-    ALLOWED_ORIGINS: DEMO_ORIGIN,
+    ALLOWED_ORIGINS: DEMO_ORIGIN + "," + DOCS_ORIGIN,
   },
 });
 
@@ -130,6 +134,175 @@ try {
   const noOrigin = await rpc("/mcp", { jsonrpc: "2.0", id: 6, method: "initialize" });
   console.log("[6] sin origin ->", JSON.stringify(noOrigin.body));
   check(noOrigin.status === 403, "sin origin: HTTP 403");
+
+  // --- (T22) MEMORY capability end-to-end contra el docs-site REAL ------------
+  // El docs-site publica una linea skills-memory (format minimemory-okf-v1) con
+  // un snapshot BM25 de 4 docs. El gateway descubre la linea, descarga el
+  // snapshot por el mismo fetchImpl, verifica snapshot_sha256, construye
+  // WasmOkfIndex por request e inyecta host.memorySearch via extraCapabilities.
+  // Origen SIN memory (demo-site, bookstore) sigue intacto (sum_numbers etc. ya
+  // cubierto por los checks 1-4 anteriores; aqui no se re-prueban).
+  console.log("\n[T22] memory capability (docs-site real):");
+  const docsEnc = encodeURIComponent(DOCS_ORIGIN);
+  const docsBase = "/mcp?origin=" + docsEnc;
+
+  // (T22.a) tools/list origin=docs -> 3 skills (search_spec, get_doc, list_docs)
+  const docsList = await rpc(docsBase, { jsonrpc: "2.0", id: 30, method: "tools/list" });
+  console.log("[T22.a] docs tools/list ->", JSON.stringify(docsList.body).slice(0, 240));
+  const docsTools = docsList.body && docsList.body.result && docsList.body.result.tools;
+  const docsNames = (docsTools || []).map((t) => t.name);
+  check(docsList.status === 200, "docs: tools/list HTTP 200");
+  check(Array.isArray(docsTools) && docsTools.length === 3, "docs: tools/list trae 3 skills");
+  check(
+    docsNames.includes("search_spec") && docsNames.includes("get_doc") && docsNames.includes("list_docs"),
+    "docs: skills son search_spec, get_doc, list_docs"
+  );
+
+  // (T22.b) search_spec {"q":"tool_sha256 integrity verification"} -> hits no vacios
+  const docsSearch = await rpc(docsBase, {
+    jsonrpc: "2.0", id: 31, method: "tools/call",
+    params: { name: "search_spec", arguments: { q: "tool_sha256 integrity verification" } },
+  });
+  console.log("[T22.b] docs search_spec ->", JSON.stringify(docsSearch.body).slice(0, 500));
+  const searchSc = docsSearch.body && docsSearch.body.result && docsSearch.body.result.structuredContent;
+  const searchHits = searchSc && Array.isArray(searchSc.hits) ? searchSc.hits : null;
+  check(docsSearch.status === 200, "docs: search_spec HTTP 200");
+  check(searchHits && searchHits.length > 0, "docs: search_spec integridad -> hits no vacios");
+  check(
+    searchHits && searchHits[0] && typeof searchHits[0].title === "string" && searchHits[0].title.length > 0,
+    "docs: search_spec top hit con title"
+  );
+  check(
+    searchHits && searchHits[0] && typeof searchHits[0].score === "number",
+    "docs: search_spec top hit con score numerico"
+  );
+  check(
+    searchHits && searchHits[0] && typeof searchHits[0].text === "string" && searchHits[0].text.length > 0,
+    "docs: search_spec top hit con text (snippet)"
+  );
+  check(
+    searchHits && searchHits[0] && typeof searchHits[0].concept_id === "string",
+    "docs: search_spec top hit con concept_id"
+  );
+  check(docsSearch.body && docsSearch.body.result && docsSearch.body.result.isError === false,
+    "docs: search_spec isError==false");
+
+  // (T22.c) search_spec {"q":"receta de paella valenciana"} -> hits vacios
+  const paella = await rpc(docsBase, {
+    jsonrpc: "2.0", id: 32, method: "tools/call",
+    params: { name: "search_spec", arguments: { q: "receta de paella valenciana" } },
+  });
+  console.log("[T22.c] docs search_spec paella ->", JSON.stringify(paella.body).slice(0, 200));
+  const paellaSc = paella.body && paella.body.result && paella.body.result.structuredContent;
+  const paellaHits = paellaSc && Array.isArray(paellaSc.hits) ? paellaSc.hits : null;
+  check(paella.status === 200, "docs: search_spec paella HTTP 200");
+  check(paellaHits && paellaHits.length === 0, "docs: search_spec paella -> 0 hits (out-of-domain)");
+
+  // (T22.d) get_doc {"name":"ext-executable-skills"} -> content no vacio
+  const getDoc = await rpc(docsBase, {
+    jsonrpc: "2.0", id: 33, method: "tools/call",
+    params: { name: "get_doc", arguments: { name: "ext-executable-skills" } },
+  });
+  console.log("[T22.d] docs get_doc ->", JSON.stringify(getDoc.body).slice(0, 200));
+  const docSc = getDoc.body && getDoc.body.result && getDoc.body.result.structuredContent;
+  check(getDoc.status === 200, "docs: get_doc HTTP 200");
+  check(docSc && typeof docSc.content === "string" && docSc.content.length > 0,
+    "docs: get_doc content no vacio");
+  check(getDoc.body && getDoc.body.result && getDoc.body.result.isError === false,
+    "docs: get_doc isError==false");
+
+  // --- (T22.f) snapshot corrupto (LOCAL, sin red) -----------------------------
+  // Origin fake servido por un service binding DOCS=(request)=>Response. Sirve
+  // un llms.txt con UNA skill (cuyo tool_sha256 SI coincide con el tool.js
+  // servido) + una linea skills-memory cuyo snapshot_sha256 declarado NO coincide
+  // con el snapshot servido. Comportamiento esperado (decision documentada):
+  //   - la skill se LISTA (tool.js verificado OK),
+  //   - la verificacion sha256 del snapshot falla -> snapshotText null -> la
+  //     capability memorySearch NO se inyecta (nada de inyectarla corrupta),
+  //   - tools/call de la skill (que llama host.memorySearch) -> host.memorySearch
+  //     es undefined -> throw dentro del sandbox -> isError:true (fail controlado,
+  //     NO crash del gateway, HTTP 200 con isError).
+  console.log("\n[T22.f] snapshot corrupto (service binding DOCS fake):");
+  const nodeCrypto = await import("node:crypto");
+  const toolSrcCorrupt = [
+    "registerTool({ name: 'mem_probe', description: 'probe memory',",
+    "  inputSchema: { type: 'object', properties: { q: { type: 'string' } }, required: ['q'] },",
+    "  handler: async function (args) { return await host.memorySearch(args.q, 5); } });",
+  ].join("\n");
+  const toolShaCorrupt = nodeCrypto.createHash("sha256").update(toolSrcCorrupt).digest("hex");
+  const llmsTxtCorrupt =
+    "# fake-mem\n\n## Skills\n\n" +
+    "- [mem_probe](/skills/mem_probe/SKILL.md): probe memory <!-- skill: {\"version\":\"1.0.0\",\"tool\":\"/skills/mem_probe/tool.js\",\"tool_sha256\":\"" +
+    toolShaCorrupt + "\"} -->\n\n" +
+    "<!-- skills-memory: {\"snapshot\":\"/skills-index.snapshot\",\"snapshot_sha256\":\"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdead\",\"format\":\"minimemory-okf-v1\"} -->\n";
+  const corruptSnapshot = "CORRUPT SNAPSHOT TEXT - sha no coincide con el declarado";
+  const fakeDocsHandler = (request) => {
+    const u = new URL(request.url);
+    let body = "not found";
+    let status = 404;
+    let ct = "text/plain; charset=utf-8";
+    if (u.pathname === "/llms.txt") {
+      body = llmsTxtCorrupt;
+      status = 200;
+    } else if (u.pathname === "/skills/mem_probe/tool.js") {
+      body = toolSrcCorrupt;
+      ct = "application/javascript";
+      status = 200;
+    } else if (u.pathname === "/skills-index.snapshot") {
+      body = corruptSnapshot;
+      status = 200;
+    } else if (u.pathname === "/skills/mem_probe/SKILL.md") {
+      body = "# mem_probe";
+      status = 200;
+    }
+    return new Response(body, { status, headers: { "content-type": ct } });
+  };
+  const mfFake = new Miniflare({
+    scriptPath: fileURLToPath(new URL("./dist-gateway/worker.js", import.meta.url)),
+    modules: true,
+    modulesRules: [
+      { type: "ESModule", include: ["**/*.js"] },
+      { type: "CompiledWasm", include: ["**/*.wasm"] },
+    ],
+    compatibilityDate: "2026-06-01",
+    compatibilityFlags: ["nodejs_compat"],
+    bindings: { ALLOWED_ORIGINS: DOCS_ORIGIN },
+    serviceBindings: { DOCS: fakeDocsHandler },
+  });
+  async function rpcFake(p, payload) {
+    const res = await mfFake.dispatchFetch("http://localhost" + p, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    let body = null;
+    try { body = await res.json(); } catch { body = await res.text(); }
+    return { status: res.status, body };
+  }
+  try {
+    const fakeBase = "/mcp?origin=" + encodeURIComponent(DOCS_ORIGIN);
+    // la skill se lista (tool.js verificado) pese al snapshot corrupto
+    const fakeList = await rpcFake(fakeBase, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const fakeTools = fakeList.body && fakeList.body.result && fakeList.body.result.tools;
+    console.log("[T22.f] fake tools/list ->", JSON.stringify(fakeList.body).slice(0, 200));
+    check(fakeList.status === 200, "corrupt: tools/list HTTP 200 (skill listada pese a snapshot corrupto)");
+    check(Array.isArray(fakeTools) && fakeTools.some((t) => t.name === "mem_probe"),
+      "corrupt: mem_probe listada (tool.js verificado OK)");
+
+    // tools/call mem_probe -> isError:true (memorySearch no inyectada -> fail controlado)
+    const fakeCall = await rpcFake(fakeBase, {
+      jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "mem_probe", arguments: { q: "anything" } },
+    });
+    console.log("[T22.f] fake mem_probe call ->", JSON.stringify(fakeCall.body).slice(0, 300));
+    check(fakeCall.status === 200, "corrupt: tools/call HTTP 200 (no crash del gateway)");
+    check(
+      fakeCall.body && fakeCall.body.result && fakeCall.body.result.isError === true,
+      "corrupt: mem_probe isError==true (memorySearch NO inyectada -> fail controlado, no crash)"
+    );
+  } finally {
+    await mfFake.dispose();
+  }
 
   // --- (a) AISLAMIENTO: contexto por skill, sin red ---------------------------
   // Carga local: construye AsyncToolHost directamente en el test con un modulo

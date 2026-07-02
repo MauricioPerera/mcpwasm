@@ -33,6 +33,11 @@ import { AsyncToolHost } from "./host-async.mjs";
 import { handleMcpMessageAsync } from "./mcp-core-async.mjs";
 import { parseLlmsTxt } from "./llmstxt-parse.mjs";
 
+// TAREA22: motor minimemory (WasmOkfIndex, BM25) para la capability de memoria.
+// Import estatico del .wasm (CompiledWasm en el build, mismo truco que QuickJS).
+import initMem, { WasmOkfIndex } from "./vendor-minimemory/minimemory.js";
+import MEM_WASM from "./vendor-minimemory/minimemory_bg.wasm";
+
 // Import estatico del .wasm ASYNCIFY (CompiledWasm en el build).
 import QUICKJS_WASM from "./quickjs-asyncify.wasm";
 
@@ -46,6 +51,84 @@ function getQuickjs() {
     _quickjsPromise = newQuickJSAsyncWASMModuleFromVariant(variant);
   }
   return _quickjsPromise;
+}
+
+// --- Motor minimemory (TAREA22): init wasm cacheado a nivel isolate ----------
+// initMem instancia el wasm de minimemory (modulo pre-compilado por workerd).
+// El wasm-instance se cachea en el modulo minimemory (singleton `wasm`); lo
+// cacheamos a nivel isolate con una unica promesa. Las instancias WasmOkfIndex
+// se crean POR REQUEST desde el snapshot verificado (sin estado compartido entre
+// requests): new WasmOkfIndex() + idx.import_snapshot(text). Si initMem falla,
+// reseteamos la promesa para reintentar en el siguiente request.
+let _memPromise = null;
+function getMem() {
+  if (!_memPromise) {
+    _memPromise = initMem({ module_or_path: MEM_WASM }).catch((e) => {
+      _memPromise = null; // no envenenar: el siguiente request reintenta
+      throw e;
+    });
+  }
+  return _memPromise;
+}
+
+// --- Capability host.memorySearch (TAREA22) -----------------------------------
+// Puente raw-JSON asyncified (via extraCapabilities de AsyncToolHost, mismo
+// patron que host.fetchOrigin). Recibe argsJson = JSON.stringify(primerArg) y
+// devuelve resultJson. La skill search_spec del docs-site llama
+// `host.memorySearch(args.q, k)`; el puente reenvia SOLO el primer arg posicional
+// => argsJson = JSON.stringify(args.q) = '"<query>"' (string JSON). El estilo
+// memspike `host.memorySearch({q,k})` llega como objeto. Se aceptan ambos:
+//  - string  -> query, k default 5
+//  - {q,k}   -> query y k del objeto
+// k se acota a [1,10] (tope). La skill ya acota k 1..10 client-side; el tope aca
+// es defensa en profundidad (el puente descarta k posicional, por lo que el k
+// efectivo en la llamada posicional es el default 5, que cumple <=10).
+// Devuelve {hits:[{text, score, title, concept_id}]} o {error:"..."}.
+// El indice WasmOkfIndex se construye perezosamente POR CLOSURE (la closure se
+// crea por request en PerSkillHost) => una instancia por request, sin estado
+// compartido. Si la capability NO se inyecta (snapshot sin verificar), la skill
+// ve `host.memorySearch` undefined -> throw dentro del sandbox -> isError:true.
+function makeMemorySearch(snapshotText) {
+  let idx = null; // instancia POR REQUEST (closure per request)
+  return async function memorySearch(argsJson) {
+    let q = null;
+    let k = 5;
+    try {
+      const a = JSON.parse(argsJson);
+      if (typeof a === "string") {
+        q = a;
+      } else if (a && typeof a === "object") {
+        if (typeof a.q === "string") q = a.q;
+        if (typeof a.k === "number" && Number.isFinite(a.k)) k = Math.floor(a.k);
+      }
+    } catch {
+      return JSON.stringify({ error: "memorySearch: args JSON invalido" });
+    }
+    if (typeof q !== "string" || q.trim().length === 0) {
+      return JSON.stringify({ error: "memorySearch: query (q) string obligatorio" });
+    }
+    if (k < 1) k = 1;
+    else if (k > 10) k = 10;
+    try {
+      await getMem();
+      if (!idx) {
+        idx = new WasmOkfIndex();
+        idx.import_snapshot(snapshotText);
+      }
+      const hits = JSON.parse(idx.search(q, k, null));
+      const out = hits.map(function (h) {
+        return {
+          text: typeof h.snippet === "string" ? h.snippet : "",
+          score: h.score,
+          title: typeof h.title === "string" ? h.title : (typeof h.concept_id === "string" ? h.concept_id : ""),
+          concept_id: typeof h.concept_id === "string" ? h.concept_id : "",
+        };
+      });
+      return JSON.stringify({ hits: out });
+    } catch (e) {
+      return JSON.stringify({ error: "memorySearch: " + ((e && e.message) ? e.message : String(e)) });
+    }
+  };
 }
 
 // --- Mutex de ejecucion por modulo wasm (TAREA19) ---------------------------
@@ -70,11 +153,14 @@ function withModuleLock(fn) {
 }
 
 // --- Cache de descubrimiento en el isolate (TAREA9, capa 1) -------------------
-// Map a nivel de modulo origin -> { skills, rejected, expiresAt }. TTL 60s.
-// Max 16 origins; al llenarse, evict el mas viejo (FIFO por orden de insercion
-// del Map). Los contextos QuickJS NO se cachean: lo cacheado es texto (code ya
-// verificado + metadata). La verificacion sha256 se hace al poblar la entrada;
-// el codigo cacheado es inmutable por hash => no se re-verifica en hit.
+// Map a nivel de modulo origin -> { skills, rejected, snapshotText, expiresAt }.
+// TTL 60s. Max 16 origins; al llenarse, evict el mas viejo (FIFO por orden de
+// insercion del Map). Los contextos QuickJS NO se cachean: lo cacheado es texto
+// (code ya verificado + metadata +, TAREA22, el TEXTO del snapshot de memoria
+// verificado por sha256). La verificacion sha256 (tool.js y snapshot) se hace al
+// poblar la entrada; lo cacheado es inmutable por hash => no se re-verifica en
+// hit. snapshotText es null si el origin no declara memoria o la verificacion
+// fallo (la capability no se inyecta en ese caso).
 const ISOLATE_TTL_MS = 60_000;
 const ISOLATE_MAX_ENTRIES = 16;
 const isolateCache = new Map();
@@ -97,7 +183,7 @@ function isolateCacheGet(origin) {
   return e;
 }
 
-function isolateCachePut(origin, skills, rejected) {
+function isolateCachePut(origin, skills, rejected, snapshotText) {
   if (isolateCache.size >= ISOLATE_MAX_ENTRIES) {
     // Evict el mas viejo (primera clave en orden de insercion del Map).
     const oldest = isolateCache.keys().next().value;
@@ -106,6 +192,7 @@ function isolateCachePut(origin, skills, rejected) {
   isolateCache.set(origin, {
     skills,
     rejected,
+    snapshotText: snapshotText || null,
     expiresAt: Date.now() + ISOLATE_TTL_MS,
   });
 }
@@ -153,6 +240,10 @@ function makeFetchImpl(env) {
   if (env && env.BOOKSTORE) {
     bindings["https://llmstxt-bookstore.rckflr.workers.dev"] = env.BOOKSTORE;
   }
+  if (env && env.DOCS) {
+    // TAREA22: docs-site mismo motivo (misma cuenta -> error 1042 sin binding).
+    bindings["https://llmstxt-docs.rckflr.workers.dev"] = env.DOCS;
+  }
   return async function fetchImpl(url, opts) {
     let origin = null;
     try {
@@ -198,10 +289,14 @@ async function sha256Hex(text) {
 }
 
 // Descubre y verifica las skills ejecutables de un origin.
-// Devuelve { skills: [{name, description, inputSchema, code, sha256}], rejected, discovery }.
+// Devuelve { skills: [...], rejected, discovery, snapshotText }.
 //  - skills: cada entrada lleva el `code` (tool.js) verificado por sha256 e
 //    inmutable por hash; `inputSchema` queda undefined aqui y se extrae del
 //    contexto QuickJS en runtime (mismo comportamiento observable que antes).
+//  - snapshotText (TAREA22): TEXTO del snapshot de memoria verificado por
+//    sha256, o null si el origin no declara memoria, el format es unsupported,
+//    o la verificacion fallo. Se cachea en el isolate junto a las skills; el
+//    indice WasmOkfIndex se construye por request desde este texto.
 //  - discovery: "hit" (capa 1 isolate, cache fria leida del cache) | "miss"
 //    (este request hizo el fetch real, poblado ahora). Single-flight: los miss
 //    concurrentes del mismo origin que esperan la promesa en vuelo reportan
@@ -211,7 +306,12 @@ async function discoverSkills(origin, fetchImpl) {
   // --- Capa 1: cache de descubrimiento en el isolate ---
   const cached = isolateCacheGet(origin);
   if (cached) {
-    return { skills: cached.skills, rejected: cached.rejected, discovery: "hit" };
+    return {
+      skills: cached.skills,
+      rejected: cached.rejected,
+      snapshotText: cached.snapshotText,
+      discovery: "hit",
+    };
   }
 
   // --- Single-flight (TAREA19): miss concurrentes del mismo origin ---
@@ -229,7 +329,12 @@ async function discoverSkills(origin, fetchImpl) {
     }
     const nowCached = isolateCacheGet(origin);
     if (nowCached) {
-      return { skills: nowCached.skills, rejected: nowCached.rejected, discovery: "hit" };
+      return {
+        skills: nowCached.skills,
+        rejected: nowCached.rejected,
+        snapshotText: nowCached.snapshotText,
+        discovery: "hit",
+      };
     }
   }
 
@@ -245,7 +350,7 @@ async function discoverSkills(origin, fetchImpl) {
 }
 
 // Cuerpo del descubrimiento (fetch llms.txt + tool.js + verify sha256). Puebla
-// el cache de isolate (capa 1). Devuelve { skills, rejected, discovery: "miss" }.
+// el cache de isolate (capa 1). Devuelve { skills, rejected, discovery: "miss", snapshotText }.
 async function discoverSkillsInner(origin, fetchImpl) {
   const rejected = [];
   const skills = [];
@@ -282,12 +387,14 @@ async function discoverSkillsInner(origin, fetchImpl) {
 
   // --- parse ---
   const parsed = parseLlmsTxt(llmsText);
-  if (parsed.length === 0) {
+  const parsedSkills = parsed.skills;
+  const memory = parsed.memory;
+  if (parsedSkills.length === 0) {
     throw new Error("llms.txt: sin skills ejecutables (estado=" + llmsStatus + ")");
   }
 
   // --- fetch + verificar cada tool.js (con cache caches.default inmutable) ---
-  for (const s of parsed) {
+  for (const s of parsedSkills) {
     const toolUrl = new URL(s.toolPath, origin).href;
     const toolKey = "gw:tool:" + toolUrl + "#" + s.sha256;
 
@@ -335,10 +442,60 @@ async function discoverSkillsInner(origin, fetchImpl) {
     });
   }
 
+  // --- TAREA22: snapshot de memoria (fetch + verify sha256) -----------------
+  // Si el origin declara memoria soportada (format minimemory-okf-v1), se
+  // descarga el snapshot por el mismo fetchImpl/bindings y timeout que el resto
+  // y se verifica sha256 contra snapshot_sha256. Solo si coincide se cachea el
+  // TEXTO del snapshot (la capability se inyecta por request desde este texto).
+  //  - mismatch / fetch fallido / HTTP no-200 / format unsupported => snapshotText
+  //    null: las skills se listan igual (ya verificadas) pero la capability
+  //    memorySearch NO se inyecta => las skills que la usen fallan controlado
+  //    (host.memorySearch undefined -> throw dentro del sandbox -> isError:true).
+  //  - No se cachea snapshot corrupto (mismo principio que tool.js).
+  let snapshotText = null;
+  if (
+    memory &&
+    !memory.unsupported &&
+    typeof memory.snapshot === "string" &&
+    typeof memory.snapshot_sha256 === "string"
+  ) {
+    const snapUrl = new URL(memory.snapshot, origin).href;
+    let snapResp = null;
+    try {
+      snapResp = await fetchText(snapUrl, FETCH_TIMEOUT_MS, fetchImpl);
+    } catch (e) {
+      console.warn("[gateway] snapshot fetch fallo: " + String((e && e.message) || e) + " -> memory NO inyectada");
+      snapResp = null;
+    }
+    if (snapResp && snapResp.status === 200) {
+      let snapHash;
+      try {
+        snapHash = await sha256Hex(snapResp.text);
+      } catch (e) {
+        snapHash = null;
+        console.warn("[gateway] snapshot sha256 fallo: " + String((e && e.message) || e) + " -> memory NO inyectada");
+      }
+      if (snapHash && snapHash === memory.snapshot_sha256) {
+        snapshotText = snapResp.text;
+      } else if (snapHash) {
+        console.warn(
+          "[gateway] snapshot sha256 mismatch (declarado " +
+            memory.snapshot_sha256.slice(0, 12) + "…, obtenido " + snapHash.slice(0, 12) +
+            "…) -> memory NO inyectada (skills se listan, memorySearch falla controlado)"
+        );
+        // NO cachear snapshot corrupto.
+      }
+    } else if (snapResp) {
+      console.warn("[gateway] snapshot HTTP " + snapResp.status + " -> memory NO inyectada");
+    }
+  } else if (memory && memory.unsupported) {
+    console.warn("[gateway] skills-memory format unsupported: '" + memory.format + "' -> memory NO inyectada");
+  }
+
   // Poblar capa 1 (isolate) aunque algunas skills se hayan rechazado: las
   // rechazadas no se re-intentan en cada request caliente; el TTL refresca.
-  isolateCachePut(origin, skills, rejected);
-  return { skills, rejected, discovery: "miss" };
+  isolateCachePut(origin, skills, rejected, snapshotText);
+  return { skills, rejected, discovery: "miss", snapshotText };
 }
 
 // --- PerSkillHost: un AsyncToolHost por skill (aislamiento tool<->tool) --------
@@ -350,21 +507,33 @@ async function discoverSkillsInner(origin, fetchImpl) {
 // (una suspension async a la vez por modulo). Dispose de TODOS los contextos al
 // final del request (try/finally en el handler).
 class PerSkillHost {
-  constructor({ quickjs, allowedOrigin, fetchImpl, skills }) {
+  constructor({ quickjs, allowedOrigin, fetchImpl, skills, snapshotText }) {
     this._quickjs = quickjs;
     this._allowedOrigin = allowedOrigin;
     this._fetchImpl = fetchImpl;
     this._skills = skills; // [{name, code, ...}]
+    this._snapshotText = snapshotText || null; // TAREA22: snapshot verificado o null
     this._byName = new Map(); // name -> AsyncToolHost
     this._order = []; // names en orden de carga
   }
 
   async init() {
+    // TAREA22: si hay snapshot verificado, se inyecta la capability
+    // host.memorySearch en TODAS las skills del origin via extraCapabilities
+    // (mismo puente raw-JSON asyncified que host.fetchOrigin). Se pasa la MISMA
+    // closure a cada skill => una sola instancia WasmOkfIndex por request (sin
+    // estado compartido entre requests: la closure se crea por request aqui).
+    // Sin snapshot verificado -> extraCapabilities null -> comportamiento
+    // byte-identico al previo (demo-site y bookstore intactos).
+    const extraCaps = this._snapshotText
+      ? { memorySearch: makeMemorySearch(this._snapshotText) }
+      : null;
     for (const s of this._skills) {
       const h = new AsyncToolHost({
         quickjs: this._quickjs,
         allowedOrigin: this._allowedOrigin,
         fetchImpl: this._fetchImpl,
+        extraCapabilities: extraCaps,
       });
       await h.init();
       h.loadToolSource(s.code);
@@ -498,10 +667,12 @@ export default {
 
     // --- Descubrimiento + verificacion (cache isolate -> caches.default -> red) ---
     let skills;
+    let snapshotText = null;
     let discovery = "none";
     try {
       const discovered = await discoverSkills(origin, fetchImpl);
       skills = discovered.skills;
+      snapshotText = discovered.snapshotText || null;
       discovery = discovered.discovery;
       for (const r of discovered.rejected) {
         console.warn("[gateway] skill rechazada: " + r.name + " -> " + r.reason);
@@ -532,7 +703,7 @@ export default {
     try {
       response = await withModuleLock(async () => {
         const quickjs = await getQuickjs();
-        const host = new PerSkillHost({ quickjs, allowedOrigin: origin, fetchImpl, skills });
+        const host = new PerSkillHost({ quickjs, allowedOrigin: origin, fetchImpl, skills, snapshotText });
         try {
           await host.init();
           return await handleMcpMessageAsync(host, msg);

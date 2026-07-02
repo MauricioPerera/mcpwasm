@@ -8,3 +8,4 @@ quickjs-asyncify.wasm
 minimemory_bg.wasm
 .gateway-token
 mcp-bookstore.local.json
+.attester-key.json

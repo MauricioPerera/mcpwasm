@@ -822,6 +822,191 @@ try {
     check(!!parsed && typeof parsed.count === "number" && parsed.count > 0, "interrupt: el contador se invoco (>0)");
   }
 
+  // --- (T25) ATTESTATIONS (ext-skill-attestations v0.2) ---------------------
+  // Veredictos Ed25519 contra un registro de revisores, con fetchImpl fake local
+  // (service binding DOCS) que sirve llms.txt + tool.js + attestations.json.
+  // Casos: attested, invalid (corrupt de registrado DOMINA sobre otra valida),
+  // expired, unattested, attester desconocido (ignorado), 404 del archivo (todo
+  // unattested sin error), enforcing excluye no-attested.
+  console.log("\n[T25] attestations (service binding DOCS fake, node:crypto):");
+  const attCrypto = await import("node:crypto");
+  const attKey = attCrypto.generateKeyPairSync("ed25519");
+  // publica raw 32 bytes -> base64 (lo que va al registro y el gateway importa).
+  {
+    const jwk = attKey.publicKey.export({ format: "jwk" });
+    let x = jwk.x.replace(/-/g, "+").replace(/_/g, "/");
+    while (x.length % 4) x += "=";
+    var ATT_PUB_B64 = Buffer.from(x, "base64").toString("base64");
+  }
+  const REVIEWERS = JSON.stringify({
+    "human:mauricio": { public_key: ATT_PUB_B64, registered_at: "2026-07-02" },
+  });
+  const ATTC_CANON = new URL(DOCS_ORIGIN).origin; // == DOCS_ORIGIN (sin slash)
+  function signAtt(skill, toolSha, signedOn, validUntil) {
+    const payload = Buffer.from(
+      [ATTC_CANON, skill, toolSha, signedOn, validUntil].join("\n"), "utf8"
+    );
+    return attCrypto.sign(null, payload, attKey.privateKey).toString("base64");
+  }
+  function corruptB64(b64) {
+    const buf = Buffer.from(b64, "base64");
+    buf[buf.length - 1] = buf[buf.length - 1] ^ 0xff;
+    return buf.toString("base64");
+  }
+  const attSkillNames = ["attested_skill", "invalid_skill", "expired_skill", "unattested_skill"];
+  const toolSrcs = {};
+  const toolShas = {};
+  for (const n of attSkillNames) {
+    const src = `registerTool({ name: "${n}", description: "tool ${n}", inputSchema: { type: "object" }, handler: function () { return { name: "${n}" }; } });`;
+    toolSrcs[n] = src;
+    toolShas[n] = attCrypto.createHash("sha256").update(src, "utf8").digest("hex");
+  }
+  const skillMeta = (n) =>
+    JSON.stringify({ version: "1.0.0", tool: `/skills/${n}/tool.js`, tool_sha256: toolShas[n] });
+  const attLlmsTxt =
+    "# fake-att\n\n> fake docs for attestation tests\n\n## Skills\n\n" +
+    attSkillNames
+      .map((n) => `- [${n}](/skills/${n}/SKILL.md): tool ${n} <!-- skill: ${skillMeta(n)} -->`)
+      .join("\n") + "\n";
+  const sigAtt = signAtt("attested_skill", toolShas["attested_skill"], "2026-07-02", "2027-07-02");
+  const sigInv = signAtt("invalid_skill", toolShas["invalid_skill"], "2026-07-02", "2027-07-02");
+  const sigExp = signAtt("expired_skill", toolShas["expired_skill"], "2025-01-01", "2025-01-02");
+  const attestationsArr = [
+    // attested_skill: firma valida de registrado -> attested
+    { origin: ATTC_CANON, skill: "attested_skill", tool_sha256: toolShas["attested_skill"],
+      attester: "human:mauricio", signed_on: "2026-07-02", valid_until: "2027-07-02", signature: sigAtt },
+    // attested_skill: attester DESCONOCIDO con sig corrupta -> ignorado (no invalid)
+    { origin: ATTC_CANON, skill: "attested_skill", tool_sha256: toolShas["attested_skill"],
+      attester: "human:unknown", signed_on: "2026-07-02", valid_until: "2027-07-02",
+      signature: corruptB64(sigAtt) },
+    // invalid_skill: firma valida
+    { origin: ATTC_CANON, skill: "invalid_skill", tool_sha256: toolShas["invalid_skill"],
+      attester: "human:mauricio", signed_on: "2026-07-02", valid_until: "2027-07-02", signature: sigInv },
+    // invalid_skill: firma CORRUPTA de registrado -> INVALID domina
+    { origin: ATTC_CANON, skill: "invalid_skill", tool_sha256: toolShas["invalid_skill"],
+      attester: "human:mauricio", signed_on: "2026-07-02", valid_until: "2027-07-02",
+      signature: corruptB64(sigInv) },
+    // expired_skill: firma valida, valid_until pasado -> expired
+    { origin: ATTC_CANON, skill: "expired_skill", tool_sha256: toolShas["expired_skill"],
+      attester: "human:mauricio", signed_on: "2025-01-01", valid_until: "2025-01-02", signature: sigExp },
+  ];
+  function makeFakeDocs(opts) {
+    const noAtt = !!(opts && opts.noAttestations);
+    return (request) => {
+      const u = new URL(request.url);
+      let body = "not found", status = 404, ct = "text/plain; charset=utf-8";
+      if (u.pathname === "/llms.txt") {
+        body = attLlmsTxt; status = 200; ct = "text/plain; charset=utf-8";
+      } else if (u.pathname.startsWith("/skills/") && u.pathname.endsWith("/tool.js")) {
+        const name = u.pathname.split("/")[2];
+        if (toolSrcs[name]) { body = toolSrcs[name]; status = 200; ct = "application/javascript; charset=utf-8"; }
+      } else if (u.pathname === "/.well-known/agent-skills/attestations.json" && !noAtt) {
+        body = JSON.stringify(attestationsArr); status = 200; ct = "application/json; charset=utf-8";
+      }
+      return new Response(body, { status, headers: { "content-type": ct } });
+    };
+  }
+  function attMf(mode, noAtt) {
+    return new Miniflare({
+      scriptPath: fileURLToPath(new URL("./dist-gateway/worker.js", import.meta.url)),
+      modules: true,
+      modulesRules: [
+        { type: "ESModule", include: ["**/*.js"] },
+        { type: "CompiledWasm", include: ["**/*.wasm"] },
+      ],
+      compatibilityDate: "2026-06-01",
+      compatibilityFlags: ["nodejs_compat"],
+      bindings: { ALLOWED_ORIGINS: DOCS_ORIGIN, REVIEWERS, ATTESTATION_MODE: mode },
+      serviceBindings: { DOCS: makeFakeDocs({ noAttestations: noAtt }) },
+    });
+  }
+  async function rpcAtt(mfX, p, payload) {
+    const res = await mfX.dispatchFetch("http://localhost" + p, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
+    });
+    let body = null; try { body = await res.json(); } catch { body = await res.text(); }
+    return { status: res.status, body, headers: Object.fromEntries(res.headers) };
+  }
+  const attBase = "/mcp?origin=" + encodeURIComponent(DOCS_ORIGIN);
+
+  // --- advisory ---
+  const mfAttAdv = attMf("advisory", false);
+  try {
+    const list = await rpcAtt(mfAttAdv, attBase, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const tools = list.body && list.body.result && list.body.result.tools;
+    console.log("[T25.adv] tools/list ->", (tools || []).map((t) => t.name + "=" + (t.description||"").split("[attestation:")[1] || "?").join(" "));
+    check(list.status === 200, "att.adv: tools/list HTTP 200");
+    check(Array.isArray(tools) && tools.length === 4, "att.adv: 4 skills cargadas (advisory no excluye)");
+    const descOf = (n) => (tools.find((t) => t.name === n) || {}).description || "";
+    check(/ \[attestation: attested\]$/.test(descOf("attested_skill")), "att.adv: attested_skill -> [attestation: attested]");
+    check(/ \[attestation: invalid\]$/.test(descOf("invalid_skill")), "att.adv: invalid_skill -> [attestation: invalid] (corrupt domina)");
+    check(/ \[attestation: expired\]$/.test(descOf("expired_skill")), "att.adv: expired_skill -> [attestation: expired]");
+    check(/ \[attestation: unattested\]$/.test(descOf("unattested_skill")), "att.adv: unattested_skill -> [attestation: unattested]");
+    const ah = list.headers["x-gw-attestations"];
+    console.log("[T25.adv] X-Gw-Attestations ->", ah);
+    check(!!ah, "att.adv: header X-Gw-Attestations presente");
+    check(ah && ah.includes("1attested") && ah.includes("1expired") && ah.includes("1invalid") && ah.includes("1unattested"),
+      "att.adv: header con conteos 1attested,1expired,1invalid,1unattested");
+    // attester desconocido ignorado: attested_skill sigue attested pese a sig corrupta de human:unknown
+    check(/ \[attestation: attested\]$/.test(descOf("attested_skill")),
+      "att.adv: attester desconocido (sig corrupta) ignorado -> attested_skill sigue attested (no invalid)");
+    // tools/call attested_skill funciona (advisory no rompe ejecucion)
+    const call = await rpcAtt(mfAttAdv, attBase, {
+      jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "attested_skill", arguments: {} },
+    });
+    const callSc = call.body && call.body.result && call.body.result.structuredContent;
+    console.log("[T25.adv] tools/call attested_skill ->", JSON.stringify(call.body).slice(0, 200));
+    check(call.status === 200 && callSc && callSc.name === "attested_skill",
+      "att.adv: tools/call attested_skill ejecuta y devuelve {name:attested_skill}");
+  } finally {
+    await mfAttAdv.dispose();
+  }
+
+  // --- enforcing: excluye no-attested como hash mismatch ---
+  const mfAttEnf = attMf("enforcing", false);
+  try {
+    const list = await rpcAtt(mfAttEnf, attBase, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const tools = list.body && list.body.result && list.body.result.tools;
+    const names = (tools || []).map((t) => t.name);
+    console.log("[T25.enf] tools/list ->", JSON.stringify(names), "header=", list.headers["x-gw-attestations"]);
+    check(list.status === 200, "att.enf: tools/list HTTP 200");
+    check(Array.isArray(tools) && tools.length === 1 && names[0] === "attested_skill",
+      "att.enf: SOLO attested_skill cargada (invalid/expired/unattested excluidas)");
+    check(tools[0] && / \[attestation: attested\]$/.test(tools[0].description),
+      "att.enf: la unica tool cargada etiquetada [attestation: attested]");
+    // el header muestra el cuadro completo (4 skills) aunque solo 1 cargue
+    check(list.headers["x-gw-attestations"] && list.headers["x-gw-attestations"].includes("1attested") && list.headers["x-gw-attestations"].includes("1unattested"),
+      "att.enf: header X-Gw-Attestations con conteos completos (1attested,...,1unattested)");
+    // tools/call unattested_skill -> excluida -> no encontrada
+    const call = await rpcAtt(mfAttEnf, attBase, {
+      jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "unattested_skill", arguments: {} },
+    });
+    console.log("[T25.enf] tools/call unattested_skill ->", JSON.stringify(call.body).slice(0, 200));
+    check(call.status === 200, "att.enf: tools/call unattested_skill HTTP 200 (no crash)");
+    check(call.body && (call.body.error || (call.body.result && call.body.result.isError)),
+      "att.enf: unattested_skill excluida -> call responde error (no encontrada)");
+  } finally {
+    await mfAttEnf.dispose();
+  }
+
+  // --- 404 del archivo: todo unattested, sin error ---
+  const mfAtt404 = attMf("advisory", true);
+  try {
+    const list = await rpcAtt(mfAtt404, attBase, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const tools = list.body && list.body.result && list.body.result.tools;
+    console.log("[T25.404] tools/list ->", (tools || []).length, "tools, header=", list.headers["x-gw-attestations"]);
+    check(list.status === 200, "att.404: tools/list HTTP 200 (404 del archivo NO es error)");
+    check(Array.isArray(tools) && tools.length === 4, "att.404: 4 skills cargadas (404 -> todo unattested, cargan igual)");
+    check((tools || []).every((t) => / \[attestation: unattested\]$/.test(t.description || "")),
+      "att.404: todas las tools [attestation: unattested]");
+    check(list.headers["x-gw-attestations"] === "0attested,0expired,0invalid,4unattested",
+      "att.404: header X-Gw-Attestations = 0attested,0expired,0invalid,4unattested");
+  } finally {
+    await mfAtt404.dispose();
+  }
+
   console.log("\n" + (failures === 0 ? "TODOS LOS CHECKS VERDE" : failures + " CHECK(S) ROJO(S)"));
 } catch (e) {
   console.error("ERROR en mf-gateway:", e && e.stack ? e.stack : e);

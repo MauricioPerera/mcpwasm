@@ -185,7 +185,7 @@ function isolateCacheGet(origin) {
   return e;
 }
 
-function isolateCachePut(origin, skills, rejected, snapshotText) {
+function isolateCachePut(origin, skills, rejected, snapshotText, verdicts) {
   if (isolateCache.size >= ISOLATE_MAX_ENTRIES) {
     // Evict el mas viejo (primera clave en orden de insercion del Map).
     const oldest = isolateCache.keys().next().value;
@@ -195,6 +195,7 @@ function isolateCachePut(origin, skills, rejected, snapshotText) {
     skills,
     rejected,
     snapshotText: snapshotText || null,
+    verdicts: verdicts || null, // TAREA25: {verdicts, counts} o null (modo off)
     expiresAt: Date.now() + ISOLATE_TTL_MS,
   });
 }
@@ -290,8 +291,178 @@ async function sha256Hex(text) {
     .join("");
 }
 
+// --- TAREA25: Attestations (ext-skill-attestations v0.2) ---------------------
+// Tercer anillo de confianza: atestaciones firmadas Ed25519 por revisores
+// registrados, publicadas por el origin en
+// /.well-known/agent-skills/attestations.json. El gateway las descubre junto a
+// las skills (mismo fetchImpl/timeout), computa un veredicto por skill segun la
+// spec (attested/expired/invalid/unattested, INVALID DOMINA) y lo expone al
+// consumidor en modo advisory (tag en la description + header X-Gw-Attestations)
+// o enforcing (excluye las no-attested como un hash mismatch). Modo off:
+// comportamiento previo intacto (no fetchea attestations.json).
+//
+// Verificacion Ed25519 con WebCrypto crypto.subtle: importKey "raw" de la
+// publica de 32 bytes + verify {name:"Ed25519"} (sondeado en workerd via
+// probe-ed25519.mjs: funciona con nuestra compatibility_date). La publica y la
+// firma van en base64 (alineado con la spec v0.2).
+function attestationMode(env) {
+  const m = (env && env.ATTESTATION_MODE) || "off";
+  return m === "enforcing" || m === "advisory" ? m : "off";
+}
+
+function parseReviewers(env) {
+  const raw = (env && env.REVIEWERS) || "";
+  if (!raw) return {};
+  try {
+    const o = JSON.parse(raw);
+    return o && typeof o === "object" ? o : {};
+  } catch {
+    return {};
+  }
+}
+
+// Origin canonico: lowercase, sin trailing slash, sin puerto default.
+// new URL(...).origin ya cumple (host lowercase, sin :443 default, sin slash).
+function canonicalOrigin(s) {
+  try {
+  return new URL(s).origin;
+  } catch {
+    return null;
+  }
+}
+
+function todayUtcStr() {
+  const d = new Date();
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function b64ToBytes(s) {
+  // base64 standard -> Uint8Array (atob disponible en workerd).
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+// Verifica firma Ed25519 de data contra pubB64 (raw 32 bytes, base64).
+// Devuelve true/false; cualquier error de parseo/verificacion -> false.
+async function verifyEd25519(pubB64, sigB64, data) {
+  try {
+    const pubRaw = b64ToBytes(pubB64);
+    const sig = b64ToBytes(sigB64);
+    const key = await crypto.subtle.importKey("raw", pubRaw, { name: "Ed25519" }, false, [
+      "verify",
+    ]);
+    return await crypto.subtle.verify("Ed25519", key, sig, data);
+  } catch {
+    return false;
+  }
+}
+
+// Descarga attestations.json del origin. 404 u otro no-200 -> null (sin
+// atestaciones, NO es error de descubrimiento: las skills se listan, todo
+// unattested). JSON no-array -> null. Se cachea el TEXTO en el isolate junto a
+// las skills; los veredictos se recomputan al poblar la entrada.
+async function fetchAttestations(origin, fetchImpl) {
+  const url = origin + "/.well-known/agent-skills/attestations.json";
+  let r;
+  try {
+    r = await fetchText(url, FETCH_TIMEOUT_MS, fetchImpl);
+  } catch (e) {
+    console.warn(
+      "[gateway] attestations fetch fallo: " + String((e && e.message) || e) + " -> sin atestaciones"
+    );
+    return null;
+  }
+  if (r.status === 404) return null; // esperado: el origin no atesta nada
+  if (r.status !== 200) {
+    console.warn("[gateway] attestations HTTP " + r.status + " -> sin atestaciones");
+    return null;
+  }
+  try {
+    const arr = JSON.parse(r.text);
+    return Array.isArray(arr) ? arr : null;
+  } catch {
+    console.warn("[gateway] attestations JSON invalido -> sin atestaciones");
+    return null;
+  }
+}
+
+// Veredicto para una skill segun la spec (§4 + precedencia INVALID DOMINA).
+//  - matching: attestation con mismo origin (canonico) + skill + tool_sha256.
+//  - attester NO registrado -> ignorada (UNKNOWN-ATTESTER, solo diagnostico).
+//  - attester registrado + firma que falla -> INVALID (domina sobre otras validas).
+//  - firma valida + en ventana (signed_on <= hoy <= valid_until) -> attested.
+//  - firma valida + hoy > valid_until -> expired.
+// Precedencia: invalid > attested > expired > unattested.
+async function verdictForSkill(skill, origin, attestations, reviewers, today) {
+  if (!attestations || attestations.length === 0) return "unattested";
+  const canon = canonicalOrigin(origin);
+  if (!canon) return "unattested";
+  let hasInvalid = false;
+  let hasValidInWindow = false;
+  let hasExpired = false;
+  for (const a of attestations) {
+    if (!a || typeof a !== "object") continue;
+    if (a.skill !== skill.name) continue;
+    if (typeof a.tool_sha256 !== "string" || a.tool_sha256 !== skill.sha256) continue;
+    const aCanon = canonicalOrigin(a.origin);
+    if (!aCanon || aCanon !== canon) continue; // otra origin: no replayable
+    if (typeof a.attester !== "string" || typeof a.signature !== "string") continue;
+    const reg = reviewers[a.attester];
+    if (!reg || typeof reg.public_key !== "string") continue; // desconocido: ignorado
+    const payload = new TextEncoder().encode(
+      canon + "\n" + skill.name + "\n" + skill.sha256 + "\n" + a.signed_on + "\n" + a.valid_until
+    );
+    const ok = await verifyEd25519(reg.public_key, a.signature, payload);
+    if (!ok) {
+      hasInvalid = true; // firma que falla contra clave REGISTRADA -> invalid
+      continue;
+    }
+    if (today > a.valid_until) {
+      hasExpired = true;
+      continue;
+    }
+    if (today >= a.signed_on && today <= a.valid_until) {
+      hasValidInWindow = true;
+    }
+    // hoy < signed_on: fuera de ventana por izquierda -> no cuenta
+  }
+  if (hasInvalid) return "invalid";
+  if (hasValidInWindow) return "attested";
+  if (hasExpired) return "expired";
+  return "unattested";
+}
+
+// Computa veredictos para todas las skills + conteos por veredicto (para el
+// header X-Gw-Attestations). En modo off no se llama.
+async function computeVerdicts(skills, origin, attestations, reviewers) {
+  const verdicts = {};
+  const counts = { attested: 0, expired: 0, invalid: 0, unattested: 0 };
+  const today = todayUtcStr();
+  for (const s of skills) {
+    const v = await verdictForSkill(s, origin, attestations, reviewers, today);
+    verdicts[s.name] = v;
+    counts[v] = (counts[v] || 0) + 1;
+  }
+  return { verdicts, counts };
+}
+
+function attestHeaderStr(counts) {
+  if (!counts) return null;
+  return (
+    counts.attested + "attested," +
+    counts.expired + "expired," +
+    counts.invalid + "invalid," +
+    counts.unattested + "unattested"
+  );
+}
+
 // Descubre y verifica las skills ejecutables de un origin.
-// Devuelve { skills: [...], rejected, discovery, snapshotText }.
+// Devuelve { skills: [...], rejected, discovery, snapshotText, verdicts, counts }.
 //  - skills: cada entrada lleva el `code` (tool.js) verificado por sha256 e
 //    inmutable por hash; `inputSchema` queda undefined aqui y se extrae del
 //    contexto QuickJS en runtime (mismo comportamiento observable que antes).
@@ -299,12 +470,16 @@ async function sha256Hex(text) {
 //    sha256, o null si el origin no declara memoria, el format es unsupported,
 //    o la verificacion fallo. Se cachea en el isolate junto a las skills; el
 //    indice WasmOkfIndex se construye por request desde este texto.
+//  - verdicts/counts (TAREA25): {verdicts:{name->verdict}, counts:{...}} o null
+//    en modo off. Computados al poblar el cache (mismo TTL 60s que las skills);
+//    dependen del registro de revisores (env, estable por deploy) y la fecha
+//    UTC (estable por dia dentro del TTL).
 //  - discovery: "hit" (capa 1 isolate, cache fria leida del cache) | "miss"
 //    (este request hizo el fetch real, poblado ahora). Single-flight: los miss
 //    concurrentes del mismo origin que esperan la promesa en vuelo reportan
 //    "hit" (leyeron del cache tras el fetch unico del iniciador; ellos no
 //    tocan la red) => un solo fetch de llms.txt + tool.js por estampida.
-async function discoverSkills(origin, fetchImpl) {
+async function discoverSkills(origin, fetchImpl, attestCtx) {
   // --- Capa 1: cache de descubrimiento en el isolate ---
   const cached = isolateCacheGet(origin);
   if (cached) {
@@ -312,6 +487,7 @@ async function discoverSkills(origin, fetchImpl) {
       skills: cached.skills,
       rejected: cached.rejected,
       snapshotText: cached.snapshotText,
+      verdicts: cached.verdicts,
       discovery: "hit",
     };
   }
@@ -335,6 +511,7 @@ async function discoverSkills(origin, fetchImpl) {
         skills: nowCached.skills,
         rejected: nowCached.rejected,
         snapshotText: nowCached.snapshotText,
+        verdicts: nowCached.verdicts,
         discovery: "hit",
       };
     }
@@ -344,7 +521,7 @@ async function discoverSkills(origin, fetchImpl) {
   // En single-thread el check+set es atomico respecto a otros requests (no hay
   // await entre medias) => solo un iniciador por origin por estampida. La
   // entrada se borra al settle (resolve o reject) via finally => nunca pegada.
-  const p = discoverSkillsInner(origin, fetchImpl).finally(() => {
+  const p = discoverSkillsInner(origin, fetchImpl, attestCtx).finally(() => {
     discoverInflight.delete(origin);
   });
   discoverInflight.set(origin, p);
@@ -352,8 +529,8 @@ async function discoverSkills(origin, fetchImpl) {
 }
 
 // Cuerpo del descubrimiento (fetch llms.txt + tool.js + verify sha256). Puebla
-// el cache de isolate (capa 1). Devuelve { skills, rejected, discovery: "miss", snapshotText }.
-async function discoverSkillsInner(origin, fetchImpl) {
+// el cache de isolate (capa 1). Devuelve { skills, rejected, discovery: "miss", snapshotText, verdicts, counts }.
+async function discoverSkillsInner(origin, fetchImpl, attestCtx) {
   const rejected = [];
   const skills = [];
 
@@ -494,10 +671,22 @@ async function discoverSkillsInner(origin, fetchImpl) {
     console.warn("[gateway] skills-memory format unsupported: '" + memory.format + "' -> memory NO inyectada");
   }
 
+  // --- TAREA25: Attestations (fetch + veredictos) ---------------------------
+  // En modo off no se fetchea attestations.json (comportamiento previo intacto).
+  // En advisory/enforcing: descargar el array, computar veredicto por skill y
+  // cacheo junto a las skills (mismo TTL). 404 del archivo = null (sin
+  // atestaciones, todo unattested, NO error de descubrimiento).
+  let verdicts = null;
+  const mode = attestCtx && attestCtx.mode;
+  if (mode && mode !== "off") {
+    const attestations = await fetchAttestations(origin, fetchImpl);
+    verdicts = await computeVerdicts(skills, origin, attestations, attestCtx.reviewers);
+  }
+
   // Poblar capa 1 (isolate) aunque algunas skills se hayan rechazado: las
   // rechazadas no se re-intentan en cada request caliente; el TTL refresca.
-  isolateCachePut(origin, skills, rejected, snapshotText);
-  return { skills, rejected, discovery: "miss", snapshotText };
+  isolateCachePut(origin, skills, rejected, snapshotText, verdicts);
+  return { skills, rejected, discovery: "miss", snapshotText, verdicts };
 }
 
 // --- PerSkillHost: un AsyncToolHost por skill (aislamiento tool<->tool) --------
@@ -572,12 +761,14 @@ class PerSkillHost {
   }
 }
 
-function json(obj, status = 200, discovery) {
+function json(obj, status = 200, discovery, attest) {
   const headers = { "content-type": "application/json", "access-control-allow-origin": "*" };
   // X-Gw-Discovery: "miss" | "hit" (tras descubrimiento) | "none" (antes de
   // descubrimiento, p.ej. errores de validacion). Solo-test/observabilidad; no
   // filtra nada sensible (es el estado del cache del isolate para este origin).
   if (discovery) headers["x-gw-discovery"] = discovery;
+  // X-Gw-Attestations (TAREA25): conteos por veredicto, solo en modo != off.
+  if (attest) headers["x-gw-attestations"] = attest;
   return new Response(JSON.stringify(obj), { status, headers });
 }
 
@@ -667,15 +858,22 @@ export default {
     // fetch inyectado (binding para same-account, fetch global para el resto).
     const fetchImpl = makeFetchImpl(env);
 
+    // TAREA25: modo de atestacion + registro de revisores (config del runtime).
+    const mode = attestationMode(env);
+    const reviewers = parseReviewers(env);
+    const attestCtx = { mode, reviewers };
+
     // --- Descubrimiento + verificacion (cache isolate -> caches.default -> red) ---
     let skills;
     let snapshotText = null;
     let discovery = "none";
+    let verdicts = null; // {verdicts, counts} o null (modo off)
     try {
-      const discovered = await discoverSkills(origin, fetchImpl);
+      const discovered = await discoverSkills(origin, fetchImpl, attestCtx);
       skills = discovered.skills;
       snapshotText = discovered.snapshotText || null;
       discovery = discovered.discovery;
+      verdicts = discovered.verdicts || null;
       for (const r of discovered.rejected) {
         console.warn("[gateway] skill rechazada: " + r.name + " -> " + r.reason);
       }
@@ -686,11 +884,33 @@ export default {
         "miss"
       );
     }
+
+    // Header X-Gw-Attestations: conteos por veredicto sobre TODAS las skills
+    // descubiertas (antes del filtrado enforcing), solo en modo != off.
+    const aHeader = attestHeaderStr(verdicts && verdicts.counts);
+
+    // --- TAREA25: modo enforcing: excluir skills no-attested (como hash mismatch) ---
+    if (mode === "enforcing" && verdicts) {
+      const kept = [];
+      for (const s of skills) {
+        if (verdicts.verdicts[s.name] === "attested") {
+          kept.push(s);
+        } else {
+          console.warn(
+            "[gateway] skill excluida (enforcing): " + s.name +
+              " -> attestation " + verdicts.verdicts[s.name]
+          );
+        }
+      }
+      skills = kept;
+    }
+
     if (skills.length === 0) {
       return json(
         { jsonrpc: "2.0", id: msg && msg.id !== undefined ? msg.id : null, error: { code: -32603, message: "ninguna skill verificada para el origin" } },
         502,
-        discovery
+        discovery,
+        aHeader
       );
     }
 
@@ -722,12 +942,26 @@ export default {
       return json(
         { jsonrpc: "2.0", id: msg && msg.id !== undefined ? msg.id : null, error: { code: -32603, message: "host fallo: " + String(e && e.message || e) } },
         500,
-        discovery
+        discovery,
+        aHeader
       );
     }
-    if (response === null) {
-      return new Response(null, { status: 202, headers: { "x-gw-discovery": discovery } });
+    // TAREA25: exposicion advisory — tag " [attestation: <verdict>]" al final de
+    // la description de cada tool en tools/list (modo != off). En enforcing las
+    // tools cargadas son solo attested, pero igual se etiquetan.
+    if (mode !== "off" && verdicts && response && response.result && Array.isArray(response.result.tools)) {
+      for (const t of response.result.tools) {
+        const v = verdicts.verdicts[t.name];
+        if (v && typeof t.description === "string") {
+          t.description = t.description + " [attestation: " + v + "]";
+        }
+      }
     }
-    return json(response, 200, discovery);
+    if (response === null) {
+      const headers202 = { "x-gw-discovery": discovery };
+      if (aHeader) headers202["x-gw-attestations"] = aHeader;
+      return new Response(null, { status: 202, headers: headers202 });
+    }
+    return json(response, 200, discovery, aHeader);
   },
 };

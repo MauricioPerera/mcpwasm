@@ -13,7 +13,7 @@
 //    wrangler.toml. Los tool_sha256 y snapshot_sha256 declarados en /llms.txt
 //    coinciden con el contenido servido porque el worker sirve el MISMO string
 //    sobre el que se hasheo.
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -186,6 +186,17 @@ for (const name of SKILLS) {
   skills[name] = { tool, skillMd: read(`${name}.SKILL.md`), hash: sha256(tool) };
 }
 
+// --- 3.5) Attestaciones (ext-skill-attestations v0.2) ------------------------
+// Array JSON publicado en /.well-known/agent-skills/attestations.json. Firmado
+// fuera de linea con scripts/attest.mjs (Ed25519, clave privada en
+// .attester-key.json, gitignored). Si no existe el archivo -> array vacio (el
+// origin publica 0 atestaciones; las skills se listan pero quedan unattested).
+const attestationsRaw = existsSync(join(contentDir, "attestations.json"))
+  ? readFileSync(join(contentDir, "attestations.json"), "utf8")
+  : "[]";
+const attestations = JSON.parse(attestationsRaw);
+console.log(`attestations: ${attestations.length} entrada(s)`);
+
 // --- 4) /llms.txt: linea skills-memory a nivel origin + ## Skills -------------
 // La linea skills-memory va ANTES del heading "## Skills": algunos parsers
 // conformes pliegan lineas sueltas tras la lista dentro del ultimo skill.
@@ -237,6 +248,7 @@ ${docConstants}
 ${skillConstants}
 const SNAPSHOT = ${JSON.stringify(snapshot)};
 const LLMS_TXT = ${JSON.stringify(llmsTxt)};
+const ATTESTATIONS = ${JSON.stringify(attestations)};
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: JSON_HEADERS });
@@ -256,6 +268,10 @@ ${skillRoutes}
 
     if (path === "/skills-index.snapshot") {
       return new Response(SNAPSHOT, { headers: { "content-type": "application/octet-stream", "cache-control": "no-store" } });
+    }
+
+    if (path === "/.well-known/agent-skills/attestations.json") {
+      return new Response(JSON.stringify(ATTESTATIONS), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
     }
 
     return json({ error: "Not Found", path }, 404);

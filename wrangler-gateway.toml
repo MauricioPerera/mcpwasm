@@ -10,6 +10,17 @@ account_id = "091122c40cc6f8d0d421cbc90e2caca8"
 [vars]
 ALLOWED_ORIGINS = "https://llmstxt-demo-site.rckflr.workers.dev,https://llmstxt-bookstore.rckflr.workers.dev,https://llmstxt-docs.rckflr.workers.dev"
 
+# TAREA25: atestaciones (ext-skill-attestations v0.2). Registro de revisores
+# (trust anchor, config del runtime): {attester: {public_key base64 raw 32
+# bytes, registered_at}}. La publica firma las atestaciones que publica cada
+# origin en /.well-known/agent-skills/attestations.json. Literal string TOML
+# (comillas simples) para no escapar el JSON.
+REVIEWERS = '{"human:mauricio":{"public_key":"YghuJivYSVI458jIjwXEKDLmQaG6X4Itn1VzBXa/ikw=","registered_at":"2026-07-02"}}'
+
+# Modo de atestacion: "advisory" (expone veredicto, no excluye), "enforcing"
+# (excluye las no-attested como un hash mismatch), "off" (comportamiento previo).
+ATTESTATION_MODE = "advisory"
+
 # Service binding al demo site. Un Worker no puede fetchear via workers.dev a
 # otro Worker de la MISMA cuenta (error 1042); el binding DEMO lo resuelve
 # (bypass de workers.dev). El gateway enruta el origin del demo por este

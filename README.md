@@ -211,6 +211,15 @@ What it guarantees:
 - **SHA-256 content addressing.** The gateway downloads `tool.js` and verifies
   it against the `tool_sha256` declared in `llms.txt` before loading. Mismatched or
   corrupt content is rejected and not cached.
+- **Skill attestations (third trust ring, spec `ext-skill-attestations` v0.2).**
+  Publishers may serve signed reviewer attestations at
+  `/.well-known/agent-skills/attestations.json` (Ed25519, origin-bound payload,
+  validity window). The gateway verifies them via WebCrypto against a
+  runtime-side reviewer registry (`REVIEWERS` var) and exposes per-skill
+  verdicts — appended to each tool description and summarized in the
+  `X-Gw-Attestations` header. Modes: `off` / `advisory` (default: everything
+  loads, verdicts visible) / `enforcing` (only `attested` skills load).
+  `scripts/attest.mjs` is the signing tool (keygen + sign).
 - **Origin-scoped fetch.** `host.fetchOrigin` only fetches the single allowed
   origin for the request. Any other origin throws *inside the sandbox* and is
   surfaced as `isError: true`, not a JSON-RPC error.

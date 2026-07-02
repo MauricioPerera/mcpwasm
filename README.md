@@ -1,8 +1,16 @@
-# mcpwasm
+# mcpwasm — Static MCP
 
-Sandboxed runtime for third-party MCP tools: execute untrusted tool code inside
-QuickJS-wasm on top of Cloudflare Workers, plus a gateway that turns any static
-site publishing `llms.txt` with executable skills into an MCP server.
+**Static MCP: your tools are files, not servers.** Tools are published as
+static, hash-verified content and executed sandboxed on demand. What static
+site hosting did to web servers — "don't run Apache, publish HTML" — this does
+to MCP servers: don't run an MCP server, publish files. The publisher needs
+zero infrastructure; the MCP server is materialized per request from those
+files and evaporates after responding (ephemeral instance, durable definition).
+
+mcpwasm is the reference implementation: a sandboxed runtime for third-party
+MCP tools (untrusted tool code inside QuickJS-wasm on Cloudflare Workers),
+plus a gateway that turns any static site publishing `llms.txt` with
+executable skills into an MCP server.
 
 Think "php-wasm, but for MCP tools": the platform owner embeds the host, loads
 `tool.js` files, and each tool runs isolated in a QuickJS WebAssembly sandbox.

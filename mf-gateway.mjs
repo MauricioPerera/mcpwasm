@@ -304,6 +304,85 @@ try {
 
   hostPost.dispose();
 
+  // --- (g) CONFORMIDAD review upstream (TAREA17) -----------------------------
+  // Dos ajustes de conformidad pedidos por el review de la spec:
+  //   (g.a) GET con body -> throw "body no permitido con GET" dentro del sandbox.
+  //   (g.b) POST con body sigue funcionando (regresion: el check de GET+body no
+  //         debe romper el POST legitimo).
+  //   (g.c) timeout wall-clock: fetchImpl fake que NUNCA resuelve + fetchTimeoutMs
+  //         corto (200ms) -> la llamada devuelve error "fetchOrigin timeout"
+  //         acotado (no cuelga), isError aflora via callTool. Verifica el backstop
+  //         Promise.race (el fake ignora el signal, solo el backstop corta).
+  console.log("\n[g] conformidad TAREA17 (GET+body throw, POST ok, timeout):");
+  const fakeNever = async (_url, _opts) => new Promise(() => {}); // nunca resuelve
+  const hostT = new AsyncToolHost({
+    quickjs,
+    allowedOrigin: "https://test.local",
+    fetchImpl: fakeNever,
+    fetchTimeoutMs: 200,
+  });
+  await hostT.init();
+  hostT.loadToolSource([
+    "registerTool({ name: 'caller', description: 'wrapper', inputSchema: { type: 'object' },",
+    "  handler: async function (args) {",
+    "    var r = await host.fetchOrigin(args.path, { method: args.method, body: args.body });",
+    "    return r;",
+    "  } });",
+  ].join("\n"));
+
+  // (g.a) GET con body -> throw "body no permitido con GET" (antes de tocar fetch)
+  let getBodyThrew = false;
+  try {
+    await hostT.callTool("caller", { path: "/api/x", method: "GET", body: "payload" });
+  } catch (e) {
+    getBodyThrew = /body no permitido con GET/i.test(String((e && e.message) || e));
+  }
+  check(getBodyThrew, "GET+body: throw 'body no permitido con GET' dentro del sandbox");
+
+  // (g.b) POST con body sigue funcionando: con fakeNever nunca resuelve, asi que
+  // usamos un fetchImpl que SI resuelve para confirmar que POST+body no es
+  // rechazado por el nuevo guard (solo GET+body lo es). Reusa hostPost ya
+  // descartado => creamos uno fresco con fetchImpl que responde.
+  let postOk = false;
+  const hostPost2 = new AsyncToolHost({
+    quickjs,
+    allowedOrigin: "https://test.local",
+    fetchImpl: async (_u, _o) => new Response(JSON.stringify({ ok: true }), {
+      status: 201, headers: { "content-type": "application/json" },
+    }),
+    fetchTimeoutMs: 5000,
+  });
+  await hostPost2.init();
+  hostPost2.loadToolSource([
+    "registerTool({ name: 'poster2', description: 'post', inputSchema: { type: 'object' },",
+    "  handler: async function (args) {",
+    "    return await host.fetchOrigin(args.path, { method: 'POST', body: args.body });",
+    "  } });",
+  ].join("\n"));
+  try {
+    const r = await hostPost2.callTool("poster2", { path: "/api/order", body: JSON.stringify({ a: 1 }) });
+    postOk = r && r.status === 201;
+  } catch (e) { postOk = false; }
+  check(postOk, "POST+body: sigue funcionando (no afectado por el guard GET+body)");
+  hostPost2.dispose();
+
+  // (g.c) timeout: GET a un origin que nunca responde -> "fetchOrigin timeout"
+  // acotado por el backstop Promise.race (200ms), no cuelga.
+  let timeoutThrew = false;
+  let elapsed = 0;
+  const t0 = Date.now();
+  try {
+    await hostT.callTool("caller", { path: "/api/slow", method: "GET" });
+  } catch (e) {
+    elapsed = Date.now() - t0;
+    timeoutThrew = /fetchOrigin timeout/i.test(String((e && e.message) || e));
+  }
+  console.log("[g.c] timeout GET -> threw=" + timeoutThrew + " elapsed=" + elapsed + "ms");
+  check(timeoutThrew, "timeout: fake nunca-resuelve -> error 'fetchOrigin timeout'");
+  check(elapsed > 150 && elapsed < 5000, "timeout: acotado (entre ~200ms y 5s, no cuelga)");
+
+  hostT.dispose();
+
   // --- (e) REENVIO del init en la rama BINDING de makeFetchImpl (TAREA16b) ---
   // El bug TAREA16: makeFetchImpl llamaba binding.fetch(url) sin reenviar opts,
   // degradando POST a GET. El fix reenvia init (method/body/headers) al binding.

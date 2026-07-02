@@ -117,6 +117,11 @@ const DEFAULT_INTERRUPT_DEADLINE_MS = 2000; // 2s por callTool (wall-clock; efec
 // vacio consume 20000 invocaciones en ~1s en Node y ~4s en workerd (WASM mas
 // lento) => corte acotado muy por debajo del limite de plataforma (1102, ~40s).
 const DEFAULT_INTERRUPT_MAX_INVOCATIONS = 20000;
+// TAREA17: timeout wall-clock por fetch de la capability host.fetchOrigin (10s).
+// AbortSignal.timeout esta soportado en workerd con compatibility_date 2026-06-01
+// (verificado: API Web estandar disponible en workerd desde 2023, sin flag). El
+// backstop Promise.race garantiza el corte aun si el fetchImpl ignora el signal.
+const DEFAULT_FETCH_TIMEOUT_MS = 10000;
 
 export class AsyncToolHost {
   // Opciones:
@@ -137,7 +142,18 @@ export class AsyncToolHost {
   //    inyectar un fetch que enrute origins de la misma cuenta Cloudflare via
   //    service binding (bypass del error 1042 worker-to-worker por workers.dev).
   //    El spike no lo pasa => usa fetch global => sigue verde.
-  constructor({ quickjs, quickjsModule, allowedOrigin, memoryLimitBytes, maxStackSizeBytes, interruptDeadlineMs, interruptMaxInvocations, fetchImpl }) {
+  //  - fetchTimeoutMs (opcional, default 10000): timeout wall-clock por fetch
+  //    de la capability host.fetchOrigin. El gas determinista (interruptMaxInvocations)
+  //    acota CPU pero NO esperas de red: un origin lento colgaria la invocacion
+  //    aunque el handler no consuma invocaciones del interrupt (asyncify suspende
+  //    la pila durante el await). Este timeout acota la espera. Se implementa con
+  //    AbortSignal.timeout(fetchTimeoutMs) en el signal del fetch (un fetch bien
+  //    comportado aborta la conexion) MAS un Promise.race de backstop que garantiza
+  //    el corte aun si el fetchImpl ignora el signal (p.ej. un binding que lo
+  //    descarta). Al disparar aflora DENTRO del sandbox como error "fetchOrigin
+  //    timeout" (throw de la capability -> excepcion del sandbox -> isError:true,
+  //    NO crash del gateway). El spike no lo pasa => default 10000 => compat.
+  constructor({ quickjs, quickjsModule, allowedOrigin, memoryLimitBytes, maxStackSizeBytes, interruptDeadlineMs, interruptMaxInvocations, fetchImpl, fetchTimeoutMs }) {
     if (typeof allowedOrigin !== "string" || !allowedOrigin) {
       throw new Error("AsyncToolHost requiere allowedOrigin");
     }
@@ -145,6 +161,8 @@ export class AsyncToolHost {
     this._quickjsModule = quickjsModule || null;
     this._allowedOrigin = allowedOrigin;
     this._fetchImpl = typeof fetchImpl === "function" ? fetchImpl : ((u, o) => fetch(u, o));
+    this._fetchTimeoutMs =
+      typeof fetchTimeoutMs === "number" && fetchTimeoutMs > 0 ? fetchTimeoutMs : DEFAULT_FETCH_TIMEOUT_MS;
     this._memoryLimitBytes =
       typeof memoryLimitBytes === "number" ? memoryLimitBytes : DEFAULT_MEMORY_LIMIT_BYTES;
     this._maxStackSizeBytes =
@@ -243,6 +261,7 @@ export class AsyncToolHost {
     // body, sin headers -> fetchImpl(url) igual que antes.
     const allowedOrigin = this._allowedOrigin;
     const fetchImpl = this._fetchImpl;
+    const fetchTimeoutMs = this._fetchTimeoutMs;
     const MAX_BODY_BYTES = 16 * 1024;
     const cap = vm.newFunction("__fetchOriginRaw", async (pathH, optsH) => {
       const path = vm.getString(pathH);
@@ -266,6 +285,15 @@ export class AsyncToolHost {
         }
         body = opts.body;
       }
+      // TAREA17: body con GET no tiene sentido (GET no lleva body en la capability)
+      // y adems algunos runtimes/proxies lo rechazan o lo descartan silenciosamente.
+      // Si method resuelve a GET y opts.body esta presente (no undefined/null, ya
+      // validado como string <=16KB arriba) -> throw DENTRO del sandbox, mismo
+      // patron que los throws de method/body. Se hace tras validar body para que
+      // un body invalido (no string / >16KB) siga lanzando su mensaje especifico.
+      if (method === "GET" && body !== undefined) {
+        throw new Error("body no permitido con GET");
+      }
       let contentType = opts && typeof opts.contentType === "string" ? opts.contentType : null;
       if (body !== undefined && !contentType) {
         contentType = "application/json";
@@ -284,7 +312,35 @@ export class AsyncToolHost {
         fetchOpts.body = body;
         fetchOpts.headers = { "content-type": contentType };
       }
-      const resp = await fetchImpl(url.href, fetchOpts);
+      // TAREA17: timeout wall-clock por fetch. Doble mecanismo:
+      //  (1) AbortSignal.timeout(fetchTimeoutMs) en fetchOpts.signal: un fetch
+      //      bien comportado (global undici / workerd) aborta la conexion al
+      //      vencer, liberando recursos.
+      //  (2) Promise.race contra un timer de backstop: garantiza el corte aun si
+      //      el fetchImpl ignora el signal (p.ej. un service binding que descarta
+      //      signal, ver rama binding de makeFetchImpl en worker-gateway.mjs) o si
+      //      nunca resuelve. El timer NO usa Date.now (congelado en Workers durante
+      //      ejecucion sincrona): setTimeout dispara en tiempo real del event loop,
+      //      que SI avanza porque el await cede.
+      // Al disparar (signal abort o backstop) se lanza "fetchOrigin timeout"
+      // DENTRO del sandbox -> isError:true, no crash del gateway.
+      fetchOpts.signal = AbortSignal.timeout(fetchTimeoutMs);
+      const TIMEOUT_TAG = "__fetchOriginTimeout__";
+      const timeoutP = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(TIMEOUT_TAG)), fetchTimeoutMs);
+      });
+      let resp;
+      try {
+        resp = await Promise.race([fetchImpl(url.href, fetchOpts), timeoutP]);
+      } catch (e) {
+        const msg = String((e && e.message) || e);
+        if (msg === TIMEOUT_TAG ||
+            (fetchOpts.signal && fetchOpts.signal.aborted) ||
+            /timeout|aborted|abort/i.test(msg)) {
+          throw new Error("fetchOrigin timeout");
+        }
+        throw e;
+      }
       const text = await resp.text();
       const respBody = text.length > 4096 ? text.slice(0, 4096) : text;
       return vm.newString(JSON.stringify({ status: resp.status, body: respBody }));

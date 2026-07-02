@@ -1,0 +1,3314 @@
+{
+  "runLabel": "1",
+  "startedAt": "2026-07-02T19:47:05.645Z",
+  "gateway": "https://llmstxt-gateway.rckflr.workers.dev/mcp",
+  "poc": "https://toolhost-mcp.rckflr.workers.dev/mcp",
+  "scenarios": [
+    {
+      "key": "a-baseline-direct",
+      "label": "a baseline-direct (GET /api/stock-report, sin gateway)",
+      "N": 30,
+      "all": {
+        "n": 30,
+        "min": 81,
+        "p50": 91,
+        "p95": 105,
+        "p99": 163,
+        "max": 163,
+        "mean": 94
+      },
+      "warm": null,
+      "cold": null,
+      "errs": 0,
+      "misses": 0,
+      "hits": 0,
+      "orderIds": [],
+      "wallMs": 3375,
+      "raw": [
+        {
+          "i": 1,
+          "ms": 87,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 2,
+          "ms": 105,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 3,
+          "ms": 93,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 4,
+          "ms": 163,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 5,
+          "ms": 99,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 6,
+          "ms": 91,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 7,
+          "ms": 92,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 8,
+          "ms": 93,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 9,
+          "ms": 100,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 10,
+          "ms": 97,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 11,
+          "ms": 81,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 12,
+          "ms": 84,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 13,
+          "ms": 90,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 14,
+          "ms": 90,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 15,
+          "ms": 85,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 16,
+          "ms": 88,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 17,
+          "ms": 95,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 18,
+          "ms": 91,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 19,
+          "ms": 91,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 20,
+          "ms": 92,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 21,
+          "ms": 96,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 22,
+          "ms": 85,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 23,
+          "ms": 98,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 24,
+          "ms": 90,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 25,
+          "ms": 99,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 26,
+          "ms": 87,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 27,
+          "ms": 88,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 28,
+          "ms": 85,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 29,
+          "ms": 87,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 30,
+          "ms": 102,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        }
+      ]
+    },
+    {
+      "key": "b-poc-sandbox",
+      "label": "b poc-sandbox (create_payment, sandbox sync, sin auth)",
+      "N": 30,
+      "all": {
+        "n": 30,
+        "min": 51,
+        "p50": 56,
+        "p95": 62,
+        "p99": 66,
+        "max": 66,
+        "mean": 57
+      },
+      "warm": null,
+      "cold": null,
+      "errs": 0,
+      "misses": 0,
+      "hits": 0,
+      "orderIds": [],
+      "wallMs": 1917,
+      "raw": [
+        {
+          "i": 1,
+          "ms": 60,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 2,
+          "ms": 62,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 3,
+          "ms": 59,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 4,
+          "ms": 57,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 5,
+          "ms": 54,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 6,
+          "ms": 58,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 7,
+          "ms": 58,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 8,
+          "ms": 56,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 9,
+          "ms": 66,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 10,
+          "ms": 57,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 11,
+          "ms": 58,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 12,
+          "ms": 59,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 13,
+          "ms": 55,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 14,
+          "ms": 56,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 15,
+          "ms": 58,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 16,
+          "ms": 56,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 17,
+          "ms": 55,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 18,
+          "ms": 55,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 19,
+          "ms": 53,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 20,
+          "ms": 54,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 21,
+          "ms": 56,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 22,
+          "ms": 59,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 23,
+          "ms": 56,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 24,
+          "ms": 52,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 25,
+          "ms": 51,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 26,
+          "ms": 53,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 27,
+          "ms": 58,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 28,
+          "ms": 59,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 29,
+          "ms": 55,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 30,
+          "ms": 58,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        }
+      ]
+    },
+    {
+      "key": "c-cold",
+      "label": "c-cold (demo sum_numbers, miss forzado tras 65s)",
+      "N": 1,
+      "all": {
+        "n": 1,
+        "min": 429,
+        "p50": 429,
+        "p95": 429,
+        "p99": 429,
+        "max": 429,
+        "mean": 429
+      },
+      "warm": {
+        "n": 0,
+        "min": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null,
+        "mean": null
+      },
+      "cold": {
+        "n": 1,
+        "min": 429,
+        "p50": 429,
+        "p95": 429,
+        "p99": 429,
+        "max": 429,
+        "mean": 429
+      },
+      "errs": 0,
+      "misses": 1,
+      "hits": 0,
+      "orderIds": [],
+      "wallMs": 65446,
+      "raw": [
+        {
+          "i": 1,
+          "ms": 429,
+          "status": 200,
+          "disc": "miss",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        }
+      ]
+    },
+    {
+      "key": "d-cold",
+      "label": "d-cold (bookstore stock_report, miss forzado)",
+      "N": 1,
+      "all": {
+        "n": 1,
+        "min": 273,
+        "p50": 273,
+        "p95": 273,
+        "p99": 273,
+        "max": 273,
+        "mean": 273
+      },
+      "warm": {
+        "n": 0,
+        "min": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null,
+        "mean": null
+      },
+      "cold": {
+        "n": 1,
+        "min": 273,
+        "p50": 273,
+        "p95": 273,
+        "p99": 273,
+        "max": 273,
+        "mean": 273
+      },
+      "errs": 0,
+      "misses": 1,
+      "hits": 0,
+      "orderIds": [],
+      "wallMs": 273,
+      "raw": [
+        {
+          "i": 1,
+          "ms": 273,
+          "status": 200,
+          "disc": "miss",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        }
+      ]
+    },
+    {
+      "key": "c-gw-pure",
+      "label": "c gw-pure (demo sum_numbers, sandbox+descubrimiento warm)",
+      "N": 30,
+      "all": {
+        "n": 30,
+        "min": 56,
+        "p50": 62,
+        "p95": 68,
+        "p99": 70,
+        "max": 70,
+        "mean": 62
+      },
+      "warm": {
+        "n": 30,
+        "min": 56,
+        "p50": 62,
+        "p95": 68,
+        "p99": 70,
+        "max": 70,
+        "mean": 62
+      },
+      "cold": {
+        "n": 0,
+        "min": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null,
+        "mean": null
+      },
+      "errs": 0,
+      "misses": 0,
+      "hits": 30,
+      "orderIds": [],
+      "wallMs": 1959,
+      "raw": [
+        {
+          "i": 1,
+          "ms": 66,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 2,
+          "ms": 60,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 3,
+          "ms": 61,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 4,
+          "ms": 60,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 5,
+          "ms": 70,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 6,
+          "ms": 65,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 7,
+          "ms": 65,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 8,
+          "ms": 62,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 9,
+          "ms": 61,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 10,
+          "ms": 63,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 11,
+          "ms": 59,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 12,
+          "ms": 61,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 13,
+          "ms": 63,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 14,
+          "ms": 62,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 15,
+          "ms": 68,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 16,
+          "ms": 63,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 17,
+          "ms": 63,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 18,
+          "ms": 61,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 19,
+          "ms": 60,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 20,
+          "ms": 63,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 21,
+          "ms": 66,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 22,
+          "ms": 62,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 23,
+          "ms": 59,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 24,
+          "ms": 60,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 25,
+          "ms": 61,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 26,
+          "ms": 60,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 27,
+          "ms": 66,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 28,
+          "ms": 60,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 29,
+          "ms": 56,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 30,
+          "ms": 65,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        }
+      ]
+    },
+    {
+      "key": "d-gw-read",
+      "label": "d gw-read (bookstore stock_report, +fetchOrigin GET +D1 warm)",
+      "N": 30,
+      "all": {
+        "n": 30,
+        "min": 104,
+        "p50": 112,
+        "p95": 128,
+        "p99": 132,
+        "max": 132,
+        "mean": 113
+      },
+      "warm": {
+        "n": 30,
+        "min": 104,
+        "p50": 112,
+        "p95": 128,
+        "p99": 132,
+        "max": 132,
+        "mean": 113
+      },
+      "cold": {
+        "n": 0,
+        "min": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null,
+        "mean": null
+      },
+      "errs": 0,
+      "misses": 0,
+      "hits": 30,
+      "orderIds": [],
+      "wallMs": 3528,
+      "raw": [
+        {
+          "i": 1,
+          "ms": 121,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 2,
+          "ms": 112,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 3,
+          "ms": 109,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 4,
+          "ms": 116,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 5,
+          "ms": 132,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 6,
+          "ms": 116,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 7,
+          "ms": 128,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 8,
+          "ms": 105,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 9,
+          "ms": 107,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 10,
+          "ms": 112,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 11,
+          "ms": 108,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 12,
+          "ms": 108,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 13,
+          "ms": 104,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 14,
+          "ms": 107,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 15,
+          "ms": 106,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 16,
+          "ms": 115,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 17,
+          "ms": 114,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 18,
+          "ms": 122,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 19,
+          "ms": 113,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 20,
+          "ms": 106,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 21,
+          "ms": 113,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 22,
+          "ms": 117,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 23,
+          "ms": 113,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 24,
+          "ms": 111,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 25,
+          "ms": 107,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 26,
+          "ms": 109,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 27,
+          "ms": 112,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 28,
+          "ms": 119,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 29,
+          "ms": 116,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 30,
+          "ms": 115,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        }
+      ]
+    },
+    {
+      "key": "e-gw-search",
+      "label": "e gw-search (search_catalog genre=sci-fi max_price=15)",
+      "N": 30,
+      "all": {
+        "n": 30,
+        "min": 85,
+        "p50": 92,
+        "p95": 106,
+        "p99": 108,
+        "max": 108,
+        "mean": 94
+      },
+      "warm": {
+        "n": 30,
+        "min": 85,
+        "p50": 92,
+        "p95": 106,
+        "p99": 108,
+        "max": 108,
+        "mean": 94
+      },
+      "cold": {
+        "n": 0,
+        "min": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null,
+        "mean": null
+      },
+      "errs": 0,
+      "misses": 0,
+      "hits": 30,
+      "orderIds": [],
+      "wallMs": 2927,
+      "raw": [
+        {
+          "i": 1,
+          "ms": 88,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 2,
+          "ms": 90,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 3,
+          "ms": 97,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 4,
+          "ms": 100,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 5,
+          "ms": 86,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 6,
+          "ms": 108,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 7,
+          "ms": 102,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 8,
+          "ms": 89,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 9,
+          "ms": 85,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 10,
+          "ms": 91,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 11,
+          "ms": 92,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 12,
+          "ms": 88,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 13,
+          "ms": 94,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 14,
+          "ms": 87,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 15,
+          "ms": 93,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 16,
+          "ms": 96,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 17,
+          "ms": 106,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 18,
+          "ms": 103,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 19,
+          "ms": 97,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 20,
+          "ms": 96,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 21,
+          "ms": 92,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 22,
+          "ms": 92,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 23,
+          "ms": 96,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 24,
+          "ms": 85,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 25,
+          "ms": 91,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 26,
+          "ms": 85,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 27,
+          "ms": 92,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 28,
+          "ms": 93,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 29,
+          "ms": 102,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 30,
+          "ms": 97,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        }
+      ]
+    },
+    {
+      "key": "f-gw-write-409",
+      "label": "f gw-write-409 (create_order book_id=7 stock 0, 409 controlado)",
+      "N": 30,
+      "all": {
+        "n": 30,
+        "min": 87,
+        "p50": 159,
+        "p95": 181,
+        "p99": 195,
+        "max": 195,
+        "mean": 138
+      },
+      "warm": {
+        "n": 30,
+        "min": 87,
+        "p50": 159,
+        "p95": 181,
+        "p99": 195,
+        "max": 195,
+        "mean": 138
+      },
+      "cold": {
+        "n": 0,
+        "min": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null,
+        "mean": null
+      },
+      "errs": 0,
+      "misses": 0,
+      "hits": 30,
+      "orderIds": [],
+      "wallMs": 4359,
+      "raw": [
+        {
+          "i": 1,
+          "ms": 94,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 2,
+          "ms": 87,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 3,
+          "ms": 116,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 4,
+          "ms": 88,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 5,
+          "ms": 91,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 6,
+          "ms": 94,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 7,
+          "ms": 94,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 8,
+          "ms": 88,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 9,
+          "ms": 99,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 10,
+          "ms": 93,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 11,
+          "ms": 102,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 12,
+          "ms": 97,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 13,
+          "ms": 179,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 14,
+          "ms": 163,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 15,
+          "ms": 136,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 16,
+          "ms": 168,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 17,
+          "ms": 155,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 18,
+          "ms": 195,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 19,
+          "ms": 159,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 20,
+          "ms": 167,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 21,
+          "ms": 177,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 22,
+          "ms": 168,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 23,
+          "ms": 161,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 24,
+          "ms": 168,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 25,
+          "ms": 159,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 26,
+          "ms": 181,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 27,
+          "ms": 164,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 28,
+          "ms": 167,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 29,
+          "ms": 161,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 30,
+          "ms": 162,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        }
+      ]
+    },
+    {
+      "key": "g-gw-write-real",
+      "label": "g gw-write-real (create_order book_id=8 qty=1, MUTA D1)",
+      "N": 3,
+      "all": {
+        "n": 3,
+        "min": 150,
+        "p50": 156,
+        "p95": 216,
+        "p99": 216,
+        "max": 216,
+        "mean": 174
+      },
+      "warm": {
+        "n": 3,
+        "min": 150,
+        "p50": 156,
+        "p95": 216,
+        "p99": 216,
+        "max": 216,
+        "mean": 174
+      },
+      "cold": {
+        "n": 0,
+        "min": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null,
+        "mean": null
+      },
+      "errs": 0,
+      "misses": 0,
+      "hits": 3,
+      "orderIds": [
+        7,
+        8,
+        9
+      ],
+      "wallMs": 557,
+      "raw": [
+        {
+          "i": 1,
+          "ms": 216,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": 7,
+          "err": null
+        },
+        {
+          "i": 2,
+          "ms": 150,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": 8,
+          "err": null
+        },
+        {
+          "i": 3,
+          "ms": 156,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": 9,
+          "err": null
+        }
+      ]
+    },
+    {
+      "key": "h-gw-interrupt",
+      "label": "h gw-interrupt (busy_loop hasta corte del gas)",
+      "N": 3,
+      "all": {
+        "n": 3,
+        "min": 3377,
+        "p50": 3758,
+        "p95": 4903,
+        "p99": 4903,
+        "max": 4903,
+        "mean": 4013
+      },
+      "warm": {
+        "n": 2,
+        "min": 3377,
+        "p50": 3377,
+        "p95": 3758,
+        "p99": 3758,
+        "max": 3758,
+        "mean": 3568
+      },
+      "cold": {
+        "n": 1,
+        "min": 4903,
+        "p50": 4903,
+        "p95": 4903,
+        "p99": 4903,
+        "max": 4903,
+        "mean": 4903
+      },
+      "errs": 0,
+      "misses": 1,
+      "hits": 2,
+      "orderIds": [],
+      "wallMs": 12063,
+      "raw": [
+        {
+          "i": 1,
+          "ms": 3758,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": true,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 2,
+          "ms": 3377,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": true,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 3,
+          "ms": 4903,
+          "status": 200,
+          "disc": "miss",
+          "ok": true,
+          "isError": true,
+          "orderId": null,
+          "err": null
+        }
+      ]
+    },
+    {
+      "key": "i-gw-tools-list",
+      "label": "i gw-tools-list (tools/list bookstore warm)",
+      "N": 20,
+      "all": {
+        "n": 20,
+        "min": 72,
+        "p50": 79,
+        "p95": 88,
+        "p99": 88,
+        "max": 88,
+        "mean": 79
+      },
+      "warm": {
+        "n": 20,
+        "min": 72,
+        "p50": 79,
+        "p95": 88,
+        "p99": 88,
+        "max": 88,
+        "mean": 79
+      },
+      "cold": {
+        "n": 0,
+        "min": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null,
+        "mean": null
+      },
+      "errs": 0,
+      "misses": 0,
+      "hits": 20,
+      "orderIds": [],
+      "wallMs": 1703,
+      "raw": [
+        {
+          "i": 1,
+          "ms": 84,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 2,
+          "ms": 86,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 3,
+          "ms": 77,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 4,
+          "ms": 75,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 5,
+          "ms": 88,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 6,
+          "ms": 79,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 7,
+          "ms": 75,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 8,
+          "ms": 79,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 9,
+          "ms": 72,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 10,
+          "ms": 78,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 11,
+          "ms": 79,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 12,
+          "ms": 83,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 13,
+          "ms": 86,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 14,
+          "ms": 80,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 15,
+          "ms": 72,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 16,
+          "ms": 78,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 17,
+          "ms": 72,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 18,
+          "ms": 88,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 19,
+          "ms": 79,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 20,
+          "ms": 76,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        }
+      ]
+    },
+    {
+      "key": "i-cold",
+      "label": "i-cold (bookstore tools/list, miss forzado tras 65s)",
+      "N": 1,
+      "all": {
+        "n": 1,
+        "min": 340,
+        "p50": 340,
+        "p95": 340,
+        "p99": 340,
+        "max": 340,
+        "mean": 340
+      },
+      "warm": {
+        "n": 0,
+        "min": null,
+        "p50": null,
+        "p95": null,
+        "p99": null,
+        "max": null,
+        "mean": null
+      },
+      "cold": {
+        "n": 1,
+        "min": 340,
+        "p50": 340,
+        "p95": 340,
+        "p99": 340,
+        "max": 340,
+        "mean": 340
+      },
+      "errs": 0,
+      "misses": 1,
+      "hits": 0,
+      "orderIds": [],
+      "wallMs": 65346,
+      "raw": [
+        {
+          "i": 1,
+          "ms": 340,
+          "status": 200,
+          "disc": "miss",
+          "ok": true,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        }
+      ]
+    },
+    {
+      "key": "j-gw-concurrent",
+      "label": "j gw-concurrent (10x stock_report en paralelo x3 rondas)",
+      "N": 30,
+      "all": {
+        "n": 30,
+        "min": 172,
+        "p50": 299,
+        "p95": 10187,
+        "p99": 10277,
+        "max": 10277,
+        "mean": 1346
+      },
+      "warm": {
+        "n": 16,
+        "min": 172,
+        "p50": 237,
+        "p95": 656,
+        "p99": 656,
+        "max": 656,
+        "mean": 273
+      },
+      "cold": {
+        "n": 11,
+        "min": 299,
+        "p50": 514,
+        "p95": 568,
+        "p99": 568,
+        "max": 568,
+        "mean": 489
+      },
+      "errs": 6,
+      "misses": 11,
+      "hits": 16,
+      "orderIds": [],
+      "wallMs": 30650,
+      "raw": [
+        {
+          "i": 1,
+          "round": 1,
+          "ms": 556,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 2,
+          "round": 1,
+          "ms": 561,
+          "status": 200,
+          "disc": "miss",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 3,
+          "round": 1,
+          "ms": 558,
+          "status": 200,
+          "disc": "miss",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 4,
+          "round": 1,
+          "ms": 10277,
+          "status": 500,
+          "disc": "(none)",
+          "ok": false,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 5,
+          "round": 1,
+          "ms": 560,
+          "status": 200,
+          "disc": "miss",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 6,
+          "round": 1,
+          "ms": 558,
+          "status": 200,
+          "disc": "miss",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 7,
+          "round": 1,
+          "ms": 299,
+          "status": 200,
+          "disc": "miss",
+          "ok": true,
+          "isError": true,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 8,
+          "round": 1,
+          "ms": 568,
+          "status": 200,
+          "disc": "miss",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 9,
+          "round": 1,
+          "ms": 377,
+          "status": 200,
+          "disc": "miss",
+          "ok": true,
+          "isError": true,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 10,
+          "round": 1,
+          "ms": 190,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": true,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 1,
+          "round": 2,
+          "ms": 244,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 2,
+          "round": 2,
+          "ms": 432,
+          "status": 200,
+          "disc": "miss",
+          "ok": true,
+          "isError": true,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 3,
+          "round": 2,
+          "ms": 479,
+          "status": 200,
+          "disc": "miss",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 4,
+          "round": 2,
+          "ms": 198,
+          "status": 500,
+          "disc": "hit",
+          "ok": false,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 5,
+          "round": 2,
+          "ms": 276,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 6,
+          "round": 2,
+          "ms": 250,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 7,
+          "round": 2,
+          "ms": 656,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 8,
+          "round": 2,
+          "ms": 191,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": true,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 9,
+          "round": 2,
+          "ms": 10179,
+          "status": 500,
+          "disc": "(none)",
+          "ok": false,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 10,
+          "round": 2,
+          "ms": 172,
+          "status": 500,
+          "disc": "hit",
+          "ok": false,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 1,
+          "round": 3,
+          "ms": 237,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 2,
+          "round": 3,
+          "ms": 183,
+          "status": 500,
+          "disc": "hit",
+          "ok": false,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 3,
+          "round": 3,
+          "ms": 10187,
+          "status": 500,
+          "disc": "(none)",
+          "ok": false,
+          "isError": null,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 4,
+          "round": 3,
+          "ms": 266,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 5,
+          "round": 3,
+          "ms": 213,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": true,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 6,
+          "round": 3,
+          "ms": 261,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 7,
+          "round": 3,
+          "ms": 265,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 8,
+          "round": 3,
+          "ms": 473,
+          "status": 200,
+          "disc": "miss",
+          "ok": true,
+          "isError": true,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 9,
+          "round": 3,
+          "ms": 514,
+          "status": 200,
+          "disc": "miss",
+          "ok": true,
+          "isError": false,
+          "orderId": null,
+          "err": null
+        },
+        {
+          "i": 10,
+          "round": 3,
+          "ms": 204,
+          "status": 200,
+          "disc": "hit",
+          "ok": true,
+          "isError": true,
+          "orderId": null,
+          "err": null
+        }
+      ]
+    },
+    {
+      "key": "x-gw-ping",
+      "label": "x gw-ping (GET gateway root, roundtrip worker crudo)",
+      "N": 30,
+      "all": {
+        "n": 30,
+        "min": 50,
+        "p50": 55,
+        "p95": 62,
+        "p99": 63,
+        "max": 63,
+        "mean": 55
+      },
+      "warm": null,
+      "cold": null,
+      "errs": 0,
+      "misses": 0,
+      "hits": 0,
+      "orderIds": [],
+      "wallMs": 1834,
+      "raw": [
+        {
+          "i": 1,
+          "ms": 50,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 2,
+          "ms": 55,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 3,
+          "ms": 54,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 4,
+          "ms": 63,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 5,
+          "ms": 54,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 6,
+          "ms": 51,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 7,
+          "ms": 54,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 8,
+          "ms": 55,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 9,
+          "ms": 58,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 10,
+          "ms": 53,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 11,
+          "ms": 55,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 12,
+          "ms": 52,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 13,
+          "ms": 56,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 14,
+          "ms": 56,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 15,
+          "ms": 55,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 16,
+          "ms": 62,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 17,
+          "ms": 57,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 18,
+          "ms": 53,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 19,
+          "ms": 54,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 20,
+          "ms": 54,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 21,
+          "ms": 53,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 22,
+          "ms": 58,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 23,
+          "ms": 53,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 24,
+          "ms": 55,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 25,
+          "ms": 55,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 26,
+          "ms": 53,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 27,
+          "ms": 57,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 28,
+          "ms": 56,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 29,
+          "ms": 56,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 30,
+          "ms": 57,
+          "status": 200,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        }
+      ]
+    },
+    {
+      "key": "x-book-ping",
+      "label": "x book-ping (GET bookstore root 404, roundtrip worker crudo)",
+      "N": 30,
+      "all": {
+        "n": 30,
+        "min": 49,
+        "p50": 55,
+        "p95": 68,
+        "p99": 161,
+        "max": 161,
+        "mean": 59
+      },
+      "warm": null,
+      "cold": null,
+      "errs": 0,
+      "misses": 0,
+      "hits": 0,
+      "orderIds": [],
+      "wallMs": 2065,
+      "raw": [
+        {
+          "i": 1,
+          "ms": 161,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 2,
+          "ms": 53,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 3,
+          "ms": 61,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 4,
+          "ms": 68,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 5,
+          "ms": 57,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 6,
+          "ms": 56,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 7,
+          "ms": 52,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 8,
+          "ms": 54,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 9,
+          "ms": 51,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 10,
+          "ms": 56,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 11,
+          "ms": 53,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 12,
+          "ms": 53,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 13,
+          "ms": 52,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 14,
+          "ms": 62,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 15,
+          "ms": 56,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 16,
+          "ms": 55,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 17,
+          "ms": 52,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 18,
+          "ms": 58,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 19,
+          "ms": 51,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 20,
+          "ms": 61,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 21,
+          "ms": 51,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 22,
+          "ms": 53,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 23,
+          "ms": 49,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 24,
+          "ms": 55,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 25,
+          "ms": 56,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 26,
+          "ms": 56,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 27,
+          "ms": 51,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 28,
+          "ms": 55,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 29,
+          "ms": 60,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        },
+        {
+          "i": 30,
+          "ms": 59,
+          "status": 404,
+          "disc": "(n/a)",
+          "ok": true,
+          "err": null
+        }
+      ]
+    }
+  ],
+  "finishedAt": "2026-07-02T19:50:23.654Z"
+}

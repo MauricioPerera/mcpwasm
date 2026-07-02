@@ -1,0 +1,393 @@
+
+=== BENCHMARK mcpwasm — run=2 inicio=2026-07-02T19:51:48.387Z ===
+gateway=https://llmstxt-gateway.rckflr.workers.dev/mcp
+
+
+--- a baseline-direct (GET /api/stock-report, sin gateway) (N=30, warmup=1, kind=seq) ---
+  a-baseline-direct # 1    103ms  status=200  disc=(n/a)
+  a-baseline-direct # 2     99ms  status=200  disc=(n/a)
+  a-baseline-direct # 3     91ms  status=200  disc=(n/a)
+  a-baseline-direct # 4    100ms  status=200  disc=(n/a)
+  a-baseline-direct # 5    101ms  status=200  disc=(n/a)
+  a-baseline-direct # 6     99ms  status=200  disc=(n/a)
+  a-baseline-direct # 7     95ms  status=200  disc=(n/a)
+  a-baseline-direct # 8    106ms  status=200  disc=(n/a)
+  a-baseline-direct # 9    105ms  status=200  disc=(n/a)
+  a-baseline-direct #10     99ms  status=200  disc=(n/a)
+  a-baseline-direct #11     90ms  status=200  disc=(n/a)
+  a-baseline-direct #12     92ms  status=200  disc=(n/a)
+  a-baseline-direct #13     95ms  status=200  disc=(n/a)
+  a-baseline-direct #14    108ms  status=200  disc=(n/a)
+  a-baseline-direct #15     99ms  status=200  disc=(n/a)
+  a-baseline-direct #16     98ms  status=200  disc=(n/a)
+  a-baseline-direct #17    116ms  status=200  disc=(n/a)
+  a-baseline-direct #18     98ms  status=200  disc=(n/a)
+  a-baseline-direct #19    108ms  status=200  disc=(n/a)
+  a-baseline-direct #20    103ms  status=200  disc=(n/a)
+  a-baseline-direct #21    110ms  status=200  disc=(n/a)
+  a-baseline-direct #22    112ms  status=200  disc=(n/a)
+  a-baseline-direct #23    102ms  status=200  disc=(n/a)
+  a-baseline-direct #24     93ms  status=200  disc=(n/a)
+  a-baseline-direct #25    106ms  status=200  disc=(n/a)
+  a-baseline-direct #26    102ms  status=200  disc=(n/a)
+  a-baseline-direct #27    115ms  status=200  disc=(n/a)
+  a-baseline-direct #28    101ms  status=200  disc=(n/a)
+  a-baseline-direct #29    107ms  status=200  disc=(n/a)
+  a-baseline-direct #30    114ms  status=200  disc=(n/a)
+  a-baseline-direct    ALL[n=30 min=90 p50=101 p95=115 p99=116 max=116] errs=0
+  wall escenario: 3719ms
+
+--- b poc-sandbox (create_payment, sandbox sync, sin auth) (N=30, warmup=1, kind=seq) ---
+  b-poc-sandbox # 1     70ms  status=200  disc=(n/a)
+  b-poc-sandbox # 2     67ms  status=200  disc=(n/a)
+  b-poc-sandbox # 3     64ms  status=200  disc=(n/a)
+  b-poc-sandbox # 4     65ms  status=200  disc=(n/a)
+  b-poc-sandbox # 5     61ms  status=200  disc=(n/a)
+  b-poc-sandbox # 6     67ms  status=200  disc=(n/a)
+  b-poc-sandbox # 7     61ms  status=200  disc=(n/a)
+  b-poc-sandbox # 8     67ms  status=200  disc=(n/a)
+  b-poc-sandbox # 9     68ms  status=200  disc=(n/a)
+  b-poc-sandbox #10     66ms  status=200  disc=(n/a)
+  b-poc-sandbox #11     67ms  status=200  disc=(n/a)
+  b-poc-sandbox #12     61ms  status=200  disc=(n/a)
+  b-poc-sandbox #13     62ms  status=200  disc=(n/a)
+  b-poc-sandbox #14     58ms  status=200  disc=(n/a)
+  b-poc-sandbox #15     61ms  status=200  disc=(n/a)
+  b-poc-sandbox #16     64ms  status=200  disc=(n/a)
+  b-poc-sandbox #17     63ms  status=200  disc=(n/a)
+  b-poc-sandbox #18     69ms  status=200  disc=(n/a)
+  b-poc-sandbox #19     65ms  status=200  disc=(n/a)
+  b-poc-sandbox #20     70ms  status=200  disc=(n/a)
+  b-poc-sandbox #21     60ms  status=200  disc=(n/a)
+  b-poc-sandbox #22     61ms  status=200  disc=(n/a)
+  b-poc-sandbox #23     62ms  status=200  disc=(n/a)
+  b-poc-sandbox #24     60ms  status=200  disc=(n/a)
+  b-poc-sandbox #25     58ms  status=200  disc=(n/a)
+  b-poc-sandbox #26     65ms  status=200  disc=(n/a)
+  b-poc-sandbox #27     64ms  status=200  disc=(n/a)
+  b-poc-sandbox #28     63ms  status=200  disc=(n/a)
+  b-poc-sandbox #29     62ms  status=200  disc=(n/a)
+  b-poc-sandbox #30     61ms  status=200  disc=(n/a)
+  b-poc-sandbox        ALL[n=30 min=58 p50=63 p95=70 p99=70 max=70] errs=0
+  wall escenario: 2255ms
+
+--- c-cold (demo sum_numbers, miss forzado tras 65s) (N=1, warmup=0, kind=cold, sleepBefore=65s) ---
+  c-cold: durmiendo 65s para expirar el cache de descubrimiento (TTL 60s)...
+  c-cold #1    397ms  status=200  disc=miss isError=false
+  c-cold               ALL[n=1 min=397 p50=397 p95=397 p99=397 max=397] errs=0
+                         warm(hit)[n=0]
+                         cold(miss)[n=1 min=397 p50=397 p95=397 p99=397 max=397]
+  wall escenario: 65402ms
+
+--- d-cold (bookstore stock_report, miss forzado) (N=1, warmup=0, kind=cold) ---
+  d-cold #1    257ms  status=200  disc=miss isError=false
+  d-cold               ALL[n=1 min=257 p50=257 p95=257 p99=257 max=257] errs=0
+                         warm(hit)[n=0]
+                         cold(miss)[n=1 min=257 p50=257 p95=257 p99=257 max=257]
+  wall escenario: 258ms
+
+--- c gw-pure (demo sum_numbers, sandbox+descubrimiento warm) (N=30, warmup=1, kind=seq) ---
+  c-gw-pure # 1     81ms  status=200  disc=hit isError=false
+  c-gw-pure # 2     68ms  status=200  disc=hit isError=false
+  c-gw-pure # 3     66ms  status=200  disc=hit isError=false
+  c-gw-pure # 4     64ms  status=200  disc=hit isError=false
+  c-gw-pure # 5     64ms  status=200  disc=hit isError=false
+  c-gw-pure # 6     62ms  status=200  disc=hit isError=false
+  c-gw-pure # 7     63ms  status=200  disc=hit isError=false
+  c-gw-pure # 8     62ms  status=200  disc=hit isError=false
+  c-gw-pure # 9     69ms  status=200  disc=hit isError=false
+  c-gw-pure #10     71ms  status=200  disc=hit isError=false
+  c-gw-pure #11     71ms  status=200  disc=hit isError=false
+  c-gw-pure #12     67ms  status=200  disc=hit isError=false
+  c-gw-pure #13     66ms  status=200  disc=hit isError=false
+  c-gw-pure #14     65ms  status=200  disc=hit isError=false
+  c-gw-pure #15     69ms  status=200  disc=hit isError=false
+  c-gw-pure #16     76ms  status=200  disc=hit isError=false
+  c-gw-pure #17     70ms  status=200  disc=hit isError=false
+  c-gw-pure #18     64ms  status=200  disc=hit isError=false
+  c-gw-pure #19     63ms  status=200  disc=hit isError=false
+  c-gw-pure #20     70ms  status=200  disc=hit isError=false
+  c-gw-pure #21     69ms  status=200  disc=hit isError=false
+  c-gw-pure #22    113ms  status=200  disc=hit isError=false
+  c-gw-pure #23     64ms  status=200  disc=hit isError=false
+  c-gw-pure #24     74ms  status=200  disc=hit isError=false
+  c-gw-pure #25     62ms  status=200  disc=hit isError=false
+  c-gw-pure #26     57ms  status=200  disc=hit isError=false
+  c-gw-pure #27     62ms  status=200  disc=hit isError=false
+  c-gw-pure #28     65ms  status=200  disc=hit isError=false
+  c-gw-pure #29     65ms  status=200  disc=hit isError=false
+  c-gw-pure #30     63ms  status=200  disc=hit isError=false
+  c-gw-pure            ALL[n=30 min=57 p50=65 p95=81 p99=113 max=113] errs=0
+                         warm(hit)[n=30 min=57 p50=65 p95=81 p99=113 max=113]
+                         cold(miss)[n=0]
+  wall escenario: 2145ms
+
+--- d gw-read (bookstore stock_report, +fetchOrigin GET +D1 warm) (N=30, warmup=1, kind=seq) ---
+  d-gw-read # 1    107ms  status=200  disc=hit isError=false
+  d-gw-read # 2    110ms  status=200  disc=hit isError=false
+  d-gw-read # 3    104ms  status=200  disc=hit isError=false
+  d-gw-read # 4    113ms  status=200  disc=hit isError=false
+  d-gw-read # 5    119ms  status=200  disc=hit isError=false
+  d-gw-read # 6    108ms  status=200  disc=hit isError=false
+  d-gw-read # 7    115ms  status=200  disc=hit isError=false
+  d-gw-read # 8    126ms  status=200  disc=hit isError=false
+  d-gw-read # 9    264ms  status=200  disc=hit isError=false
+  d-gw-read #10    115ms  status=200  disc=hit isError=false
+  d-gw-read #11    118ms  status=200  disc=hit isError=false
+  d-gw-read #12    112ms  status=200  disc=hit isError=false
+  d-gw-read #13    113ms  status=200  disc=hit isError=false
+  d-gw-read #14    109ms  status=200  disc=hit isError=false
+  d-gw-read #15    106ms  status=200  disc=hit isError=false
+  d-gw-read #16    111ms  status=200  disc=hit isError=false
+  d-gw-read #17    121ms  status=200  disc=hit isError=false
+  d-gw-read #18    111ms  status=200  disc=hit isError=false
+  d-gw-read #19    113ms  status=200  disc=hit isError=false
+  d-gw-read #20    113ms  status=200  disc=hit isError=false
+  d-gw-read #21    108ms  status=200  disc=hit isError=false
+  d-gw-read #22    104ms  status=200  disc=hit isError=false
+  d-gw-read #23    111ms  status=200  disc=hit isError=false
+  d-gw-read #24    114ms  status=200  disc=hit isError=false
+  d-gw-read #25    110ms  status=200  disc=hit isError=false
+  d-gw-read #26    125ms  status=200  disc=hit isError=false
+  d-gw-read #27    122ms  status=200  disc=hit isError=false
+  d-gw-read #28    120ms  status=200  disc=hit isError=false
+  d-gw-read #29    116ms  status=200  disc=hit isError=false
+  d-gw-read #30    119ms  status=200  disc=hit isError=false
+  d-gw-read            ALL[n=30 min=104 p50=113 p95=126 p99=264 max=264] errs=0
+                         warm(hit)[n=30 min=104 p50=113 p95=126 p99=264 max=264]
+                         cold(miss)[n=0]
+  wall escenario: 3698ms
+
+--- e gw-search (search_catalog genre=sci-fi max_price=15) (N=30, warmup=1, kind=seq) ---
+  e-gw-search # 1     96ms  status=200  disc=hit isError=false
+  e-gw-search # 2     96ms  status=200  disc=hit isError=false
+  e-gw-search # 3     86ms  status=200  disc=hit isError=false
+  e-gw-search # 4     97ms  status=200  disc=hit isError=false
+  e-gw-search # 5    150ms  status=200  disc=hit isError=false
+  e-gw-search # 6     98ms  status=200  disc=hit isError=false
+  e-gw-search # 7     90ms  status=200  disc=hit isError=false
+  e-gw-search # 8     96ms  status=200  disc=hit isError=false
+  e-gw-search # 9     95ms  status=200  disc=hit isError=false
+  e-gw-search #10     93ms  status=200  disc=hit isError=false
+  e-gw-search #11     95ms  status=200  disc=hit isError=false
+  e-gw-search #12     90ms  status=200  disc=hit isError=false
+  e-gw-search #13     88ms  status=200  disc=hit isError=false
+  e-gw-search #14     96ms  status=200  disc=hit isError=false
+  e-gw-search #15     93ms  status=200  disc=hit isError=false
+  e-gw-search #16     99ms  status=200  disc=hit isError=false
+  e-gw-search #17     96ms  status=200  disc=hit isError=false
+  e-gw-search #18    123ms  status=200  disc=hit isError=false
+  e-gw-search #19    100ms  status=200  disc=hit isError=false
+  e-gw-search #20     90ms  status=200  disc=hit isError=false
+  e-gw-search #21     95ms  status=200  disc=hit isError=false
+  e-gw-search #22     96ms  status=200  disc=hit isError=false
+  e-gw-search #23     98ms  status=200  disc=hit isError=false
+  e-gw-search #24     89ms  status=200  disc=hit isError=false
+  e-gw-search #25     90ms  status=200  disc=hit isError=false
+  e-gw-search #26    102ms  status=200  disc=hit isError=false
+  e-gw-search #27    107ms  status=200  disc=hit isError=false
+  e-gw-search #28    109ms  status=200  disc=hit isError=false
+  e-gw-search #29    106ms  status=200  disc=hit isError=false
+  e-gw-search #30    100ms  status=200  disc=hit isError=false
+  e-gw-search          ALL[n=30 min=86 p50=96 p95=123 p99=150 max=150] errs=0
+                         warm(hit)[n=30 min=86 p50=96 p95=123 p99=150 max=150]
+                         cold(miss)[n=0]
+  wall escenario: 3080ms
+
+--- f gw-write-409 (create_order book_id=7 stock 0, 409 controlado) (N=30, warmup=1, kind=seq) ---
+  f-gw-write-409 # 1    102ms  status=200  disc=hit isError=false
+  f-gw-write-409 # 2    106ms  status=200  disc=hit isError=false
+  f-gw-write-409 # 3     94ms  status=200  disc=hit isError=false
+  f-gw-write-409 # 4     96ms  status=200  disc=hit isError=false
+  f-gw-write-409 # 5    107ms  status=200  disc=hit isError=false
+  f-gw-write-409 # 6     97ms  status=200  disc=hit isError=false
+  f-gw-write-409 # 7     91ms  status=200  disc=hit isError=false
+  f-gw-write-409 # 8     97ms  status=200  disc=hit isError=false
+  f-gw-write-409 # 9    103ms  status=200  disc=hit isError=false
+  f-gw-write-409 #10     99ms  status=200  disc=hit isError=false
+  f-gw-write-409 #11    106ms  status=200  disc=hit isError=false
+  f-gw-write-409 #12     90ms  status=200  disc=hit isError=false
+  f-gw-write-409 #13     90ms  status=200  disc=hit isError=false
+  f-gw-write-409 #14     89ms  status=200  disc=hit isError=false
+  f-gw-write-409 #15    100ms  status=200  disc=hit isError=false
+  f-gw-write-409 #16     96ms  status=200  disc=hit isError=false
+  f-gw-write-409 #17     96ms  status=200  disc=hit isError=false
+  f-gw-write-409 #18     95ms  status=200  disc=hit isError=false
+  f-gw-write-409 #19     96ms  status=200  disc=hit isError=false
+  f-gw-write-409 #20    106ms  status=200  disc=hit isError=false
+  f-gw-write-409 #21    100ms  status=200  disc=hit isError=false
+  f-gw-write-409 #22     99ms  status=200  disc=hit isError=false
+  f-gw-write-409 #23     98ms  status=200  disc=hit isError=false
+  f-gw-write-409 #24     88ms  status=200  disc=hit isError=false
+  f-gw-write-409 #25     88ms  status=200  disc=hit isError=false
+  f-gw-write-409 #26    102ms  status=200  disc=hit isError=false
+  f-gw-write-409 #27     98ms  status=200  disc=hit isError=false
+  f-gw-write-409 #28     91ms  status=200  disc=hit isError=false
+  f-gw-write-409 #29    105ms  status=200  disc=hit isError=false
+  f-gw-write-409 #30     99ms  status=200  disc=hit isError=false
+  f-gw-write-409       ALL[n=30 min=88 p50=97 p95=106 p99=107 max=107] errs=0
+                         warm(hit)[n=30 min=88 p50=97 p95=106 p99=107 max=107]
+                         cold(miss)[n=0]
+  wall escenario: 3046ms
+
+--- g gw-write-real (create_order book_id=8 qty=1, MUTA D1) (N=3, warmup=0, kind=seq) ---
+  g-gw-write-real # 1    153ms  status=200  disc=hit isError=false order=10
+  g-gw-write-real # 2    146ms  status=200  disc=hit isError=false order=11
+  g-gw-write-real # 3    152ms  status=200  disc=hit isError=false order=12
+  g-gw-write-real      ALL[n=3 min=146 p50=152 p95=153 p99=153 max=153] errs=0
+                         warm(hit)[n=3 min=146 p50=152 p95=153 p99=153 max=153]
+                         cold(miss)[n=0]
+    orders creadas: [10,11,12]
+  wall escenario: 453ms
+
+--- h gw-interrupt (busy_loop hasta corte del gas) (N=3, warmup=0, kind=seq) ---
+  h-gw-interrupt # 1   3203ms  status=200  disc=hit isError=true
+  h-gw-interrupt # 2   3027ms  status=200  disc=hit isError=true
+  h-gw-interrupt # 3   3442ms  status=200  disc=hit isError=true
+  h-gw-interrupt       ALL[n=3 min=3027 p50=3203 p95=3442 p99=3442 max=3442] errs=0
+                         warm(hit)[n=3 min=3027 p50=3203 p95=3442 p99=3442 max=3442]
+                         cold(miss)[n=0]
+  wall escenario: 9677ms
+
+--- i gw-tools-list (tools/list bookstore warm) (N=20, warmup=1, kind=seq) ---
+  i-gw-tools-list # 1     74ms  status=200  disc=hit
+  i-gw-tools-list # 2     68ms  status=200  disc=hit
+  i-gw-tools-list # 3     81ms  status=200  disc=hit
+  i-gw-tools-list # 4     68ms  status=200  disc=hit
+  i-gw-tools-list # 5     90ms  status=200  disc=hit
+  i-gw-tools-list # 6     96ms  status=200  disc=hit
+  i-gw-tools-list # 7    112ms  status=200  disc=hit
+  i-gw-tools-list # 8     78ms  status=200  disc=hit
+  i-gw-tools-list # 9     78ms  status=200  disc=hit
+  i-gw-tools-list #10     73ms  status=200  disc=hit
+  i-gw-tools-list #11     69ms  status=200  disc=hit
+  i-gw-tools-list #12     68ms  status=200  disc=hit
+  i-gw-tools-list #13     69ms  status=200  disc=hit
+  i-gw-tools-list #14     69ms  status=200  disc=hit
+  i-gw-tools-list #15     68ms  status=200  disc=hit
+  i-gw-tools-list #16     69ms  status=200  disc=hit
+  i-gw-tools-list #17     70ms  status=200  disc=hit
+  i-gw-tools-list #18     69ms  status=200  disc=hit
+  i-gw-tools-list #19     72ms  status=200  disc=hit
+  i-gw-tools-list #20     72ms  status=200  disc=hit
+  i-gw-tools-list      ALL[n=20 min=68 p50=70 p95=96 p99=112 max=112] errs=0
+                         warm(hit)[n=20 min=68 p50=70 p95=96 p99=112 max=112]
+                         cold(miss)[n=0]
+  wall escenario: 1604ms
+
+--- i-cold (bookstore tools/list, miss forzado tras 65s) (N=1, warmup=0, kind=cold, sleepBefore=65s) ---
+  i-cold: durmiendo 65s para expirar el cache de descubrimiento (TTL 60s)...
+  i-cold #1   1226ms  status=200  disc=miss
+  i-cold               ALL[n=1 min=1226 p50=1226 p95=1226 p99=1226 max=1226] errs=0
+                         warm(hit)[n=0]
+                         cold(miss)[n=1 min=1226 p50=1226 p95=1226 p99=1226 max=1226]
+  wall escenario: 66242ms
+
+--- j gw-concurrent (10x stock_report en paralelo x3 rondas) (N=30, warmup=0, kind=concurrent) ---
+  j-gw-concurrent round 1: wall=1870ms  miss=6/10  err=0/10
+    r1 # 1    512ms  status=200  disc=hit
+    r1 # 2    509ms  status=200  disc=miss
+    r1 # 3    508ms  status=200  disc=miss
+    r1 # 4    509ms  status=200  disc=miss
+    r1 # 5    509ms  status=200  disc=miss
+    r1 # 6    414ms  status=200  disc=miss
+    r1 # 7    515ms  status=200  disc=miss
+    r1 # 8   1868ms  status=200  disc=hit
+    r1 # 9    189ms  status=200  disc=hit
+    r1 #10   1868ms  status=200  disc=hit
+  j-gw-concurrent round 2: wall=870ms  miss=0/10  err=0/10
+    r2 # 1    136ms  status=200  disc=hit
+    r2 # 2    164ms  status=200  disc=hit
+    r2 # 3    141ms  status=200  disc=hit
+    r2 # 4    167ms  status=200  disc=hit
+    r2 # 5    136ms  status=200  disc=hit
+    r2 # 6    164ms  status=200  disc=hit
+    r2 # 7    102ms  status=200  disc=hit
+    r2 # 8    850ms  status=200  disc=hit
+    r2 # 9     78ms  status=200  disc=hit
+    r2 #10    868ms  status=200  disc=hit
+  j-gw-concurrent round 3: wall=830ms  miss=0/10  err=0/10
+    r3 # 1    122ms  status=200  disc=hit
+    r3 # 2    150ms  status=200  disc=hit
+    r3 # 3    153ms  status=200  disc=hit
+    r3 # 4    136ms  status=200  disc=hit
+    r3 # 5    151ms  status=200  disc=hit
+    r3 # 6    120ms  status=200  disc=hit
+    r3 # 7     87ms  status=200  disc=hit
+    r3 # 8    825ms  status=200  disc=hit
+    r3 # 9     78ms  status=200  disc=hit
+    r3 #10    829ms  status=200  disc=hit
+  j-gw-concurrent      ALL[n=30 min=78 p50=164 p95=1868 p99=1868 max=1868] errs=0
+                         warm(hit)[n=24 min=78 p50=151 p95=1868 p99=1868 max=1868]
+                         cold(miss)[n=6 min=414 p50=509 p95=515 p99=515 max=515]
+  wall escenario: 3571ms
+
+--- x gw-ping (GET gateway root, roundtrip worker crudo) (N=30, warmup=1, kind=seq) ---
+  x-gw-ping # 1     58ms  status=200  disc=(n/a)
+  x-gw-ping # 2     58ms  status=200  disc=(n/a)
+  x-gw-ping # 3     58ms  status=200  disc=(n/a)
+  x-gw-ping # 4     61ms  status=200  disc=(n/a)
+  x-gw-ping # 5     62ms  status=200  disc=(n/a)
+  x-gw-ping # 6     59ms  status=200  disc=(n/a)
+  x-gw-ping # 7     74ms  status=200  disc=(n/a)
+  x-gw-ping # 8     60ms  status=200  disc=(n/a)
+  x-gw-ping # 9     62ms  status=200  disc=(n/a)
+  x-gw-ping #10     61ms  status=200  disc=(n/a)
+  x-gw-ping #11     56ms  status=200  disc=(n/a)
+  x-gw-ping #12     55ms  status=200  disc=(n/a)
+  x-gw-ping #13     57ms  status=200  disc=(n/a)
+  x-gw-ping #14     57ms  status=200  disc=(n/a)
+  x-gw-ping #15     57ms  status=200  disc=(n/a)
+  x-gw-ping #16     52ms  status=200  disc=(n/a)
+  x-gw-ping #17     53ms  status=200  disc=(n/a)
+  x-gw-ping #18     56ms  status=200  disc=(n/a)
+  x-gw-ping #19     57ms  status=200  disc=(n/a)
+  x-gw-ping #20     58ms  status=200  disc=(n/a)
+  x-gw-ping #21     55ms  status=200  disc=(n/a)
+  x-gw-ping #22     55ms  status=200  disc=(n/a)
+  x-gw-ping #23     55ms  status=200  disc=(n/a)
+  x-gw-ping #24     55ms  status=200  disc=(n/a)
+  x-gw-ping #25     56ms  status=200  disc=(n/a)
+  x-gw-ping #26     55ms  status=200  disc=(n/a)
+  x-gw-ping #27     59ms  status=200  disc=(n/a)
+  x-gw-ping #28     56ms  status=200  disc=(n/a)
+  x-gw-ping #29     50ms  status=200  disc=(n/a)
+  x-gw-ping #30    148ms  status=200  disc=(n/a)
+  x-gw-ping            ALL[n=30 min=50 p50=57 p95=74 p99=148 max=148] errs=0
+  wall escenario: 1889ms
+
+--- x book-ping (GET bookstore root 404, roundtrip worker crudo) (N=30, warmup=1, kind=seq) ---
+  x-book-ping # 1    159ms  status=404  disc=(n/a)
+  x-book-ping # 2     48ms  status=404  disc=(n/a)
+  x-book-ping # 3     55ms  status=404  disc=(n/a)
+  x-book-ping # 4     60ms  status=404  disc=(n/a)
+  x-book-ping # 5     57ms  status=404  disc=(n/a)
+  x-book-ping # 6     55ms  status=404  disc=(n/a)
+  x-book-ping # 7     77ms  status=404  disc=(n/a)
+  x-book-ping # 8     77ms  status=404  disc=(n/a)
+  x-book-ping # 9     57ms  status=404  disc=(n/a)
+  x-book-ping #10     54ms  status=404  disc=(n/a)
+  x-book-ping #11     59ms  status=404  disc=(n/a)
+  x-book-ping #12     65ms  status=404  disc=(n/a)
+  x-book-ping #13     57ms  status=404  disc=(n/a)
+  x-book-ping #14     59ms  status=404  disc=(n/a)
+  x-book-ping #15     62ms  status=404  disc=(n/a)
+  x-book-ping #16     65ms  status=404  disc=(n/a)
+  x-book-ping #17     77ms  status=404  disc=(n/a)
+  x-book-ping #18     69ms  status=404  disc=(n/a)
+  x-book-ping #19     94ms  status=404  disc=(n/a)
+  x-book-ping #20    113ms  status=404  disc=(n/a)
+  x-book-ping #21     78ms  status=404  disc=(n/a)
+  x-book-ping #22     70ms  status=404  disc=(n/a)
+  x-book-ping #23     67ms  status=404  disc=(n/a)
+  x-book-ping #24     68ms  status=404  disc=(n/a)
+  x-book-ping #25     93ms  status=404  disc=(n/a)
+  x-book-ping #26    100ms  status=404  disc=(n/a)
+  x-book-ping #27     84ms  status=404  disc=(n/a)
+  x-book-ping #28     71ms  status=404  disc=(n/a)
+  x-book-ping #29     62ms  status=404  disc=(n/a)
+  x-book-ping #30     84ms  status=404  disc=(n/a)
+  x-book-ping          ALL[n=30 min=48 p50=67 p95=113 p99=159 max=159] errs=0
+  wall escenario: 2364ms
+
+=== fin run=2 a las 2026-07-02T19:54:37.795Z — bench/results.json escrito ===

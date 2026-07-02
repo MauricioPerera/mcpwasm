@@ -27,6 +27,12 @@ registerTool({
     }
     // host.memorySearch(query, k) es la capability que implementa el gateway
     // (provisional). Devuelve {hits:[{text,score,title,concept_id}]} o {error}.
+    // Check defensivo: si la capability no se inyecto, devolver un error de tool
+    // claro en vez de lanzar TypeError (host es undefined / no tiene el metodo).
+    if (typeof host === "undefined" || host === null ||
+        typeof host.memorySearch !== "function") {
+      return { ok: false, error: "memory capability unavailable" };
+    }
     const r = await host.memorySearch(args.q, k);
     if (r && r.error) throw new Error(r.error);
     return r;

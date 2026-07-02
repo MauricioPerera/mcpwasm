@@ -1,6 +1,6 @@
 # Extension: Skill Attestations
 
-**Status:** Draft (v0.1)
+**Status:** Draft (v0.2)
 **Date:** 2026-07-02
 **Extends:** [Extension: Executable Skills](./ext-executable-skills.md) (v0.3)
 **Design donor:** the three-layer knowledge-governance PoC in [ccdd/examples/okf-integration](https://github.com/MauricioPerera/ccdd/tree/main/examples/okf-integration) (working Ed25519 attestation + freshness tooling), adapted here to executable skills.
@@ -30,7 +30,7 @@ This layer is **OPTIONAL**. Publishers who skip it lose nothing they have today;
   "attester": "human:mauricio",
   "signed_on": "2026-07-02",
   "valid_until": "2027-07-02",
-  "signature": "<ed25519-signature-hex>",
+  "signature": "<ed25519-signature-base64>",
   "note": "reviewed for v0.3 capability contract; no data exfiltration paths"
 }
 ```
@@ -41,8 +41,8 @@ This layer is **OPTIONAL**. Publishers who skip it lose nothing they have today;
 | `skill` | REQUIRED | Skill name as it appears in `llms.txt`. |
 | `tool_sha256` | REQUIRED | The exact artifact hash reviewed. A new artifact version voids the attestation by construction. |
 | `attester` | REQUIRED | Reviewer identity, `<type>:<name>` (e.g. `human:mauricio`). |
-| `signed_on` / `valid_until` | REQUIRED | Validity window, ISO dates. Past `valid_until` the attestation is EXPIRED. |
-| `signature` | REQUIRED | Ed25519 over the signing payload (§2.2), lowercase hex. |
+| `signed_on` / `valid_until` | REQUIRED | Validity window, `YYYY-MM-DD` in UTC. An attestation is EXPIRED when the current UTC date is strictly greater than `valid_until` (the end date is inclusive). |
+| `signature` | REQUIRED | Ed25519 over the signing payload (§2.2), **base64** (aligned with the core RFC tooling, `scripts/verify_signatures.py`). |
 | `note` | OPTIONAL | Human context; not part of the signed payload semantics beyond §2.2. |
 
 ### 2.2 Signing payload
@@ -71,7 +71,7 @@ Verification requires knowing reviewers' public keys. The registry is **runtime-
 
 ```json
 {
-  "human:mauricio": { "public_key": "<ed25519-public-key-hex>", "registered_at": "2026-07-02" }
+  "human:mauricio": { "public_key": "<ed25519-public-key-base64>", "registered_at": "2026-07-02" }
 }
 ```
 
@@ -87,6 +87,8 @@ A runtime that supports this extension evaluates, per skill, at discovery time:
 | `expired` | matching attestations exist but all are past `valid_until` |
 | `invalid` | a signature fails verification (SHOULD be surfaced loudly — a forged attestation is worse than none) |
 | `unattested` | no matching attestation (including hash mismatch after a skill update) |
+
+**Precedence with multiple attestations:** `invalid` dominates — if any attestation for the skill carries a signature that FAILS verification against a *registered* key, the skill's verdict is `invalid` regardless of other valid attestations (a forged signature is a red flag, not noise; and since `attestations.json` is publisher-controlled, an attacker poisoning it can only block the publisher's own skills). Otherwise: any valid, in-window attestation → `attested`; else any expired one → `expired`; else `unattested`. Attestations from unregistered attesters are ignored for precedence (they are unverifiable, verdict input UNKNOWN-ATTESTER only as diagnostics).
 
 Runtimes SHOULD support at least two modes:
 
@@ -110,4 +112,5 @@ Verification MUST be independently computable from static files: fetch `attestat
 
 ## 7. Changelog
 
+- **v0.2 (2026-07-02):** Review fixes: base64 encoding for signatures/keys (aligned with core RFC tooling), canonical-origin and date normalization rules for the signing payload, inclusive-end UTC expiry semantics, and explicit verdict precedence (invalid dominates).
 - **v0.1 (2026-07-02):** Initial draft, adapted from the ccdd okf-integration PoC (Ed25519 attestations + freshness windows + key registry), with origin-binding added for the cross-site skill context.

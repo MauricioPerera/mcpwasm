@@ -183,7 +183,9 @@ for (const name of SKILLS) {
   skills[name] = { tool, skillMd: read(`${name}.SKILL.md`), hash: sha256(tool) };
 }
 
-// --- 4) /llms.txt: ## Skills + linea skills-memory a nivel origin -----------
+// --- 4) /llms.txt: linea skills-memory a nivel origin + ## Skills -------------
+// La linea skills-memory va ANTES del heading "## Skills": algunos parsers
+// conformes pliegan lineas sueltas tras la lista dentro del ultimo skill.
 const skillLines = SKILLS.map((name) => {
   const meta = JSON.stringify({
     version: "1.0.0",
@@ -202,9 +204,9 @@ const memoryMeta = JSON.stringify({
 const llmsTxt =
   `# llmstxt-docs\n\n` +
   `> Publisher of the llms-txt-skills standard documents. Serves the RFC, the executable-skills and skill-attestations extensions, and the mcpwasm reference README, plus a hash-pinned BM25 search snapshot and 3 executable skills to query them.\n\n` +
+  `<!-- skills-memory: ${memoryMeta} -->\n\n` +
   `## Skills\n\n` +
-  skillLines.join("\n") + "\n\n" +
-  `<!-- skills-memory: ${memoryMeta} -->\n`;
+  skillLines.join("\n") + "\n";
 
 // --- 5) Genera worker.mjs ---------------------------------------------------
 const docConstants = DOC_SOURCES.map((src) =>

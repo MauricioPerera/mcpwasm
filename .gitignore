@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-spike/
 dist-gateway/
+dist-memspike/
 quickjs.wasm
 quickjs-asyncify.wasm
 .gateway-token

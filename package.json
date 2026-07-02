@@ -7,11 +7,13 @@
     "build": "node build.mjs",
     "test": "node build.mjs && node mf-test.mjs",
     "spike": "node build-spike.mjs && node mf-spike.mjs",
-    "gateway": "node build-gateway.mjs && node mf-gateway.mjs"
+    "gateway": "node build-gateway.mjs && node mf-gateway.mjs",
+    "memspike": "node build-memsnapshot.mjs && node build-memspike.mjs && node mf-memspike.mjs"
   },
   "devDependencies": {
     "@jitl/quickjs-wasmfile-release-asyncify": "^0.32.0",
     "@jitl/quickjs-wasmfile-release-sync": "^0.32.0",
+    "@rckflr/minimemory": "^3.0.1",
     "esbuild": "^0.25.0",
     "miniflare": "^4.20260630.0",
     "quickjs-emscripten": "^0.32.0",

@@ -153,7 +153,15 @@ export class AsyncToolHost {
   //    descarta). Al disparar aflora DENTRO del sandbox como error "fetchOrigin
   //    timeout" (throw de la capability -> excepcion del sandbox -> isError:true,
   //    NO crash del gateway). El spike no lo pasa => default 10000 => compat.
-  constructor({ quickjs, quickjsModule, allowedOrigin, memoryLimitBytes, maxStackSizeBytes, interruptDeadlineMs, interruptMaxInvocations, fetchImpl, fetchTimeoutMs }) {
+  //  - extraCapabilities (opcional, default ninguna): mapa { nombre: async (argsJson) => resultJson }
+  //    que inyecta host.<nombre> con el MISMO puente raw-JSON que fetchOrigin. Cada
+  //    capability se expone DENTRO del sandbox como host.<nombre>(args) =>
+  //    JSON.parse(globalThis.__<nombre>Raw(JSON.stringify(args))); el host registra
+  //    __<nombre>Raw como funcion asyncified (asyncify suspende la pila wasm mientras
+  //    corre el async del host). Extension COMPATIBLE (TAREA20): sin extraCapabilities
+  //    el comportamiento es byte-identico al previo (npm test/spike/gateway verdes).
+  //    Uso: spike minimemory inyecta host.memorySearch(argsJson) => resultJson.
+  constructor({ quickjs, quickjsModule, allowedOrigin, memoryLimitBytes, maxStackSizeBytes, interruptDeadlineMs, interruptMaxInvocations, fetchImpl, fetchTimeoutMs, extraCapabilities }) {
     if (typeof allowedOrigin !== "string" || !allowedOrigin) {
       throw new Error("AsyncToolHost requiere allowedOrigin");
     }
@@ -161,6 +169,9 @@ export class AsyncToolHost {
     this._quickjsModule = quickjsModule || null;
     this._allowedOrigin = allowedOrigin;
     this._fetchImpl = typeof fetchImpl === "function" ? fetchImpl : ((u, o) => fetch(u, o));
+    // TAREA20: capabilities extra inyectadas como host.<nombre> (puente raw-JSON
+    // asyncified, mismo patron que __fetchOriginRaw). null/undefined => ninguna.
+    this._extraCapabilities = extraCapabilities || null;
     this._fetchTimeoutMs =
       typeof fetchTimeoutMs === "number" && fetchTimeoutMs > 0 ? fetchTimeoutMs : DEFAULT_FETCH_TIMEOUT_MS;
     this._memoryLimitBytes =
@@ -348,6 +359,34 @@ export class AsyncToolHost {
     vm.setProp(vm.global, "__fetchOriginRaw", cap);
     cap.dispose();
 
+    // TAREA20: capabilities extra (extraCapabilities). Misma mecanica que
+    // __fetchOriginRaw: funcion asyncified (argsJson: string) => resultJson: string.
+    // asyncify suspende la pila wasm del sandbox mientras corre el async del host.
+    // Las __<nombre>Raw se setean ANTES del prelude; los metodos host.<nombre> que
+    // las invocan se inyectan DESPUES del prelude (el prelude base queda intacto =>
+    // sin extraCapabilities el comportamiento es byte-identico al previo).
+    const extraCaps = this._extraCapabilities;
+    if (extraCaps) {
+      for (const name of Object.keys(extraCaps)) {
+        const fn = extraCaps[name];
+        if (typeof fn !== "function") {
+          throw new Error("extraCapabilities: '" + name + "' no es funcion");
+        }
+        const rawName = "__" + name + "Raw";
+        const ecap = vm.newFunction(rawName, async (argsH) => {
+          const argsJson = vm.getString(argsH);
+          const resultJson = await fn(argsJson);
+          // resultJson debe ser string (puente raw-JSON); si la fn devuelve un
+          // objeto/otro, lo serializamos para no romper el contrato del puente.
+          return vm.newString(
+            typeof resultJson === "string" ? resultJson : JSON.stringify(resultJson === undefined ? null : resultJson)
+          );
+        });
+        vm.setProp(vm.global, rawName, ecap);
+        ecap.dispose();
+      }
+    }
+
     const pre = vm.evalCode(SANDBOX_PRELUDE_ASYNC);
     if (pre.error) {
       const msg = vm.dump(pre.error);
@@ -355,6 +394,27 @@ export class AsyncToolHost {
       throw new Error("fallo el prelude del sandbox async: " + JSON.stringify(msg));
     }
     pre.value.dispose();
+
+    // TAREA20: inyecta host.<nombre> para cada capability extra. El prelude base
+    // ya definio globalThis.host = { fetchOrigin }; aqui solo agregamos metodos.
+    if (extraCaps) {
+      const extraHostSrc = Object.keys(extraCaps)
+        .map(function (name) {
+          return (
+            "globalThis.host." + name + " = function (args) {" +
+            " return JSON.parse(globalThis.__" + name + "Raw(JSON.stringify(args === undefined ? null : args)));" +
+            "};"
+          );
+        })
+        .join("\n");
+      const ex = vm.evalCode(extraHostSrc);
+      if (ex.error) {
+        const msg = vm.dump(ex.error);
+        ex.error.dispose();
+        throw new Error("fallo al inyectar extraCapabilities: " + JSON.stringify(msg));
+      }
+      ex.value.dispose();
+    }
   }
 
   // Carga el texto de un tool.js y lo ejecuta dentro del sandbox (sincrono: registro).

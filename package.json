@@ -5,9 +5,11 @@
   "private": true,
   "scripts": {
     "build": "node build.mjs",
-    "test": "node build.mjs && node mf-test.mjs"
+    "test": "node build.mjs && node mf-test.mjs",
+    "spike": "node build-spike.mjs && node mf-spike.mjs"
   },
   "devDependencies": {
+    "@jitl/quickjs-wasmfile-release-asyncify": "^0.32.0",
     "@jitl/quickjs-wasmfile-release-sync": "^0.32.0",
     "esbuild": "^0.25.0",
     "miniflare": "^4.20260630.0",

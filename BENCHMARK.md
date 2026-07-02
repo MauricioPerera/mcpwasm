@@ -137,3 +137,82 @@ Corrida completa adicional ejecutada por separado (2026-07-02 ~20:02 UTC) para v
 - Escenarios secuenciales: consistentes con run=2 dentro de ±10 ms (a p50=90, b p50=59, c-warm p50=66, d-warm p50=120, e p50=99, f p50=98, g p50=150, i-warm p50=77).
 - **h gw-interrupt: p50=5370 ms, max=7849 ms** — mayor que run=2 (~3.2 s). El corte del gas es determinista en invocaciones pero su traducción a wall-clock depende del CPU share del isolate; el bound observado en 3 corridas queda en 3–8 s.
 - **j gw-concurrent: 4 errores a ~10.2 s (p95=10181 ms)** — reproduce el patrón de run=1. Con 3 corridas totales (6 err / 0 err / 4 err), la cola de ~10 s bajo fan-out frío de 10 concurrentes debe tratarse como **comportamiento esperable, no como anomalía puntual**: ráfagas concurrentes contra un origin frío pagan contención (asyncify 1-suspensión-por-módulo + estampida de descubrimiento) hasta el timeout de fetchOrigin. Mitigación práctica: precalentar (1 request antes de la ráfaga) o serializar del lado cliente.
+
+---
+
+## Post-fix — mutex de ejecución por módulo + single-flight del descubrimiento (TAREA19)
+
+Corrida completa `node bench/run.mjs --run=3` (2026-07-02 20:17–20:19 UTC) **tras** deploy del fix (version `c039318d-2a6e-46ed-9c0c-3c38005e9335`). Datos crudos: `bench/results-run3-postfix.json`.
+
+**Fix aplicado (dos piezas, `worker-gateway.mjs`):**
+
+1. **Mutex de ejecución por módulo wasm (`withModuleLock`).** Promise-queue a nivel de módulo (donde vive `getQuickjs()`/el módulo cacheado por isolate) que serializa TODA ejecución que puede tocar/suspender el wasm: `PerSkillHost.init()` (newContext + loadToolSource), `handleMcpMessageAsync` (listTools/callTool) y `dispose`, todo bajo el lock. El lock se suelta SIEMPRE (`result.then(noop, noop)` reinicia la cola tanto en resolve como en reject → un fallo de un request no envenena el mutex). Las esperas en cola ocurren ANTES de que `fn` corra → no cuentan contra el `fetchTimeoutMs` (10 s) de OTRO request: ese timeout se arma DENTRO de la ejecución propia (en `callTool`, bajo el lock), no mientras se espera en cola.
+2. **Single-flight del descubrimiento (`discoverInflight`).** Map a nivel isolate `origin -> Promise` en vuelo; los miss concurrentes del mismo origin esperan la MISMA promesa en vez de refetear llms.txt + tool.js cada uno (estampida). La entrada se borra al settle (resolve o reject) vía `finally` → un fallo no envenena el cache. **Decisión de observabilidad:** el iniciador reporta `X-Gw-Discovery: miss` (hizo el fetch real); los concurrentes que esperan la promesa compartida reportan `hit` (leyeron del cache tras el fetch único). Esto hace el single-flight observable por header: `1 miss + (N−1) hit` ≡ 1 solo fetch.
+
+### Resultados — run=3 post-fix
+
+Latencia wall-clock en ms. `errs` = requests con fallo de red o HTTP ≥500.
+
+| key | n | min | p50 | p95 | p99 | max | errs | notas |
+|---|---|---|---|---|---|---|---|---|
+| a baseline-direct | 30 | 80 | 92 | 118 | 125 | 125 | 0 | API directa bookstore + D1 |
+| b poc-sandbox | 30 | 58 | 67 | 76 | 77 | 77 | 0 | sandbox sync QuickJS, sin descubrimiento |
+| c-cold | 1 | 374 | 374 | 374 | 374 | 374 | 0 | miss: fetch llms.txt + sha256 + compile |
+| d-cold | 1 | 245 | 245 | 245 | 245 | 245 | 0 | miss: descubrimiento bookstore |
+| c gw-pure (warm) | 30 | 55 | 60 | 86 | 97 | 97 | 0 | sandbox warm, sin fetchOrigin |
+| d gw-read (warm) | 30 | 95 | 108 | 132 | 143 | 143 | 0 | +fetchOrigin GET + D1 |
+| e gw-search | 30 | 80 | 89 | 108 | 108 | 108 | 0 | fetchOrigin GET + D1 (query) |
+| f gw-write-409 | 30 | 80 | 86 | 503 | 859 | 859 | 0 | 409 controlado; p50 plano, cola en p95/p99 (varianza D1, no regresión p50) |
+| g gw-write-real | 3 | 138 | 150 | 253 | 253 | 253 | 0 | **ordenes creadas: [13,14,15]** |
+| h gw-interrupt | 3 | 3190 | 3422 | 4930 | 4930 | 4930 | 0 | todos `isError=true` "interrupted" |
+| i gw-tools-list (warm) | 20 | 63 | 70 | 74 | 75 | 75 | 0 | tools/list, sin fetchOrigin |
+| i-cold | 1 | 310 | 310 | 310 | 310 | 310 | 0 | miss tools/list |
+| **j gw-concurrent** | 30 | 141 | 237 | **618** | 639 | 639 | **0** | **0 errores, p95=618 ms (antes ~10 s)** |
+| x-gw-ping | 30 | 50 | 56 | 65 | 65 | 65 | 0 | roundtrip worker gateway crudo |
+| x-book-ping | 30 | 46 | 50 | 62 | 158 | 158 | 0 | roundtrip worker bookstore crudo (404) |
+
+### j gw-concurrent — desglose por ronda (run=3 post-fix)
+
+| ronda | wall≈max (ms) | miss/10 | err/10 | status | observación |
+|---|---|---|---|---|---|
+| 1 (fan-out frío) | 639 | 5 | 0 | 10×200 | single-flight: 1 iniciador miss por isolate, resto hit compartido; mutex serializa la ejecución → sin 500 |
+| 2 | 281 | 2 | 0 | 10×200 | casi todo hit; 2 isolates nuevos calentando |
+| 3 (warm) | 266 | 0 | 0 | 10×200 | todo hit; p50=219 ms |
+
+Split warm/cold de j (run=3): warm(hit) n=23 p50=220 p95=618 · cold(miss) n=7 p50=545 p95=551. **La ronda fría cayó de wall ~1.9 s (run=2) / ~10.2 s con 500s (run=1, run3-PM) a 639 ms**, y las rondas warm de ~830-870 ms a ~270 ms. El mutex elimina la contención asyncify (cero 500) y el single-flight colapsa la estampida de descubrimiento dentro de cada isolate.
+
+### j antes vs después
+
+| métrica | run=1 | run=2 | run3-PM (pre-fix) | **run=3 post-fix** |
+|---|---|---|---|---|
+| errs | 6 | 0 | 4 | **0** |
+| p95 (ms) | 10187 | 1868 | 10181 | **618** |
+| p50 (ms) | — | 164 | — | 237 |
+| max (ms) | — | 1868 | — | **639** |
+| ronda 1 wall (ms) | 10279 | 1870 | — | **639** |
+
+Con 3 corridas pre-fix (6 / 0 / 4 errores a ~10 s), la cola de ~10 s era comportamiento esperable. Post-fix: **0 errores en la única corrida post-fix y p95=618 ms**, dentro del rango esperado por la tarea (ronda fría en cola ~1-3 s → aquí 639 ms; rondas warm p50 ~150-220 ms). El único cambio material es que ahora los 10 concurrentes se serializan dentro de cada isolate (mutex) y comparten un único descubrimiento por isolate (single-flight); entre isolates siguen en paralelo (CF reparte el fan-out).
+
+### No-regresión secuencial (run=2 vs run=3, p50)
+
+El mutex en camino secuencial es un no-op práctico (sin contención, la cola resolve inmediato). Comparativa p50 de los escenarios secuenciales:
+
+| key | run=2 p50 | run=3 p50 | Δ | ¿regresión >15%? |
+|---|---|---|---|---|
+| a baseline-direct | 101 | 92 | −9 | no (mejor) |
+| b poc-sandbox | 63 | 67 | +4 (+6%) | no |
+| c gw-pure warm | 65 | 60 | −5 | no (mejor) |
+| d gw-read warm | 113 | 108 | −5 | no (mejor) |
+| e gw-search | 96 | 89 | −7 | no (mejor) |
+| f gw-write-409 | 97 | 86 | −11 | no (mejor; p95/p99 tuvo una cola puntual de varianza D1, p50 intacto) |
+| i gw-tools-list warm | 70 | 70 | 0 | no |
+| x-gw-ping | 57 | 56 | −1 | no |
+| h gw-interrupt | 3203 | 3422 | +219 (+7%) | no (dentro de la varianza observada 3.0-5.4 s entre corridas) |
+
+**Ningún escenario secuencial degrada >15% en p50**; la mayoría mejora levemente (varianza normal entre corridas, no efecto del fix). `f gw-write-409` mostró una cola en p95/p99 (503/859 ms) que no estaba en run=2 — p50 sigue plano en 86 ms y errs=0; es varianza del backend D1 a mitad de ráfaga (run=1 ya había mostrado este régimen bimodal en f), no atribuible al mutex (el camino secuencial no contiende).
+
+**Veredicto TAREA19:** el fix (mutex por módulo + single-flight del descubrimiento) **elimina los errores 500 bajo fan-out concurrente de 10** (j: 0 errs, p95 618 ms vs ~10 s pre-fix) **sin regresión secuencial** (>15% p50). Causa raíz confirmada: la suspensión asyncify 1-por-módulo compartida a nivel isolate + la estampida de descubrimiento bajo fan-out frío.
+
+### Verificación independiente post-fix (PM, cuarta corrida)
+
+Mismo cliente que midió el pre-fix (donde j dio 4 err / p95 10181 ms): post-fix **j = 0 errores, p50 228 ms, p95 557 ms**. Secuenciales consistentes (d-warm 109, e 92, f 94, i 73). El mutex + single-flight resuelven la cola de ~10 s bajo fan-out frío; el peor caso concurrente ahora es espera en cola sub-segundo.

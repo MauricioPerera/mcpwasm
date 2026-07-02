@@ -48,6 +48,27 @@ function getQuickjs() {
   return _quickjsPromise;
 }
 
+// --- Mutex de ejecucion por modulo wasm (TAREA19) ---------------------------
+// El modulo QuickJS ASYNCIFY solo soporta UNA suspension async a la vez; el
+// modulo se cachea a nivel isolate (getQuickjs). Requests concurrentes del
+// mismo isolate que ejecuten wasm (crear contextos, loadToolSource, callTool,
+// dispose) intercalarian suspensiones asyncify y corromperian el modulo.
+// withModuleLock serializa TODA ejecucion que pueda tocar/suspender el wasm
+// encadenando fn sobre una unica promise de modulo (cola FIFO).
+//  - El lock se suelta SIEMPRE: la cola se reinicia tanto en resolve como en
+//    reject (result.then(noop, noop)) => el fallo de un request no envenena el
+//    mutex ni bloquea a los demas. Incluso si la tool lanza o el interrupt corta.
+//  - Las esperas en cola ocurren ANTES de que fn corra => NO cuentan contra
+//    el timeout de fetchOrigin de OTRO request: ese timeout (fetchTimeoutMs)
+//    se arma DENTRO de la ejecucion propia (bajo el lock, en callTool), no
+//    mientras se espera en cola.
+let _moduleLock = Promise.resolve();
+function withModuleLock(fn) {
+  const result = _moduleLock.then(fn, fn); // corre fn pase lo que pase del previo
+  _moduleLock = result.then(() => undefined, () => undefined); // cola siempre fulfilled
+  return result;
+}
+
 // --- Cache de descubrimiento en el isolate (TAREA9, capa 1) -------------------
 // Map a nivel de modulo origin -> { skills, rejected, expiresAt }. TTL 60s.
 // Max 16 origins; al llenarse, evict el mas viejo (FIFO por orden de insercion
@@ -57,6 +78,14 @@ function getQuickjs() {
 const ISOLATE_TTL_MS = 60_000;
 const ISOLATE_MAX_ENTRIES = 16;
 const isolateCache = new Map();
+
+// --- Single-flight del descubrimiento (TAREA19) ------------------------------
+// Map a nivel isolate origin -> Promise del descubrimiento en vuelo. Los miss
+// concurrentes del mismo origin esperan la MISMA promesa en vez de refetear
+// llms.txt + tool.js cada uno (estampida bajo fan-out frio). La entrada se
+// borra al settle (resolve o reject) via finally => un fallo no envenena el
+// cache (el siguiente miss reintentara) y nunca queda pegada.
+const discoverInflight = new Map();
 
 function isolateCacheGet(origin) {
   const e = isolateCache.get(origin);
@@ -173,7 +202,11 @@ async function sha256Hex(text) {
 //  - skills: cada entrada lleva el `code` (tool.js) verificado por sha256 e
 //    inmutable por hash; `inputSchema` queda undefined aqui y se extrae del
 //    contexto QuickJS en runtime (mismo comportamiento observable que antes).
-//  - discovery: "hit" (capa 1 isolate) | "miss" (poblado ahora).
+//  - discovery: "hit" (capa 1 isolate, cache fria leida del cache) | "miss"
+//    (este request hizo el fetch real, poblado ahora). Single-flight: los miss
+//    concurrentes del mismo origin que esperan la promesa en vuelo reportan
+//    "hit" (leyeron del cache tras el fetch unico del iniciador; ellos no
+//    tocan la red) => un solo fetch de llms.txt + tool.js por estampida.
 async function discoverSkills(origin, fetchImpl) {
   // --- Capa 1: cache de descubrimiento en el isolate ---
   const cached = isolateCacheGet(origin);
@@ -181,6 +214,39 @@ async function discoverSkills(origin, fetchImpl) {
     return { skills: cached.skills, rejected: cached.rejected, discovery: "hit" };
   }
 
+  // --- Single-flight (TAREA19): miss concurrentes del mismo origin ---
+  // Si hay un descubrimiento en vuelo para este origin, esperarlo en vez de
+  // refetear. Si resuelve OK, el iniciador ya poblo el cache => leerlo y
+  // reportar "hit" (el fetch lo hizo el iniciador; este request no toco la
+  // red). Si el en-vuelo fallo, cae al camino iniciador a reintentar: el
+  // finally del iniciador ya borro la entrada => un fallo no envenena el cache.
+  const existing = discoverInflight.get(origin);
+  if (existing) {
+    try {
+      await existing;
+    } catch {
+      /* reintento abajo */
+    }
+    const nowCached = isolateCacheGet(origin);
+    if (nowCached) {
+      return { skills: nowCached.skills, rejected: nowCached.rejected, discovery: "hit" };
+    }
+  }
+
+  // --- Iniciador: crear la promesa en vuelo ANTES de cualquier await ---
+  // En single-thread el check+set es atomico respecto a otros requests (no hay
+  // await entre medias) => solo un iniciador por origin por estampida. La
+  // entrada se borra al settle (resolve o reject) via finally => nunca pegada.
+  const p = discoverSkillsInner(origin, fetchImpl).finally(() => {
+    discoverInflight.delete(origin);
+  });
+  discoverInflight.set(origin, p);
+  return p; // discovery "miss": este request hizo el fetch real
+}
+
+// Cuerpo del descubrimiento (fetch llms.txt + tool.js + verify sha256). Puebla
+// el cache de isolate (capa 1). Devuelve { skills, rejected, discovery: "miss" }.
+async function discoverSkillsInner(origin, fetchImpl) {
   const rejected = [];
   const skills = [];
 
@@ -455,34 +521,40 @@ export default {
       );
     }
 
-    // --- Host por request, un contexto QuickJS por skill, hardening por contexto ---
-    let host;
+    // --- Host por request + ejecucion MCP, serializada por modulo (TAREA19) ---
+    // Un contexto QuickJS por skill (hardening por contexto). TODA la ejecucion
+    // que toca/suspende el wasm (init: newContext+loadToolSource; handleMcp:
+    // listTools/callTool; dispose) va bajo withModuleLock para no intercalar
+    // suspensiones asyncify entre requests concurrentes del mismo isolate. La
+    // cola espera antes de correr fn => no cuenta contra el fetchTimeoutMs de
+    // otros requests (se arma dentro de la ejecucion propia, bajo el lock).
+    let response;
     try {
-      const quickjs = await getQuickjs();
-      host = new PerSkillHost({ quickjs, allowedOrigin: origin, fetchImpl, skills });
-      await host.init();
+      response = await withModuleLock(async () => {
+        const quickjs = await getQuickjs();
+        const host = new PerSkillHost({ quickjs, allowedOrigin: origin, fetchImpl, skills });
+        try {
+          await host.init();
+          return await handleMcpMessageAsync(host, msg);
+        } finally {
+          // Dispose de TODOS los contextos (uno por skill), bajo el lock.
+          try {
+            host.dispose();
+          } catch {
+            // best-effort: no bloquear el release del lock.
+          }
+        }
+      });
     } catch (e) {
-      if (host) host.dispose();
       return json(
         { jsonrpc: "2.0", id: msg && msg.id !== undefined ? msg.id : null, error: { code: -32603, message: "host fallo: " + String(e && e.message || e) } },
         500,
         discovery
       );
     }
-
-    try {
-      const response = await handleMcpMessageAsync(host, msg);
-      if (response === null) return new Response(null, { status: 202, headers: { "x-gw-discovery": discovery } });
-      return json(response, 200, discovery);
-    } catch (e) {
-      return json(
-        { jsonrpc: "2.0", id: msg && msg.id !== undefined ? msg.id : null, error: { code: -32603, message: String(e && e.message || e) } },
-        500,
-        discovery
-      );
-    } finally {
-      // Dispose de TODOS los contextos (uno por skill).
-      host.dispose();
+    if (response === null) {
+      return new Response(null, { status: 202, headers: { "x-gw-discovery": discovery } });
     }
+    return json(response, 200, discovery);
   },
 };

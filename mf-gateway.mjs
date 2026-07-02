@@ -531,6 +531,72 @@ try {
   hostB.dispose();
   try { quickjs.dispose(); } catch { /* best-effort */ }
 
+  // --- (h) CONCURRENCIA local: 5 tools/call en paralelo (TAREA19) -----------
+  // Isolate fresco (Miniflare nuevo) => cache de descubrimiento y mapa
+  // single-flight vacios. 5 tools/call server_time en paralelo (Promise.all)
+  // contra el gateway local. Verifica:
+  //   (h.1) los 5 -> HTTP 200, sin errores 500 (el mutex por modulo serializa
+  //         la ejecucion asyncify => requests concurrentes del mismo isolate
+  //         no intercalan suspensiones asyncify).
+  //   (h.2) single-flight del descubrimiento: de los 5, exactamente 1 "miss"
+  //         (el iniciador que hizo el fetch de llms.txt+tool.js) y 4 "hit"
+  //         (esperaron la promesa compartida y leyeron del cache) => un solo
+  //         fetch real, no estampida de 5.
+  // Decision documentada (TAREA19): el iniciador reporta "miss"; los
+  // concurrentes que esperan la promesa en vuelo reportan "hit" (leyeron del
+  // cache tras el fetch unico). Esto hace el single-flight observable por
+  // header: 1 miss + (N-1) hit = 1 solo fetch.
+  console.log("\n[h] concurrencia local (5 tools/call en paralelo, isolate fresco):");
+  const mf2 = new Miniflare({
+    scriptPath: fileURLToPath(new URL("./dist-gateway/worker.js", import.meta.url)),
+    modules: true,
+    modulesRules: [
+      { type: "ESModule", include: ["**/*.js"] },
+      { type: "CompiledWasm", include: ["**/*.wasm"] },
+    ],
+    compatibilityDate: "2026-06-01",
+    compatibilityFlags: ["nodejs_compat"],
+    bindings: { ALLOWED_ORIGINS: DEMO_ORIGIN },
+  });
+  async function rpc2(p, payload) {
+    const res = await mf2.dispatchFetch("http://localhost" + p, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    let body = null;
+    try { body = await res.json(); } catch { body = await res.text(); }
+    return { status: res.status, body, headers: Object.fromEntries(res.headers) };
+  }
+  try {
+    const demoEnc3 = encodeURIComponent(DEMO_ORIGIN);
+    const base3 = "/mcp?origin=" + demoEnc3;
+    const t0 = Date.now();
+    const parallel = await Promise.all(Array.from({ length: 5 }, () =>
+      rpc2(base3, { jsonrpc: "2.0", id: 7, method: "tools/call",
+        params: { name: "server_time", arguments: {} } })
+    ));
+    const wall = Date.now() - t0;
+    const statuses = parallel.map((r) => r.status);
+    const discs = parallel.map((r) => r.headers["x-gw-discovery"]);
+    const errs500 = statuses.filter((s) => s === 500).length;
+    const misses = discs.filter((d) => d === "miss").length;
+    const hits = discs.filter((d) => d === "hit").length;
+    console.log("[h] 5 paralelo: wall=" + wall + "ms statuses=" + JSON.stringify(statuses) +
+      " discs=" + JSON.stringify(discs));
+    check(statuses.every((s) => s === 200), "concurrencia: los 5 tools/call -> HTTP 200 (sin 500)");
+    check(errs500 === 0, "concurrencia: 0 errores 500 bajo fan-out de 5");
+    check(misses === 1 && hits === 4,
+      "single-flight: 1 miss (iniciador) + 4 hit (esperaron la promesa compartida) => 1 solo fetch");
+    // todos devolvieron un epoch numerico (no corrompio el wasm la serializacion)
+    const allEpoch = parallel.every((r) =>
+      r.body && r.body.result && r.body.result.structuredContent &&
+      typeof r.body.result.structuredContent.epoch === "number");
+    check(allEpoch, "concurrencia: los 5 devolvieron structuredContent.epoch numerico (wasm intacto)");
+  } finally {
+    await mf2.dispose();
+  }
+
   // --- (b) INTERRUPT determinista por contador (TAREA12B) ---------------------
   // Un while(true){} vacio bloquea el event loop de Node (la ejecucion QuickJS es
   // sincrona), asi que Promise.race NO puede preemptarlo: si el contador fallara,

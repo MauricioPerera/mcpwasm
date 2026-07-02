@@ -94,13 +94,13 @@ Pieces live in:
 - `worker-spike.mjs` — async spike (fetchHome/fetchEvil).
 - `worker-gateway.mjs` + `llmstxt-parse.mjs` — the gateway.
 
-## The executable-skill line in `llms.txt` (DRAFT — pending RFC)
+## The executable-skill line in `llms.txt`
 
-> **Status: provisional.** This is *not* part of the ratified
-> [llms-txt-skills](https://github.com/MauricioPerera/llms-txt-skills) spec. It
-> is a draft extension this repo implements so a skill entry can point at
-> verifiable executable code. Expect it to change; do not depend on the exact
-> shape yet.
+> **Status: Draft v0.3, adopted.** This format is specified by the
+> [Executable Skills extension](https://github.com/MauricioPerera/llms-txt-skills/blob/master/docs/ext-executable-skills.md)
+> of the [llms-txt-skills](https://github.com/MauricioPerera/llms-txt-skills)
+> standard. This repo is its reference implementation; the spec and this code
+> are kept aligned (every MUST in the spec is field-tested here).
 
 Under a `## Skills` section, an executable skill is a normal markdown list item
 followed by an HTML comment carrying a JSON object with `version`, `tool` (path

@@ -21,10 +21,10 @@
     "name": "ext-skill-attestations",
     "title": "Extension: Skill Attestations",
     "source": "github-raw",
-    "branch": "ext-skill-attestations",
+    "branch": "master",
     "path": "docs/ext-skill-attestations.md",
-    "url": "https://raw.githubusercontent.com/MauricioPerera/llms-txt-skills/ext-skill-attestations/docs/ext-skill-attestations.md",
-    "commit": "abc8898a1d126e9bd0b46d13ae61b09547d4ec39"
+    "url": "https://raw.githubusercontent.com/MauricioPerera/llms-txt-skills/master/docs/ext-skill-attestations.md",
+    "commit": "2429f1c5676b9d842f62ab82bf3a64d01a9a68e9"
   },
   {
     "name": "mcpwasm-readme",

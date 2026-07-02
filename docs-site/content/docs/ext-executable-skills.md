@@ -1,6 +1,6 @@
 # Extension: Executable Skills
 
-**Status:** Draft (v0.3)
+**Status:** Draft (v0.4)
 **Date:** 2026-07-02
 **Extends:** [RFC: Publishing Agent Skills through `llms.txt`](./rfc-skills-in-llms-txt.md) (v0.8)
 
@@ -69,6 +69,26 @@ Contract:
 
 The `tool_sha256` pins the artifact. Publishing a new artifact version means serving new bytes at `tool` and updating both `tool_sha256` and `version` in `llms.txt`. Runtimes cache by hash; a stale hash simply keeps serving the old, verified artifact until the index updates.
 
+### 2.4 Origin memory: search snapshots
+
+A publisher MAY additionally ship a **search snapshot**: a pre-built, hash-pinned full-text index over its own content, so that skills can offer real search over a purely static site — no backend API required. Declared with one origin-level line in `llms.txt` (place it **before** the `## Skills` section — some conformant parsers fold trailing non-list lines into the last skill entry):
+
+```markdown
+<!-- skills-memory: {"snapshot":"/skills-index.snapshot","snapshot_sha256":"<hex>","format":"minimemory-okf-v1"} -->
+```
+
+| Key | Requirement | Meaning |
+|---|---|---|
+| `snapshot` | REQUIRED | Same-origin path to the snapshot file. |
+| `snapshot_sha256` | REQUIRED | Lowercase hex SHA-256 of the exact bytes served at `snapshot`. (Named to avoid the core RFC's `sha256`, same rationale as `tool_sha256`.) |
+| `format` | REQUIRED | Snapshot format identifier. Runtimes MUST ignore a `skills-memory` line whose format they do not support (skills load normally; the capability is simply absent). This draft registers one format: `minimemory-okf-v1` (BM25-only index exported by [minimemory](https://github.com/MauricioPerera/minimemory)'s `WasmOkfIndex`; no embeddings, no query-time model needed). |
+
+When a supported snapshot is declared, verified, and loaded, the runtime injects one additional capability into that origin's skills:
+
+- `await host.memorySearch(query, k?)` -> `{ hits: [{ text, score, title, concept_id }] }` — BM25 search over the origin's own snapshot. `query` MUST be a string; `k` is capped by the runtime (reference implementation: 10). Like `fetchOrigin`, the capability is strictly origin-scoped: a skill can only search the snapshot its own publisher shipped. Skills SHOULD check for the capability before calling it (`typeof host.memorySearch === "function"`) — it is absent when the runtime does not support the declared format or when verification fails.
+
+Updating content means re-exporting the snapshot and updating `snapshot_sha256` — same lifecycle as `tool_sha256` (§2.3).
+
 ## 3. Runtime requirements
 
 A runtime that executes skills published under this extension (a *gateway*, an agent-embedded engine, etc.):
@@ -77,7 +97,8 @@ A runtime that executes skills published under this extension (a *gateway*, an a
 2. **Isolation.** MUST execute artifacts in a sandbox where the host environment is not reachable: no ambient network, no filesystem, no host secrets. Host capabilities are injected explicitly; this extension defines only `host.fetchOrigin`, scoped to the publishing origin. A runtime MUST reject any `fetchOrigin` target that resolves outside that origin.
 3. **Resource limits.** SHOULD enforce memory, stack, and execution budgets per invocation, so a hostile or buggy artifact cannot exhaust the runtime. Execution budgets SHOULD be **deterministic** (e.g. counting interrupt-callback invocations) for synchronous execution, not wall-clock: platforms that freeze the clock during synchronous execution (Cloudflare Workers freezes `Date.now()` as a Spectre mitigation) make wall-clock deadlines silently inert against `while(true)` — field-tested: a wall-clock 2 s deadline never fired and the platform killed the request at ~40 s. Deterministic gas does not bound time spent *waiting* on async capabilities, so runtimes SHOULD additionally enforce a wall-clock timeout on each capability call (async waits do advance the clock). (Reference implementation values: 64 MB memory, 1 MB stack, interrupt-count gas budget that cuts an infinite loop in a few seconds, plus a 10 s wall-clock timeout per `fetchOrigin` call.)
 4. **Trust domain.** Artifacts from the *same origin* MAY share an execution context; artifacts from *different origins* MUST NOT. Runtimes SHOULD isolate per skill even within one origin (defense in depth).
-5. **Exposure.** How verified skills are exposed to agents is out of scope. The reference implementation exposes them as an MCP server (`tools/list` / `tools/call`), which requires no agent-side changes at all — but any interface satisfying 1–4 conforms. Runtimes exposing skills over MCP MUST return `structuredContent` as an object per the MCP spec: when a handler returns an array or a primitive, wrap it (reference implementation: `{ "result": <value> }`). For backwards compatibility with clients that do not support structured outputs, runtimes SHOULD also return the serialized JSON of the *original* (unwrapped) result in a `content` block as a text item (the reference implementation does). Field-tested: unwrapped arrays pass curl inspection but are rejected by conformant client SDKs (`invalid_type`), making the tool unusable in practice.
+5. **Memory integrity.** A runtime that supports a declared snapshot format MUST verify `snapshot_sha256` over the exact fetched bytes before loading the index. On mismatch the capability MUST NOT be injected (skills that call it get a controlled tool error, not a crash), and the rejection SHOULD be observable — mirroring the artifact rule in requirement 1. Snapshot bytes are covered by the same network timeout as `fetchOrigin` calls.
+6. **Exposure.** How verified skills are exposed to agents is out of scope. The reference implementation exposes them as an MCP server (`tools/list` / `tools/call`), which requires no agent-side changes at all — but any interface satisfying 1–4 conforms. Runtimes exposing skills over MCP MUST return `structuredContent` as an object per the MCP spec: when a handler returns an array or a primitive, wrap it (reference implementation: `{ "result": <value> }`). For backwards compatibility with clients that do not support structured outputs, runtimes SHOULD also return the serialized JSON of the *original* (unwrapped) result in a `content` block as a text item (the reference implementation does). Field-tested: unwrapped arrays pass curl inspection but are rejected by conformant client SDKs (`invalid_type`), making the tool unusable in practice.
 
 ## 4. Security considerations
 
@@ -94,6 +115,7 @@ Working end-to-end chain (all deployed):
 | Runtime + gateway source (QuickJS-wasm sandbox on Cloudflare Workers) | https://github.com/MauricioPerera/mcpwasm |
 | Demo publishing site (`llms.txt` with two executable skills) | https://llmstxt-demo-site.rckflr.workers.dev/llms.txt |
 | Realistic publisher (D1-backed bookstore: search/detail/stock/**order** skills, plus permanent robustness fixtures: a deliberately hash-mismatched skill and an infinite-loop skill) | https://llmstxt-bookstore.rckflr.workers.dev/llms.txt |
+| Docs publisher (the standard's own docs, searchable via a hash-pinned BM25 snapshot + `search_spec` skill — the spec searches itself) | https://llmstxt-docs.rckflr.workers.dev/llms.txt |
 | Gateway exposing them as an MCP server | `POST https://llmstxt-gateway.rckflr.workers.dev/mcp?origin=<url-encoded origin>` |
 
 The gateway demonstrates: discovery from `llms.txt`, per-skill SHA-256 verification with exclusion on mismatch, sandboxed execution (QuickJS-wasm) with async handlers in per-skill contexts, origin-scoped `fetchOrigin` including POST write skills (a real order decrementing D1 stock), deterministic gas interruption of infinite loops, and end-to-end consumption by an unmodified MCP client (headless Claude configured with only the gateway URL).
@@ -107,6 +129,7 @@ The gateway demonstrates: discovery from `llms.txt`, per-skill SHA-256 verificat
 
 ## 7. Changelog
 
+- **v0.4 (2026-07-02):** Origin memory (§2.4): hash-pinned search snapshots (`skills-memory` line, `snapshot_sha256`, pluggable `format`) and the origin-scoped `host.memorySearch` capability; runtime requirement for snapshot integrity. Field-tested: the reference gateway serves BM25 search over the spec's own docs published as a static snapshot (`minimemory-okf-v1`).
 - **v0.3 (2026-07-02):** Lessons from a realistic field test (D1-backed bookstore + unmodified MCP client): explicit sandbox-globals note (ECMAScript only, no WHATWG APIs); `fetchOrigin` extended with optional `{method, body, contentType}` (GET/POST only) enabling write skills; resource budgets SHOULD be deterministic gas, not wall-clock (frozen clocks in Workers); MCP exposure MUST wrap non-object results in `structuredContent`.
 - **v0.2 (2026-07-02):** Rename `sha256` -> `tool_sha256` to avoid collision with the core RFC's `sha256` (hash of the fetched `SKILL.md`), per review feedback.
 - **v0.1 (2026-07-02):** Initial draft, extracted from the mcpwasm reference implementation.

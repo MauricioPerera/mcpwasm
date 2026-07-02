@@ -4,3 +4,5 @@ dist-spike/
 dist-gateway/
 quickjs.wasm
 quickjs-asyncify.wasm
+.gateway-token
+mcp-bookstore.local.json

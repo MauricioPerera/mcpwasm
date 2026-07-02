@@ -75,7 +75,9 @@ Flow:
 2. On each request the gateway downloads `llms.txt`, parses the executable
    skills, downloads each `tool.js`, verifies SHA-256, and loads the verified
    ones into a fresh `AsyncToolHost` scoped to that origin.
-3. Tool code runs inside QuickJS-wasm. It can only call `host.fetchOrigin(path)`,
+3. Tool code runs inside QuickJS-wasm. It can only call
+   `host.fetchOrigin(path, opts?)` (`opts`: `{method: "GET"|"POST",
+   body?: string ≤16 KB, contentType?}` — write skills go through POST),
    which is async from the host side but synchronous-looking inside the sandbox
    (QuickJS asyncify suspends/resumes the wasm stack).
 4. The host fetches only the allowed origin; any other origin throws inside the
@@ -147,8 +149,11 @@ worker and runs `mf-gateway.mjs` against the real deployed demo site.
 
 The gateway is live at `https://llmstxt-gateway.rckflr.workers.dev`. It is
 restricted to origins in its allowlist; the demo site
-`https://llmstxt-demo-site.rckflr.workers.dev` is allowed. `origin` is
-URL-encoded as a query param.
+`https://llmstxt-demo-site.rckflr.workers.dev` and the bookstore
+`https://llmstxt-bookstore.rckflr.workers.dev` (D1-backed, includes a write
+skill `create_order`) are allowed. `origin` is URL-encoded as a query param.
+The deployed gateway requires `-H "Authorization: Bearer <token>"` on every
+request below (auth is optional by config; see the security model).
 
 List the skills the demo site publishes:
 
@@ -215,10 +220,11 @@ What it guarantees:
 
 What it does **not** guarantee:
 
-- **No auth on the endpoints.** The PoC and gateway accept any caller; there is
-  no bearer token, rate limit, or per-client identity. The only access control
-  is the gateway's origin allowlist. Put your own auth in front before exposing
-  this.
+- **Auth is a single shared bearer token, optional by config.** If the
+  `AUTH_TOKEN` secret is set, the gateway requires
+  `Authorization: Bearer <token>` on `POST /mcp` (401 otherwise); the deployed
+  gateway has it enabled. Without the secret it runs open (dev mode). There is
+  still no per-client identity or rate limiting. The PoC worker remains open.
 - **Per-skill isolation is context-level, not process-level.** Skills get
   separate QuickJS contexts but share the same wasm module instance and the
   same Worker request; the boundary is the QuickJS API surface, not an OS
@@ -257,6 +263,7 @@ What it does **not** guarantee:
 | `wrangler-gateway.toml` | Wrangler config for the gateway, incl. `ALLOWED_ORIGINS` var and the `DEMO` service binding (bypasses Cloudflare error 1042 for same-account worker-to-worker fetch). |
 | `quickjs.wasm` / `quickjs-asyncify.wasm` | Pre-compiled QuickJS binaries imported as static `CompiledWasm` modules. |
 | `demo-site/` | Demo publisher site (`llms.txt` + `sum_numbers` / `server_time` skills). Deployed at `llmstxt-demo-site.rckflr.workers.dev`. |
+| `bookstore/` | Realistic publisher: D1-backed catalog (52 books), read skills + `create_order` write skill, plus permanent robustness fixtures (`corrupt_skill` hash-mismatch, `busy_loop` infinite loop). Deployed at `llmstxt-bookstore.rckflr.workers.dev`. |
 | `TAREA1-REPORT.md` … `TAREA7-REPORT.md` | Development reports (see below). |
 
 ## Development notes

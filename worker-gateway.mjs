@@ -357,11 +357,15 @@ export default {
     const url = new URL(request.url);
 
     if (request.method === "GET") {
+      const authOn = !!(env && env.AUTH_TOKEN && env.AUTH_TOKEN.length > 0);
       return new Response(
         "llmstxt-gateway\n" +
           "Gateway llms.txt -> MCP (Streamable HTTP, JSON-RPC 2.0 por POST).\n" +
           "Uso: POST " + url.origin + "/mcp?origin=<url-encoded-origin>\n" +
           "El origin debe estar en la allowlist (ALLOWED_ORIGINS).\n" +
+          (authOn
+            ? "Auth ACTIVADO: POST /mcp exige header Authorization: Bearer <AUTH_TOKEN>.\n"
+            : "Auth DESACTIVADO (modo dev): sin token. Definir env.AUTH_TOKEN para activarlo.\n") +
           "Metodos MCP: initialize | tools/list | tools/call\n",
         { headers: { "content-type": "text/plain; charset=utf-8" } }
       );
@@ -369,6 +373,22 @@ export default {
 
     if (request.method !== "POST") {
       return new Response("Method Not Allowed", { status: 405 });
+    }
+
+    // --- Auth Bearer opcional-por-config (TAREA15) ---
+    // Si env.AUTH_TOKEN esta definido y no vacio -> POST /mcp exige
+    // Authorization: "Bearer <AUTH_TOKEN>" (comparacion exacta). Si falta o no
+    // coincide -> 401 JSON {"error":"unauthorized"} SIN tocar el resto del flujo.
+    // Si env.AUTH_TOKEN no esta definido -> comportamiento actual (abierto, dev).
+    if (env && env.AUTH_TOKEN && env.AUTH_TOKEN.length > 0) {
+      const expected = "Bearer " + env.AUTH_TOKEN;
+      const got = request.headers.get("authorization") || "";
+      if (got !== expected) {
+        return new Response(JSON.stringify({ error: "unauthorized" }), {
+          status: 401,
+          headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+        });
+      }
     }
 
     // --- Validacion de origin (allowlist) ---

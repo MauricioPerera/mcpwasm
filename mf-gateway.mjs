@@ -382,6 +382,72 @@ try {
     }
   }
 
+  // --- (f) AUTH Bearer opcional-por-config (TAREA15) -------------------------
+  // Segunda instancia Miniflare con AUTH_TOKEN de prueba. El gateway debe:
+  //   - 401 sin header Authorization
+  //   - 401 con header equivocado
+  //   - 200 con header correcto (Bearer <token>) -> tools/list
+  // La instancia principal (sin AUTH_TOKEN) sigue abierta (modo dev) y ya se
+  // probó arriba; aquí se cubre la rama de auth sin tocar el flujo MCP.
+  console.log("\n[f] auth Bearer (AUTH_TOKEN de prueba en 2da instancia):");
+  const AUTH_TEST_TOKEN = "test-token-0123456789abcdef";
+  const mfAuth = new Miniflare({
+    scriptPath: fileURLToPath(new URL("./dist-gateway/worker.js", import.meta.url)),
+    modules: true,
+    modulesRules: [
+      { type: "ESModule", include: ["**/*.js"] },
+      { type: "CompiledWasm", include: ["**/*.wasm"] },
+    ],
+    compatibilityDate: "2026-06-01",
+    compatibilityFlags: ["nodejs_compat"],
+    bindings: {
+      ALLOWED_ORIGINS: DEMO_ORIGIN,
+      AUTH_TOKEN: AUTH_TEST_TOKEN,
+    },
+  });
+  async function rpcAuth(path, payload, headers) {
+    const res = await mfAuth.dispatchFetch("http://localhost" + path, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(headers || {}) },
+      body: JSON.stringify(payload),
+    });
+    let body = null;
+    try { body = await res.json(); } catch { body = await res.text(); }
+    return { status: res.status, body };
+  }
+  try {
+    const demoEnc2 = encodeURIComponent(DEMO_ORIGIN);
+    const base2 = "/mcp?origin=" + demoEnc2;
+
+    // (f.1) sin Authorization -> 401 {"error":"unauthorized"}
+    const noAuth = await rpcAuth(base2, { jsonrpc: "2.0", id: 1, method: "initialize" });
+    console.log("[f.1] sin header ->", JSON.stringify(noAuth.body));
+    check(noAuth.status === 401, "auth: sin Authorization -> 401");
+    check(noAuth.body && noAuth.body.error === "unauthorized", 'auth: body {"error":"unauthorized"}');
+
+    // (f.2) Bearer equivocado -> 401
+    const badAuth = await rpcAuth(base2, { jsonrpc: "2.0", id: 2, method: "initialize" },
+      { authorization: "Bearer wrong-token" });
+    console.log("[f.2] bearer equivocado ->", JSON.stringify(badAuth.body));
+    check(badAuth.status === 401, "auth: Bearer equivocado -> 401");
+
+    // (f.3) Bearer correcto -> 200 initialize
+    const okInit = await rpcAuth(base2, { jsonrpc: "2.0", id: 3, method: "initialize" },
+      { authorization: "Bearer " + AUTH_TEST_TOKEN });
+    console.log("[f.3] bearer correcto initialize ->", JSON.stringify(okInit.body));
+    check(okInit.status === 200, "auth: Bearer correcto -> initialize 200");
+
+    // (f.4) Bearer correcto tools/list -> 200 con tools
+    const okList = await rpcAuth(base2, { jsonrpc: "2.0", id: 4, method: "tools/list" },
+      { authorization: "Bearer " + AUTH_TEST_TOKEN });
+    const toolsAuth = okList.body && okList.body.result && okList.body.result.tools;
+    console.log("[f.4] bearer correcto tools/list ->", (toolsAuth || []).length, "tools");
+    check(okList.status === 200, "auth: Bearer correcto -> tools/list 200");
+    check(Array.isArray(toolsAuth) && toolsAuth.length > 0, "auth: tools/list trae tools tras auth");
+  } finally {
+    await mfAuth.dispose();
+  }
+
   hostA.dispose();
   hostB.dispose();
   try { quickjs.dispose(); } catch { /* best-effort */ }

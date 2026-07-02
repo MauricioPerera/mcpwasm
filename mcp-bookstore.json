@@ -1,1 +1,1 @@
-{"mcpServers":{"bookstore":{"type":"http","url":"https://llmstxt-gateway.rckflr.workers.dev/mcp?origin=https%3A%2F%2Fllmstxt-bookstore.rckflr.workers.dev"}}}
+{"mcpServers":{"bookstore":{"type":"http","url":"https://llmstxt-gateway.rckflr.workers.dev/mcp?origin=https%3A%2F%2Fllmstxt-bookstore.rckflr.workers.dev","headers":{"Authorization":"Bearer REPLACE_WITH_TOKEN"}}}}

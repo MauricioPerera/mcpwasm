@@ -8,7 +8,7 @@ account_id = "091122c40cc6f8d0d421cbc90e2caca8"
 
 # Allowlist de origins permitidos (coma-separada). Inicial: el demo site.
 [vars]
-ALLOWED_ORIGINS = "https://llmstxt-demo-site.rckflr.workers.dev"
+ALLOWED_ORIGINS = "https://llmstxt-demo-site.rckflr.workers.dev,https://llmstxt-bookstore.rckflr.workers.dev"
 
 # Service binding al demo site. Un Worker no puede fetchear via workers.dev a
 # otro Worker de la MISMA cuenta (error 1042); el binding DEMO lo resuelve
@@ -17,6 +17,11 @@ ALLOWED_ORIGINS = "https://llmstxt-demo-site.rckflr.workers.dev"
 [[services]]
 binding = "DEMO"
 service = "llmstxt-demo-site"
+
+# Service binding al bookstore (mismo motivo que DEMO: misma cuenta -> error 1042).
+[[services]]
+binding = "BOOKSTORE"
+service = "llmstxt-bookstore"
 
 # Regla de modulo para que el import "./quickjs-asyncify.wasm" se trate como
 # WebAssembly.Module pre-compilado (CompiledWasm) en el build de wrangler.

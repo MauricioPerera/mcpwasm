@@ -121,6 +121,9 @@ function makeFetchImpl(env) {
   if (env && env.DEMO) {
     bindings["https://llmstxt-demo-site.rckflr.workers.dev"] = env.DEMO;
   }
+  if (env && env.BOOKSTORE) {
+    bindings["https://llmstxt-bookstore.rckflr.workers.dev"] = env.BOOKSTORE;
+  }
   return async function fetchImpl(url, opts) {
     let origin = null;
     try {

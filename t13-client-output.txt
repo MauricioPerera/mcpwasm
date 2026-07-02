@@ -1,0 +1,10 @@
+## Recomendación
+
+**Ender's Game** — Orson Scott Card
+- Género: science-fiction
+- Precio: $10 (por debajo de $15)
+- Stock: 30 unidades ✅ disponible
+
+---
+
+**Aviso de tooling:** `mcp__bookstore__search_catalog` está roto por un mismatch de esquema — el gateway devuelve un array como `structuredContent`, pero el SDK/zod del MCP espera un `record`, así que toda llamada a search_catalog falla con `invalid_type` antes de devolverte libros. No es dato inventado: obtuve el candidato del `stock_report` (top3 por stock) y confirmé género/precio/stock con `get_book` (id 19). Si quieres, lo arreglamos tocando el outputSchema del binding `search_catalog` en el gateway para que sea `{ books: array }` (o lo que el SDK valide como record) — es del mismo palo que el hallazgo de T12 sobre URLSearchParams.

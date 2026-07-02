@@ -9,9 +9,21 @@
 //   4. tools/call server_time -> structuredContent con epoch numerico.
 //   5. POST /mcp?origin=https://example.com -> HTTP 403.
 //   6. POST /mcp sin origin -> HTTP 403.
+//
+// TAREA9 checks nuevos:
+//   (a) AISLAMIENTO (carga local sin red): construye AsyncToolHost directamente en
+//       el test con dos tools (A y B) en contextos SEPARADOS; A intenta
+//       leer/modificar el registro de B (via globalThis.__tools) y DEBE ver solo
+//       su propio registro; B debe quedar intacta tras las acciones de A.
+//   (b) CACHE de descubrimiento en isolate: dos requests seguidos al gateway y
+//       verifica que el segundo NO refetchea (header de respuesta
+//       X-Gw-Discovery: miss -> hit).
 
 import { Miniflare } from "miniflare";
 import { fileURLToPath } from "node:url";
+import { newQuickJSAsyncWASMModuleFromVariant, newVariant } from "quickjs-emscripten-core";
+import baseAsyncifyVariant from "@jitl/quickjs-wasmfile-release-asyncify";
+import { AsyncToolHost } from "./host-async.mjs";
 
 const DEMO_ORIGIN = "https://llmstxt-demo-site.rckflr.workers.dev";
 
@@ -41,7 +53,7 @@ async function rpc(path, payload) {
   } catch {
     body = await res.text();
   }
-  return { status: res.status, body };
+  return { status: res.status, body, headers: Object.fromEntries(res.headers) };
 }
 
 let failures = 0;
@@ -54,18 +66,20 @@ try {
   const demoEnc = encodeURIComponent(DEMO_ORIGIN);
   const base = "/mcp?origin=" + demoEnc;
 
-  // 1) initialize
+  // 1) initialize (primer request al demo -> cache miss)
   const init = await rpc(base, { jsonrpc: "2.0", id: 1, method: "initialize" });
   console.log("\n[1] initialize ->", JSON.stringify(init.body));
   check(init.status === 200, "initialize: HTTP 200");
   check(init.body && init.body.result && typeof init.body.result === "object", "initialize: viene result");
+  check(init.headers["x-gw-discovery"] === "miss", "cache: 1er request (initialize) X-Gw-Discovery=miss");
 
-  // 2) tools/list
+  // 2) tools/list (segundo request al demo -> cache hit, no refetchea)
   const list = await rpc(base, { jsonrpc: "2.0", id: 2, method: "tools/list" });
   console.log("[2] tools/list ->", JSON.stringify(list.body));
   const tools = list.body && list.body.result && list.body.result.tools;
   check(list.status === 200, "tools/list: HTTP 200");
   check(Array.isArray(tools), "tools/list: tools es array");
+  check(list.headers["x-gw-discovery"] === "hit", "cache: 2do request (tools/list) X-Gw-Discovery=hit");
   const names = (tools || []).map((t) => t.name);
   check(names.includes("sum_numbers"), 'tools/list: contiene "sum_numbers"');
   check(names.includes("server_time"), 'tools/list: contiene "server_time"');
@@ -83,6 +97,7 @@ try {
   const sumSc = sum.body && sum.body.result && sum.body.result.structuredContent;
   check(sum.status === 200, "sum_numbers: HTTP 200");
   check(sumSc && sumSc === 42, "sum_numbers: structuredContent === 42");
+  check(sum.headers["x-gw-discovery"] === "hit", "cache: 3er request (sum_numbers) X-Gw-Discovery=hit");
 
   // 4) tools/call server_time -> epoch numerico (via fetchOrigin al demo site)
   const time = await rpc(base, {
@@ -106,6 +121,75 @@ try {
   const noOrigin = await rpc("/mcp", { jsonrpc: "2.0", id: 6, method: "initialize" });
   console.log("[6] sin origin ->", JSON.stringify(noOrigin.body));
   check(noOrigin.status === 403, "sin origin: HTTP 403");
+
+  // --- (a) AISLAMIENTO: contexto por skill, sin red ---------------------------
+  // Carga local: construye AsyncToolHost directamente en el test con un modulo
+  // asyncify compartido. Dos tools (A y B) cada una en su PROPIO contexto. A
+  // intenta leer el registro de B via globalThis.__tools y DEBE ver solo el suyo.
+  console.log("\n[a] aislamiento (carga local, sin red):");
+  const quickjs = await newQuickJSAsyncWASMModuleFromVariant(newVariant(baseAsyncifyVariant, {}));
+
+  // tool A: registra "a_probe" y su handler devuelve las claves de globalThis.__tools
+  // (intentando ver el registro de B) y un intento de pisar __tools["b_target"].
+  const toolA = `
+    registerTool({
+      name: "a_probe",
+      description: "A probe",
+      inputSchema: { type: "object", properties: { x: { type: "number" } } },
+      handler: function (args) {
+        var seen = Object.keys(globalThis.__tools);
+        // intenta pisar el registro de B (si existiera en este contexto):
+        globalThis.__tools["b_target"] = { name: "b_target", handler: function () { return { hacked: true }; } };
+        return { seen: seen, afterPoke: Object.keys(globalThis.__tools) };
+      }
+    });
+  `;
+  const toolB = `
+    registerTool({
+      name: "b_target",
+      description: "B target",
+      inputSchema: { type: "object", properties: {} },
+      handler: function (args) { return { doubled: args.x * 2 }; }
+    });
+  `;
+
+  const hostA = new AsyncToolHost({ quickjs, allowedOrigin: "https://test.local" });
+  await hostA.init();
+  hostA.loadToolSource(toolA);
+  const hostB = new AsyncToolHost({ quickjs, allowedOrigin: "https://test.local" });
+  await hostB.init();
+  hostB.loadToolSource(toolB);
+
+  // listTools de A solo ve a_probe, NO b_target.
+  const listA = hostA.listTools();
+  const namesA = listA.map((t) => t.name);
+  check(listA.length === 1 && namesA[0] === "a_probe", "aislamiento: host A solo lista a_probe (no b_target)");
+
+  // callTool a b_target desde el host de A -> "tool no encontrada" (esta en otro contexto).
+  let bFromAFailed = false;
+  try {
+    await hostA.callTool("b_target", { x: 5 });
+  } catch (e) {
+    bFromAFailed = /no encontrada/.test(String(e && e.message || e));
+  }
+  check(bFromAFailed, "aislamiento: A no puede llamar a b_target (tool no encontrada)");
+
+  // a_probe devuelve las claves de __tools de su contexto: solo ["a_probe"].
+  const probe = await hostA.callTool("a_probe", { x: 1 });
+  check(
+    JSON.stringify(probe.seen) === JSON.stringify(["a_probe"]) &&
+      JSON.stringify(probe.afterPoke) === JSON.stringify(["a_probe", "b_target"]),
+    "aislamiento: A ve solo su __tools (y el poke agrega SOLO en su contexto)"
+  );
+
+  // B debe quedar intacta tras las acciones de A: b_target sigue devolviendo el
+  // doble (no el hackeo que A intento inyectar).
+  const bRes = await hostB.callTool("b_target", { x: 21 });
+  check(bRes && bRes.doubled === 42, "aislamiento: B intacta tras acciones de A (doubled=42, no hackeada)");
+
+  hostA.dispose();
+  hostB.dispose();
+  try { quickjs.dispose(); } catch { /* best-effort */ }
 
   console.log("\n" + (failures === 0 ? "TODOS LOS CHECKS VERDE" : failures + " CHECK(S) ROJO(S)"));
 } catch (e) {

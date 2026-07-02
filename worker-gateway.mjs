@@ -1,20 +1,23 @@
 // worker-gateway.mjs
-// TAREA7: gateway llms.txt -> MCP.
+// TAREA7: gateway llms.txt -> MCP.  TAREA9: contexto por skill + cache de descubrimiento en isolate.
 //
 // Dado un origin permitido (?origin=<url-encoded>):
-//   1) descarga su /llms.txt (timeout 5s),
-//   2) parsea las skills ejecutables (comentario JSON con tool+sha256),
-//   3) descarga cada tool.js (timeout 5s) y VERIFICA sha256 con crypto.subtle;
-//      mismatch -> skill excluida y registrada como rechazada (console.warn),
-//   4) carga las skills verificadas en un AsyncToolHost con fetchOrigin scoped
-//      a ESE origin (hardening: memoria 64MB, pila 1MB, interrupt 2s),
-//   5) expone MCP Streamable HTTP (initialize / tools/list / tools/call) via
+//   1) descubre sus skills ejecutables (llms.txt + tool.js verificado por sha256),
+//   2) carga CADA skill en su PROPIO contexto QuickJS (aislamiento tool<->tool: una
+//      skill no puede ver ni pisar __tools/globals de otra). tools/list agrega los
+//      schemas de todos los contextos; tools/call enruta al contexto de la skill.
+//      El hardening por contexto se mantiene (mismos valores: 64MB / 1MB / 2s).
+//   3) expone MCP Streamable HTTP (initialize / tools/list / tools/call) via
 //      mcp-core-async.mjs.
 //
-// Un solo contexto QuickJS por request: todas las skills del mismo origin
-// comparten dominio de confianza (mismo allowedOrigin). Host construido por
-// request y disposed al final (igual que el PoC). Trade-off documentado en
-// TAREA7-REPORT.md.
+// Cache de descubrimiento (TAREA9): Map a nivel de modulo (isolate) origin ->
+//   { skills: [{name, description, inputSchema, code, sha256}], rejected, expiresAt }
+// con TTL 60s y max 16 origins (evict FIFO). Salta fetch de llms.txt + tool.js +
+// verificacion sha256 en requests calientes del mismo isolate: la verificacion se
+// hace al poblar la entrada y el codigo cacheado es inmutable por hash. Los
+// contextos QuickJS NO se cachean (se crean por request); lo cacheado es texto.
+// El cache de caches.default existente se mantiene como SEGUNDA capa (tool.js
+// inmutable por sha; llms.txt TTL 60s).
 //
 // WORKER-TO-WORKER (error 1042): un Worker que hace fetch a otro Worker de la
 // MISMA cuenta Cloudflare via workers.dev falla con "error code: 1042". El demo
@@ -36,6 +39,7 @@ import QUICKJS_WASM from "./quickjs-asyncify.wasm";
 const variant = newVariant(baseAsyncifyVariant, { wasmModule: QUICKJS_WASM });
 
 // Construccion perezosa y cacheada del modulo asyncify (sin top-level await).
+// El modulo se cachea a nivel isolate; solo newContext() es por skill por request.
 let _quickjsPromise = null;
 function getQuickjs() {
   if (!_quickjsPromise) {
@@ -44,7 +48,40 @@ function getQuickjs() {
   return _quickjsPromise;
 }
 
-// --- Cache (opcional, bypass si la Cache API falla en el runtime) -------------
+// --- Cache de descubrimiento en el isolate (TAREA9, capa 1) -------------------
+// Map a nivel de modulo origin -> { skills, rejected, expiresAt }. TTL 60s.
+// Max 16 origins; al llenarse, evict el mas viejo (FIFO por orden de insercion
+// del Map). Los contextos QuickJS NO se cachean: lo cacheado es texto (code ya
+// verificado + metadata). La verificacion sha256 se hace al poblar la entrada;
+// el codigo cacheado es inmutable por hash => no se re-verifica en hit.
+const ISOLATE_TTL_MS = 60_000;
+const ISOLATE_MAX_ENTRIES = 16;
+const isolateCache = new Map();
+
+function isolateCacheGet(origin) {
+  const e = isolateCache.get(origin);
+  if (!e) return null;
+  if (Date.now() >= e.expiresAt) {
+    isolateCache.delete(origin);
+    return null;
+  }
+  return e;
+}
+
+function isolateCachePut(origin, skills, rejected) {
+  if (isolateCache.size >= ISOLATE_MAX_ENTRIES) {
+    // Evict el mas viejo (primera clave en orden de insercion del Map).
+    const oldest = isolateCache.keys().next().value;
+    if (oldest !== undefined) isolateCache.delete(oldest);
+  }
+  isolateCache.set(origin, {
+    skills,
+    rejected,
+    expiresAt: Date.now() + ISOLATE_TTL_MS,
+  });
+}
+
+// --- Cache (capa 2, opcional, bypass si la Cache API falla en el runtime) ------
 // tool.js: inmutable, key = `gw:tool:${url}#${sha}`. Solo se cachea tras verify OK.
 // llms.txt: TTL 60s, key = `gw:llms:${origin}`. Se almacena con timestamp.
 const LLMS_TTL_MS = 60_000;
@@ -125,18 +162,28 @@ async function sha256Hex(text) {
 }
 
 // Descubre y verifica las skills ejecutables de un origin.
-// Devuelve { sources: [{name, source}], rejected: [{name, reason}] }.
+// Devuelve { skills: [{name, description, inputSchema, code, sha256}], rejected, discovery }.
+//  - skills: cada entrada lleva el `code` (tool.js) verificado por sha256 e
+//    inmutable por hash; `inputSchema` queda undefined aqui y se extrae del
+//    contexto QuickJS en runtime (mismo comportamiento observable que antes).
+//  - discovery: "hit" (capa 1 isolate) | "miss" (poblado ahora).
 async function discoverSkills(origin, fetchImpl) {
-  const rejected = [];
-  const sources = [];
+  // --- Capa 1: cache de descubrimiento en el isolate ---
+  const cached = isolateCacheGet(origin);
+  if (cached) {
+    return { skills: cached.skills, rejected: cached.rejected, discovery: "hit" };
+  }
 
-  // 1) llms.txt (con cache TTL 60s)
+  const rejected = [];
+  const skills = [];
+
+  // --- Capa 2: fetch llms.txt (con cache caches.default TTL 60s) ---
   const llmsKey = "gw:llms:" + origin;
   let llmsText = null;
-  const cached = await cacheGet(llmsKey);
-  if (cached) {
+  const cachedLlms = await cacheGet(llmsKey);
+  if (cachedLlms) {
     try {
-      const obj = JSON.parse(cached);
+      const obj = JSON.parse(cachedLlms);
       if (obj && typeof obj.text === "string" && Date.now() - obj.ts < LLMS_TTL_MS) {
         llmsText = obj.text;
       }
@@ -160,14 +207,14 @@ async function discoverSkills(origin, fetchImpl) {
     await cachePut(llmsKey, JSON.stringify({ text: llmsText, ts: Date.now() }), LLMS_TTL_MS);
   }
 
-  // 2) parse
-  const skills = parseLlmsTxt(llmsText);
-  if (skills.length === 0) {
+  // --- parse ---
+  const parsed = parseLlmsTxt(llmsText);
+  if (parsed.length === 0) {
     throw new Error("llms.txt: sin skills ejecutables (estado=" + llmsStatus + ")");
   }
 
-  // 3) descargar + verificar cada tool.js
-  for (const s of skills) {
+  // --- fetch + verificar cada tool.js (con cache caches.default inmutable) ---
+  for (const s of parsed) {
     const toolUrl = new URL(s.toolPath, origin).href;
     const toolKey = "gw:tool:" + toolUrl + "#" + s.sha256;
 
@@ -187,7 +234,7 @@ async function discoverSkills(origin, fetchImpl) {
       src = r.text;
     }
 
-    // Verificar sha256 (siempre, incluso en cache hit, por seguridad/barato)
+    // Verificar sha256 (siempre, incluso en cache hit de capa 2, por seguridad/barato).
     let hash;
     try {
       hash = await sha256Hex(src);
@@ -206,17 +253,88 @@ async function discoverSkills(origin, fetchImpl) {
 
     // Cache inmutable (key incluye el sha => contenido addressable).
     await cachePut(toolKey, src, 0);
-    sources.push({ name: s.name, source: src });
+    skills.push({
+      name: s.name,
+      description: s.description,
+      inputSchema: undefined, // se extrae del contexto QuickJS en runtime
+      code: src,
+      sha256: s.sha256,
+    });
   }
 
-  return { sources, rejected };
+  // Poblar capa 1 (isolate) aunque algunas skills se hayan rechazado: las
+  // rechazadas no se re-intentan en cada request caliente; el TTL refresca.
+  isolateCachePut(origin, skills, rejected);
+  return { skills, rejected, discovery: "miss" };
 }
 
-function json(obj, status = 200) {
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
-  });
+// --- PerSkillHost: un AsyncToolHost por skill (aislamiento tool<->tool) --------
+// Cada skill se carga en su PROPIO contexto QuickJS (newContext propio => runtime
+// propio => __tools/globals propios). tools/list agrega los schemas de todos los
+// contextos; tools/call enruta al contexto de la skill. El hardening por contexto
+// se hereda de AsyncToolHost (mismos valores). Las llamadas son secuenciales por
+// request (sin concurrencia entre contextos) => respeta la limitacion asyncify
+// (una suspension async a la vez por modulo). Dispose de TODOS los contextos al
+// final del request (try/finally en el handler).
+class PerSkillHost {
+  constructor({ quickjs, allowedOrigin, fetchImpl, skills }) {
+    this._quickjs = quickjs;
+    this._allowedOrigin = allowedOrigin;
+    this._fetchImpl = fetchImpl;
+    this._skills = skills; // [{name, code, ...}]
+    this._byName = new Map(); // name -> AsyncToolHost
+    this._order = []; // names en orden de carga
+  }
+
+  async init() {
+    for (const s of this._skills) {
+      const h = new AsyncToolHost({
+        quickjs: this._quickjs,
+        allowedOrigin: this._allowedOrigin,
+        fetchImpl: this._fetchImpl,
+      });
+      await h.init();
+      h.loadToolSource(s.code);
+      this._byName.set(s.name, h);
+      this._order.push(s.name);
+    }
+  }
+
+  // MCP: tools/list agrega los schemas de todos los contextos.
+  listTools() {
+    const all = [];
+    for (const name of this._order) {
+      const tools = this._byName.get(name).listTools();
+      for (const t of tools) all.push(t);
+    }
+    return all;
+  }
+
+  // MCP: tools/call enruta al contexto de la skill.
+  async callTool(name, args) {
+    const h = this._byName.get(name);
+    if (!h) throw new Error("tool no encontrada: " + name);
+    return await h.callTool(name, args);
+  }
+
+  dispose() {
+    for (const h of this._byName.values()) {
+      try {
+        h.dispose();
+      } catch {
+        // best-effort: no bloquear el dispose del resto.
+      }
+    }
+  }
+}
+
+function json(obj, status = 200, discovery) {
+  const headers = { "content-type": "application/json", "access-control-allow-origin": "*" };
+  // X-Gw-Discovery: "miss" | "hit" (tras descubrimiento) | "none" (antes de
+  // descubrimiento, p.ej. errores de validacion). Solo-test/observabilidad; no
+  // filtra nada sensible (es el estado del cache del isolate para este origin).
+  if (discovery) headers["x-gw-discovery"] = discovery;
+  return new Response(JSON.stringify(obj), { status, headers });
 }
 
 function allowedOrigins(env) {
@@ -251,7 +369,8 @@ export default {
     if (!originParam) {
       return json(
         { jsonrpc: "2.0", id: null, error: { code: -32602, message: "falta parametro origin" } },
-        403
+        403,
+        "none"
       );
     }
     let origin;
@@ -260,14 +379,16 @@ export default {
     } catch {
       return json(
         { jsonrpc: "2.0", id: null, error: { code: -32602, message: "origin invalido: " + originParam } },
-        403
+        403,
+        "none"
       );
     }
     const allowed = allowedOrigins(env);
     if (!allowed.includes(origin)) {
       return json(
         { jsonrpc: "2.0", id: null, error: { code: -32602, message: "origin no permitido: " + origin } },
-        403
+        403,
+        "none"
       );
     }
 
@@ -276,58 +397,64 @@ export default {
     try {
       msg = await request.json();
     } catch {
-      return json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400);
+      return json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400, "none");
     }
 
     // fetch inyectado (binding para same-account, fetch global para el resto).
     const fetchImpl = makeFetchImpl(env);
 
-    // --- Descubrimiento + verificacion ---
-    let sources;
+    // --- Descubrimiento + verificacion (cache isolate -> caches.default -> red) ---
+    let skills;
+    let discovery = "none";
     try {
       const discovered = await discoverSkills(origin, fetchImpl);
-      sources = discovered.sources;
+      skills = discovered.skills;
+      discovery = discovered.discovery;
       for (const r of discovered.rejected) {
         console.warn("[gateway] skill rechazada: " + r.name + " -> " + r.reason);
       }
     } catch (e) {
       return json(
         { jsonrpc: "2.0", id: msg && msg.id !== undefined ? msg.id : null, error: { code: -32603, message: "descubrimiento fallo: " + String(e && e.message || e) } },
-        502
+        502,
+        "miss"
       );
     }
-    if (sources.length === 0) {
+    if (skills.length === 0) {
       return json(
         { jsonrpc: "2.0", id: msg && msg.id !== undefined ? msg.id : null, error: { code: -32603, message: "ninguna skill verificada para el origin" } },
-        502
+        502,
+        discovery
       );
     }
 
-    // --- Host por request, scoped al origin, hardening aplicado ---
+    // --- Host por request, un contexto QuickJS por skill, hardening por contexto ---
     let host;
     try {
       const quickjs = await getQuickjs();
-      host = new AsyncToolHost({ quickjs, allowedOrigin: origin, fetchImpl });
+      host = new PerSkillHost({ quickjs, allowedOrigin: origin, fetchImpl, skills });
       await host.init();
-      for (const s of sources) host.loadToolSource(s.source);
     } catch (e) {
       if (host) host.dispose();
       return json(
         { jsonrpc: "2.0", id: msg && msg.id !== undefined ? msg.id : null, error: { code: -32603, message: "host fallo: " + String(e && e.message || e) } },
-        500
+        500,
+        discovery
       );
     }
 
     try {
       const response = await handleMcpMessageAsync(host, msg);
-      if (response === null) return new Response(null, { status: 202 });
-      return json(response);
+      if (response === null) return new Response(null, { status: 202, headers: { "x-gw-discovery": discovery } });
+      return json(response, 200, discovery);
     } catch (e) {
       return json(
         { jsonrpc: "2.0", id: msg && msg.id !== undefined ? msg.id : null, error: { code: -32603, message: String(e && e.message || e) } },
-        500
+        500,
+        discovery
       );
     } finally {
+      // Dispose de TODOS los contextos (uno por skill).
       host.dispose();
     }
   },

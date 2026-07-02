@@ -209,6 +209,9 @@ What it guarantees:
   - outbound fetch timeout: 5 s (`AbortSignal.timeout`)
 - **Fresh context per request.** A new QuickJS context (and runtime) is built
   per request and disposed at the end; no state survives between requests.
+- **Per-skill contexts in the gateway.** Each skill is loaded into its own
+  QuickJS context; a skill cannot see or overwrite another skill's
+  registration or globals, even within the same origin.
 
 What it does **not** guarantee:
 
@@ -216,19 +219,19 @@ What it does **not** guarantee:
   no bearer token, rate limit, or per-client identity. The only access control
   is the gateway's origin allowlist. Put your own auth in front before exposing
   this.
-- **No tool-to-tool isolation within one origin.** All skills of the same
-  origin share a single QuickJS context for a request. Skills from the same
-  publisher can see/interfere with each other. Cross-origin isolation is by
-  request, not within a request.
+- **Per-skill isolation is context-level, not process-level.** Skills get
+  separate QuickJS contexts but share the same wasm module instance and the
+  same Worker request; the boundary is the QuickJS API surface, not an OS
+  process.
 - **One asyncify suspension at a time.** QuickJS asyncify suspends/resumes a
   single stack; concurrent overlapping async capabilities are not supported.
 - **State is in-memory and per-request.** No persistence, no warm state between
   requests. A tool that accumulates state loses it when the request ends.
 - **DoS is bounded, not impossible.** The limits above cap a single call's
   cost; a determined caller can still spend the limits' worth of CPU/memory
-  per request, and the gateway caches `llms.txt` for 60 s and verified
-  `tool.js` by `sha` in the Cache API, so cold-path cost is amortized but not
-  zero.
+  per request, and the gateway caches discovery per isolate for 60 s (observable
+  via the `X-Gw-Discovery: hit|miss` response header) plus `llms.txt` / verified
+  `tool.js` in the Cache API, so cold-path cost is amortized but not zero.
 - **The publisher is trusted for the skill list.** The gateway trusts the
   origin's `/llms.txt` to name skills; it verifies the `tool.js` bytes match
   the declared SHA-256, but it does not vet what the tool does.

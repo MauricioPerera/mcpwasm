@@ -68,19 +68,59 @@ const SANDBOX_PRELUDE_ASYNC = `
   };
 `;
 
+// --- Hardening (TAREA7 gateway): limites del runtime QuickJS ------------------
+// Valores por defecto aplicados a TODO AsyncToolHost (incluido el spike TAREA5,
+// que sigue verde porque sus tools son triviales y rapidas).
+//  - MEMORY_LIMIT_BYTES: tope de memoria del runtime (64MB). Cubre tools que
+//    acumulan strings/arrays enormes; QuickJS lanza "memory limit exceeded" y
+//    aborta la evaluacion (se propaga como error de la tool).
+//  - MAX_STACK_SIZE_BYTES: pila de llamada (1MB). Evita recursion infinita
+//    explosiva antes de que actue el interruptHandler.
+//  - INTERRUPT_DEADLINE_MS: deadline wall-clock por callTool (2s). El
+//    interruptHandler compara Date.now() contra this._deadline; si se excede,
+//    devuelve true y QuickJS interrumpe el bucle infinito en curso.
+// APIs usadas (verificadas en node_modules/quickjs-emscripten-core/dist/index.d.ts):
+//   vm.runtime.setMemoryLimit(bytes)   -> QuickJSRuntime#setMemoryLimit
+//   vm.runtime.setMaxStackSize(bytes)  -> QuickJSRuntime#setMaxStackSize
+//   vm.runtime.setInterruptHandler(cb) -> QuickJSRuntime#setInterruptHandler
+//   cb: (runtime) => boolean | undefined | void  (true => interrumpe)
+const DEFAULT_MEMORY_LIMIT_BYTES = 64 * 1024 * 1024; // 64 MB
+const DEFAULT_MAX_STACK_SIZE_BYTES = 1024 * 1024; // 1 MB
+const DEFAULT_INTERRUPT_DEADLINE_MS = 2000; // 2s por callTool
+
 export class AsyncToolHost {
   // Opciones:
   //  - quickjs: modulo QuickJSAsyncWASMModule ya construido (recomendado en Workers,
   //    para reusar el modulo compilado). Si no se pasa, se construye uno nuevo (Node).
   //  - quickjsModule: WebAssembly.Module pre-compilado para construir la variante asyncify.
   //  - allowedOrigin: origin unico permitido para host.fetchOrigin. Obligatorio.
-  constructor({ quickjs, quickjsModule, allowedOrigin }) {
+  //  - memoryLimitBytes (opcional, default 64MB): tope de memoria del runtime.
+  //  - maxStackSizeBytes (opcional, default 1MB): pila de llamadas.
+  //  - interruptDeadlineMs (opcional, default 2000): deadline wall-clock por callTool.
+  //    Poner <=0 desactiva el interruptHandler (solo queda el guard de bombeo).
+  //  - fetchImpl (opcional, default global fetch): funcion (url, opts) => Response
+  //    usada por la capability host.fetchOrigin. Permite al gateway (TAREA7)
+  //    inyectar un fetch que enrute origins de la misma cuenta Cloudflare via
+  //    service binding (bypass del error 1042 worker-to-worker por workers.dev).
+  //    El spike no lo pasa => usa fetch global => sigue verde.
+  constructor({ quickjs, quickjsModule, allowedOrigin, memoryLimitBytes, maxStackSizeBytes, interruptDeadlineMs, fetchImpl }) {
     if (typeof allowedOrigin !== "string" || !allowedOrigin) {
       throw new Error("AsyncToolHost requiere allowedOrigin");
     }
     this._quickjs = quickjs || null;
     this._quickjsModule = quickjsModule || null;
     this._allowedOrigin = allowedOrigin;
+    this._fetchImpl = typeof fetchImpl === "function" ? fetchImpl : ((u, o) => fetch(u, o));
+    this._memoryLimitBytes =
+      typeof memoryLimitBytes === "number" ? memoryLimitBytes : DEFAULT_MEMORY_LIMIT_BYTES;
+    this._maxStackSizeBytes =
+      typeof maxStackSizeBytes === "number" ? maxStackSizeBytes : DEFAULT_MAX_STACK_SIZE_BYTES;
+    this._interruptDeadlineMs =
+      typeof interruptDeadlineMs === "number" ? interruptDeadlineMs : DEFAULT_INTERRUPT_DEADLINE_MS;
+    // deadline inicia lejos en el futuro: init() (prelude) y listTools() (__list)
+    // corren codigo DE CONFIANZA y NO deben interrumpirse. Solo loadToolSource
+    // (tool.js no confiable) y callTool (handler no confiable) activan el deadline.
+    this._deadline = Number.MAX_SAFE_INTEGER;
     this._vm = null;
   }
 
@@ -99,12 +139,41 @@ export class AsyncToolHost {
     const vm = this._quickjs.newContext();
     this._vm = vm;
 
+    // --- Hardening: limites del runtime QuickJS (TAREA7 gateway) -------------
+    // newContext() crea su propio runtime, asi que estos limites aplican solo
+    // a este contexto (host por request => runtime por request).
+    try {
+      vm.runtime.setMemoryLimit(this._memoryLimitBytes);
+    } catch (e) {
+      // Si la API no existiera en la variante instalada, no bloqueamos: documentamos.
+      console.warn("[AsyncToolHost] setMemoryLimit no aplicado:", e && e.message);
+    }
+    try {
+      vm.runtime.setMaxStackSize(this._maxStackSizeBytes);
+    } catch (e) {
+      console.warn("[AsyncToolHost] setMaxStackSize no aplicado:", e && e.message);
+    }
+    if (this._interruptDeadlineMs > 0) {
+      try {
+        // El handler devuelve true cuando Date.now() > deadline. QuickJS lo
+        // llama regularmente mientras ejecuta; al devolver true, interrumpe el
+        // bucle infinito en curso (lanza "interrupted" dentro del sandbox).
+        const host = this;
+        vm.runtime.setInterruptHandler(() => {
+          return Date.now() > host._deadline;
+        });
+      } catch (e) {
+        console.warn("[AsyncToolHost] setInterruptHandler no aplicado:", e && e.message);
+      }
+    }
+
     // Capability asyncified host.fetchOrigin. Desde QuickJS se llama como funcion
     // sincrona (__fetchOriginRaw(path)); el cuerpo es async del host y asyncify
     // suspende la pila wasm mientras corre. Devuelve un string JSON {status, body}.
     // Si el origin no coincide con allowedOrigin -> throw (se propaga como
     // excepcion dentro del sandbox via el mecanismo {error}/QTS_Throw de newFunction).
     const allowedOrigin = this._allowedOrigin;
+    const fetchImpl = this._fetchImpl;
     const cap = vm.newFunction("__fetchOriginRaw", async (pathH) => {
       const path = vm.getString(pathH);
       let url;
@@ -116,7 +185,7 @@ export class AsyncToolHost {
       if (url.origin !== allowedOrigin) {
         throw new Error("origin no permitido: " + url.origin);
       }
-      const resp = await fetch(url.href);
+      const resp = await fetchImpl(url.href);
       const text = await resp.text();
       const body = text.length > 4096 ? text.slice(0, 4096) : text;
       return vm.newString(JSON.stringify({ status: resp.status, body }));
@@ -134,15 +203,23 @@ export class AsyncToolHost {
   }
 
   // Carga el texto de un tool.js y lo ejecuta dentro del sandbox (sincrono: registro).
+  // tool.js es codigo NO CONFIABLE (viene del origin): activamos el deadline del
+  // interruptHandler para cortar bucles infinitos en el top-level del registro.
   loadToolSource(sourceText) {
     const vm = this._vm;
-    const res = vm.evalCode(sourceText);
-    if (res.error) {
-      const msg = vm.dump(res.error);
-      res.error.dispose();
-      throw new Error("fallo al cargar tool.js: " + JSON.stringify(msg));
+    const prev = this._deadline;
+    this._deadline = Date.now() + this._interruptDeadlineMs;
+    try {
+      const res = vm.evalCode(sourceText);
+      if (res.error) {
+        const msg = vm.dump(res.error);
+        res.error.dispose();
+        throw new Error("fallo al cargar tool.js: " + JSON.stringify(msg));
+      }
+      res.value.dispose();
+    } finally {
+      this._deadline = prev;
     }
-    res.value.dispose();
   }
 
   // MCP: tools/list (sincrono).
@@ -167,6 +244,19 @@ export class AsyncToolHost {
   // cediendo al event loop para que asyncify reanude la pila wasm cuando el fetch
   // del host resuelve).
   async callTool(name, args) {
+    const vm = this._vm;
+    // Activar el deadline wall-clock para ESTA llamada (handler no confiable).
+    // El interruptHandler compara contra this._deadline y corta bucles infinitos.
+    const prev = this._deadline;
+    this._deadline = Date.now() + this._interruptDeadlineMs;
+    try {
+      return await this._callToolInner(name, args);
+    } finally {
+      this._deadline = prev;
+    }
+  }
+
+  async _callToolInner(name, args) {
     const vm = this._vm;
     const code =
       "__dispatch(" +

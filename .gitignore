@@ -1,5 +1,6 @@
 node_modules/
 dist/
 dist-spike/
+dist-gateway/
 quickjs.wasm
 quickjs-asyncify.wasm

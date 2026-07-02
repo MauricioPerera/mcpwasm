@@ -6,7 +6,8 @@
   "scripts": {
     "build": "node build.mjs",
     "test": "node build.mjs && node mf-test.mjs",
-    "spike": "node build-spike.mjs && node mf-spike.mjs"
+    "spike": "node build-spike.mjs && node mf-spike.mjs",
+    "gateway": "node build-gateway.mjs && node mf-gateway.mjs"
   },
   "devDependencies": {
     "@jitl/quickjs-wasmfile-release-asyncify": "^0.32.0",

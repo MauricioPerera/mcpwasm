@@ -79,6 +79,21 @@ const SANDBOX_PRELUDE_ASYNC = `
 //  - INTERRUPT_DEADLINE_MS: deadline wall-clock por callTool (2s). El
 //    interruptHandler compara Date.now() contra this._deadline; si se excede,
 //    devuelve true y QuickJS interrumpe el bucle infinito en curso.
+//    OJO: en Cloudflare Workers el reloj (Date.now) se CONGELA durante ejecucion
+//    sincrona (mitigacion Spectre): dentro de un while(true){} Date.now() nunca
+//    avanza y este check NUNCA corta (TAREA12: busy_loop colgo ~40s hasta 1102).
+//    Por eso hay un segundo mecanismo DETERMINISTA: presupuesto por conteo de
+//    invocaciones del interruptHandler (ver INTERRUPT_MAX_INVOCATIONS).
+//  - INTERRUPT_MAX_INVOCATIONS: presupuesto DETERMINISTA por callTool/loadToolSource.
+//    QuickJS llama al interruptHandler periodicamente mientras ejecuta bytecode;
+//    llevamos un contador (this._interruptCount) que se resetea al inicio de cada
+//    callTool/loadToolSource y devuelve true (interrumpe) al superar N invocaciones.
+//    A diferencia del deadline wall-clock, NO depende del reloj: cuenta cuantas
+//    veces QuickJS invoco al handler. Una tool legitima que pasa la mayor parte del
+//    tiempo en `await host.fetchOrigin` (asyncify suspende la pila => el handler NO
+//    se llama durante la suspension) consume pocas invocaciones; un while(true){}
+//    puro sincrono las consume rapidamente => interrumpe. Calibrado con margen
+//    amplio (50-100x) sobre la skill legitima mas pesada (ver TAREA12B-REPORT.md).
 // APIs usadas (verificadas en node_modules/quickjs-emscripten-core/dist/index.d.ts):
 //   vm.runtime.setMemoryLimit(bytes)   -> QuickJSRuntime#setMemoryLimit
 //   vm.runtime.setMaxStackSize(bytes)  -> QuickJSRuntime#setMaxStackSize
@@ -86,7 +101,17 @@ const SANDBOX_PRELUDE_ASYNC = `
 //   cb: (runtime) => boolean | undefined | void  (true => interrumpe)
 const DEFAULT_MEMORY_LIMIT_BYTES = 64 * 1024 * 1024; // 64 MB
 const DEFAULT_MAX_STACK_SIZE_BYTES = 1024 * 1024; // 1 MB
-const DEFAULT_INTERRUPT_DEADLINE_MS = 2000; // 2s por callTool
+const DEFAULT_INTERRUPT_DEADLINE_MS = 2000; // 2s por callTool (wall-clock; efectivo en Node/tests; congelado en Workers)
+// Calibrado empiricamente (ver TAREA12B-REPORT.md): las skills legitimas reales
+// (bookstore stock_report/search_catalog/get_book, spike fetch_home/fetch_evil,
+// demo sum_numbers/server_time) consumen 0 invocaciones del interruptHandler por
+// callTool (asyncify suspende la pila durante `await host.fetchOrigin` => el
+// handler no se llama). Un proxy de compute pesado legitimo (1M de adiciones en
+// un loop tight) consume ~200 invocaciones. Ponemos N=20000 (100x ese proxy;
+// margen amplio sobre cualquier skill legitima real, que es ~0). Un while(true){}
+// vacio consume 20000 invocaciones en ~1s en Node y ~4s en workerd (WASM mas
+// lento) => corte acotado muy por debajo del limite de plataforma (1102, ~40s).
+const DEFAULT_INTERRUPT_MAX_INVOCATIONS = 20000;
 
 export class AsyncToolHost {
   // Opciones:
@@ -98,12 +123,16 @@ export class AsyncToolHost {
   //  - maxStackSizeBytes (opcional, default 1MB): pila de llamadas.
   //  - interruptDeadlineMs (opcional, default 2000): deadline wall-clock por callTool.
   //    Poner <=0 desactiva el interruptHandler (solo queda el guard de bombeo).
+  //  - interruptMaxInvocations (opcional, default DEFAULT_INTERRUPT_MAX_INVOCATIONS):
+  //    presupuesto DETERMINISTA por invocaciones del interruptHandler por
+  //    callTool/loadToolSource. Salva contra while(true){} cuando el reloj esta
+  //    congelado (Cloudflare Workers). Ver comentario en la constante.
   //  - fetchImpl (opcional, default global fetch): funcion (url, opts) => Response
   //    usada por la capability host.fetchOrigin. Permite al gateway (TAREA7)
   //    inyectar un fetch que enrute origins de la misma cuenta Cloudflare via
   //    service binding (bypass del error 1042 worker-to-worker por workers.dev).
   //    El spike no lo pasa => usa fetch global => sigue verde.
-  constructor({ quickjs, quickjsModule, allowedOrigin, memoryLimitBytes, maxStackSizeBytes, interruptDeadlineMs, fetchImpl }) {
+  constructor({ quickjs, quickjsModule, allowedOrigin, memoryLimitBytes, maxStackSizeBytes, interruptDeadlineMs, interruptMaxInvocations, fetchImpl }) {
     if (typeof allowedOrigin !== "string" || !allowedOrigin) {
       throw new Error("AsyncToolHost requiere allowedOrigin");
     }
@@ -117,10 +146,21 @@ export class AsyncToolHost {
       typeof maxStackSizeBytes === "number" ? maxStackSizeBytes : DEFAULT_MAX_STACK_SIZE_BYTES;
     this._interruptDeadlineMs =
       typeof interruptDeadlineMs === "number" ? interruptDeadlineMs : DEFAULT_INTERRUPT_DEADLINE_MS;
+    this._interruptMaxInvocations =
+      typeof interruptMaxInvocations === "number" && interruptMaxInvocations > 0
+        ? interruptMaxInvocations
+        : DEFAULT_INTERRUPT_MAX_INVOCATIONS;
     // deadline inicia lejos en el futuro: init() (prelude) y listTools() (__list)
     // corren codigo DE CONFIANZA y NO deben interrumpirse. Solo loadToolSource
-    // (tool.js no confiable) y callTool (handler no confiable) activan el deadline.
+    // (tool.js no confiable) y callTool (handler no confiable) activan el interrupt.
     this._deadline = Number.MAX_SAFE_INTEGER;
+    // Contador de invocaciones del interruptHandler y flag de activacion. El flag
+    // arranca en false (init/listTools no interrumpen); se pone true al entrar a
+    // loadToolSource/callTool y se restaura al salir. El contador se resetea a 0 al
+    // inicio de cada loadToolSource/callTool y NO se borra al salir (queda disponible
+    // para calibration/observabilidad: host._interruptCount tras una llamada).
+    this._interruptCount = 0;
+    this._interruptActive = false;
     this._vm = null;
   }
 
@@ -155,12 +195,23 @@ export class AsyncToolHost {
     }
     if (this._interruptDeadlineMs > 0) {
       try {
-        // El handler devuelve true cuando Date.now() > deadline. QuickJS lo
-        // llama regularmente mientras ejecuta; al devolver true, interrumpe el
-        // bucle infinito en curso (lanza "interrupted" dentro del sandbox).
+        // El handler devuelve true para interrumpir. QuickJS lo llama
+        // periodicamente mientras ejecuta bytecode; al devolver true, interrumpe
+        // el bucle infinito en curso (lanza "interrupted" dentro del sandbox).
+        // DOS mecanismos de corte:
+        //  (1) Contador determinista: solo cuenta cuando _interruptActive (i.e.
+        //      durante callTool/loadToolSource). Independiente del reloj => salva
+        //      contra while(true){} en Workers donde Date.now esta congelado.
+        //  (2) Deadline wall-clock: efectivo en Node/tests (el reloj avanza); en
+        //      Workers suele estar congelado => (1) es quien salva. Se mantiene
+        //      como backstop barato donde el reloj funcione.
         const host = this;
         vm.runtime.setInterruptHandler(() => {
-          return Date.now() > host._deadline;
+          if (!host._interruptActive) return false;
+          host._interruptCount = (host._interruptCount + 1) >>> 0;
+          if (host._interruptCount > host._interruptMaxInvocations) return true;
+          if (Date.now() > host._deadline) return true;
+          return false;
         });
       } catch (e) {
         console.warn("[AsyncToolHost] setInterruptHandler no aplicado:", e && e.message);
@@ -207,8 +258,11 @@ export class AsyncToolHost {
   // interruptHandler para cortar bucles infinitos en el top-level del registro.
   loadToolSource(sourceText) {
     const vm = this._vm;
-    const prev = this._deadline;
+    const prevDeadline = this._deadline;
+    const prevActive = this._interruptActive;
     this._deadline = Date.now() + this._interruptDeadlineMs;
+    this._interruptCount = 0;
+    this._interruptActive = true;
     try {
       const res = vm.evalCode(sourceText);
       if (res.error) {
@@ -218,7 +272,8 @@ export class AsyncToolHost {
       }
       res.value.dispose();
     } finally {
-      this._deadline = prev;
+      this._interruptActive = prevActive;
+      this._deadline = prevDeadline;
     }
   }
 
@@ -245,14 +300,19 @@ export class AsyncToolHost {
   // del host resuelve).
   async callTool(name, args) {
     const vm = this._vm;
-    // Activar el deadline wall-clock para ESTA llamada (handler no confiable).
-    // El interruptHandler compara contra this._deadline y corta bucles infinitos.
-    const prev = this._deadline;
+    // Activar el interrupt para ESTA llamada (handler no confiable): resetear el
+    // contador determinista y armar el deadline wall-clock. El interruptHandler
+    // corta bucles infinitos por whichever mecanismo dispare primero.
+    const prevDeadline = this._deadline;
+    const prevActive = this._interruptActive;
     this._deadline = Date.now() + this._interruptDeadlineMs;
+    this._interruptCount = 0;
+    this._interruptActive = true;
     try {
       return await this._callToolInner(name, args);
     } finally {
-      this._deadline = prev;
+      this._interruptActive = prevActive;
+      this._deadline = prevDeadline;
     }
   }
 

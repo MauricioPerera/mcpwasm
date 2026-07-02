@@ -21,6 +21,8 @@
 
 import { Miniflare } from "miniflare";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
+import path from "node:path";
 import { newQuickJSAsyncWASMModuleFromVariant, newVariant } from "quickjs-emscripten-core";
 import baseAsyncifyVariant from "@jitl/quickjs-wasmfile-release-asyncify";
 import { AsyncToolHost } from "./host-async.mjs";
@@ -190,6 +192,58 @@ try {
   hostA.dispose();
   hostB.dispose();
   try { quickjs.dispose(); } catch { /* best-effort */ }
+
+  // --- (b) INTERRUPT determinista por contador (TAREA12B) ---------------------
+  // Un while(true){} vacio bloquea el event loop de Node (la ejecucion QuickJS es
+  // sincrona), asi que Promise.race NO puede preemptarlo: si el contador fallara,
+  // el test colgaria. Por eso corro la llamada en un PROCESO HIJO killable via
+  // spawnSync({timeout}): si cuelga, el OS lo mata a los 15s y el test falla en
+  // vez de quedar colgado. Ademas CONGELO Date.now() dentro del hijo (simula
+  // workerd: el reloj se congela en ejecucion sincrona por mitigacion Spectre),
+  // asi que el deadline wall-clock (2s) NUNCA dispara y SOLO el contador
+  // determinista puede cortar. Si el contador corta -> isError con "interrupted"
+  // y el proceso hijo sale rapido (<~5s). Valida el fix del BUG 1 de TAREA12.
+  console.log("\n[b] interrupt determinista (while(true){}, reloj congelado, hijo killable):");
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
+  const workerScript = [
+    "import { newQuickJSAsyncWASMModuleFromVariant, newVariant } from 'quickjs-emscripten-core';",
+    "import baseAsyncifyVariant from '@jitl/quickjs-wasmfile-release-asyncify';",
+    "import { AsyncToolHost } from './host-async.mjs';",
+    "const quickjs = await newQuickJSAsyncWASMModuleFromVariant(newVariant(baseAsyncifyVariant, {}));",
+    "const realNow = Date.now;",
+    "const frozen = realNow();",
+    "Date.now = () => frozen; // reloj congelado: solo el contador corta",
+    "try {",
+    "  const host = new AsyncToolHost({ quickjs, allowedOrigin: 'https://test.local' });",
+    "  await host.init();",
+    "  host.loadToolSource('registerTool({ name: \"busy_loop\", description: \"x\", inputSchema: { type: \"object\" }, handler: function () { while (true) {} } });');",
+    "  const t0 = realNow();",
+    "  let err = null;",
+    "  try { await host.callTool('busy_loop', {}); } catch (e) { err = String((e && e.message) || e); }",
+    "  const dt = realNow() - t0;",
+    "  console.log(JSON.stringify({ ok: err !== null, msg: err, ms: dt, count: host._interruptCount }));",
+    "  host.dispose();",
+    "} finally { Date.now = realNow; }",
+    "try { quickjs.dispose(); } catch {}",
+  ].join("\n");
+  const child = spawnSync(process.execPath, ["--input-type=module", "-e", workerScript], {
+    cwd: repoRoot,
+    timeout: 15000,
+    encoding: "utf8",
+  });
+  if (child.signal === "SIGTERM" || child.status === null) {
+    console.log("busy_loop: el HIJO fue matado por timeout (contador NO corto) -> HANG");
+    check(false, "interrupt: busy_loop corto por el contador (no hang)");
+  } else {
+    const line = (child.stdout || "").split(/\r?\n/).find((l) => l.trim().startsWith("{"));
+    console.log("busy_loop ->", (line || "(sin salida)").trim());
+    let parsed = null;
+    try { parsed = JSON.parse(line); } catch {}
+    check(!!parsed && parsed.ok === true, "interrupt: busy_loop termino con error (no colgo)");
+    check(!!parsed && /interrupt/i.test(parsed.msg || ""), 'interrupt: mensaje contiene "interrupted"');
+    check(!!parsed && typeof parsed.ms === "number" && parsed.ms < 10000, "interrupt: corto en <10s");
+    check(!!parsed && typeof parsed.count === "number" && parsed.count > 0, "interrupt: el contador se invoco (>0)");
+  }
 
   console.log("\n" + (failures === 0 ? "TODOS LOS CHECKS VERDE" : failures + " CHECK(S) ROJO(S)"));
 } catch (e) {

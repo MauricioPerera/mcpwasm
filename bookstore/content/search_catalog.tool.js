@@ -11,13 +11,20 @@ registerTool({
   },
   handler: async function (args) {
     args = args || {};
-    const params = new URLSearchParams();
-    if (typeof args.q === "string" && args.q.length > 0) params.set("q", args.q);
-    if (typeof args.genre === "string" && args.genre.length > 0) params.set("genre", args.genre);
-    if (typeof args.max_price === "number" && Number.isFinite(args.max_price)) {
-      params.set("max_price", String(args.max_price));
+    // Construir el query string a mano: URLSearchParams no existe en el sandbox
+    // QuickJS (solo built-ins ECMAScript; URLSearchParams es WHATWG). Usar
+    // encodeURIComponent (built-in) para escapar cada valor.
+    const parts = [];
+    if (typeof args.q === "string" && args.q.length > 0) {
+      parts.push("q=" + encodeURIComponent(args.q));
     }
-    const qs = params.toString();
+    if (typeof args.genre === "string" && args.genre.length > 0) {
+      parts.push("genre=" + encodeURIComponent(args.genre));
+    }
+    if (typeof args.max_price === "number" && Number.isFinite(args.max_price)) {
+      parts.push("max_price=" + String(args.max_price));
+    }
+    const qs = parts.join("&");
     const path = qs ? ("/api/search?" + qs) : "/api/search";
     const r = await host.fetchOrigin(path);
     return JSON.parse(r.body);

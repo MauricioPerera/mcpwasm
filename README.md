@@ -102,10 +102,10 @@ Pieces live in:
 
 Under a `## Skills` section, an executable skill is a normal markdown list item
 followed by an HTML comment carrying a JSON object with `version`, `tool` (path
-to the `tool.js`), and `sha256` (hex SHA-256 of the `tool.js` bytes):
+to the `tool.js`), and `tool_sha256` (hex SHA-256 of the `tool.js` bytes):
 
 ```
-- [sum_numbers](/skills/sum_numbers/SKILL.md): Sum two numbers a and b. <!-- skill: {"version":"1.0.0","tool":"/skills/sum_numbers/tool.js","sha256":"58daf86111bf7278446eb7e0e8c6384713b50cdb6fa97ac039e23846d723dc3e"} -->
+- [sum_numbers](/skills/sum_numbers/SKILL.md): Sum two numbers a and b. <!-- skill: {"version":"1.0.0","tool":"/skills/sum_numbers/tool.js","tool_sha256":"58daf86111bf7278446eb7e0e8c6384713b50cdb6fa97ac039e23846d723dc3e"} -->
 ```
 
 Parsed by `llmstxt-parse.mjs`:
@@ -114,7 +114,7 @@ Parsed by `llmstxt-parse.mjs`:
   List items without it are treated as descriptive-only and ignored by the
   gateway.
 - `tool` is resolved relative to the origin.
-- `sha256` is verified against the fetched `tool.js` bytes before the tool is
+- `tool_sha256` is verified against the fetched `tool.js` bytes before the tool is
   loaded. Mismatch → the skill is rejected (logged) and not registered.
 - If the JSON is invalid the line is silently skipped (no throw).
 
@@ -196,7 +196,7 @@ What it guarantees:
   code — the tool can only call named internal methods. In the gateway, there
   is no platform secret; the only capability is `host.fetchOrigin`.
 - **SHA-256 content addressing.** The gateway downloads `tool.js` and verifies
-  it against the `sha256` declared in `llms.txt` before loading. Mismatched or
+  it against the `tool_sha256` declared in `llms.txt` before loading. Mismatched or
   corrupt content is rejected and not cached.
 - **Origin-scoped fetch.** `host.fetchOrigin` only fetches the single allowed
   origin for the request. Any other origin throws *inside the sandbox* and is

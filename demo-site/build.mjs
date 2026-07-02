@@ -26,8 +26,8 @@ const llmsTxt =
   `# llms-txt-skills demo site\n\n` +
   `> Demo site publishing executable skills per the llms-txt-skills standard with a provisional extension for executable skills.\n\n` +
   `## Skills\n\n` +
-  `- [sum_numbers](/skills/sum_numbers/SKILL.md): Sum two numbers a and b. <!-- skill: {"version":"1.0.0","tool":"/skills/sum_numbers/tool.js","sha256":"${sumHash}"} -->\n` +
-  `- [server_time](/skills/server_time/SKILL.md): Return the current server time. <!-- skill: {"version":"1.0.0","tool":"/skills/server_time/tool.js","sha256":"${serverHash}"} -->\n`;
+  `- [sum_numbers](/skills/sum_numbers/SKILL.md): Sum two numbers a and b. <!-- skill: {"version":"1.0.0","tool":"/skills/sum_numbers/tool.js","tool_sha256":"${sumHash}"} -->\n` +
+  `- [server_time](/skills/server_time/SKILL.md): Return the current server time. <!-- skill: {"version":"1.0.0","tool":"/skills/server_time/tool.js","tool_sha256":"${serverHash}"} -->\n`;
 
 const worker =
   `// AUTOGENERADO por build.mjs. No editar a mano.\n` +

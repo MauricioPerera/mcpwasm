@@ -2,7 +2,7 @@
 // Parser puro del formato "Skills" de /llms.txt del demo site.
 //
 // Formato de cada linea ejecutable (seccion "## Skills"):
-//   - [<name>](<skillMdPath>): <description> <!-- skill: {"version":"1.0.0","tool":"<toolPath>","sha256":"<hex>"} -->
+//   - [<name>](<skillMdPath>): <description> <!-- skill: {"version":"1.0.0","tool":"<toolPath>","tool_sha256":"<hex>"} -->
 //
 // Exporta parseLlmsTxt(text) -> [{ name, description, toolPath, sha256, version }]
 //  - Funcion PURA: no hace fetch, no importa nada. Recibe el texto y devuelve la lista.
@@ -31,7 +31,7 @@ export function parseLlmsTxt(text) {
       !meta ||
       typeof meta !== "object" ||
       typeof meta.tool !== "string" ||
-      typeof meta.sha256 !== "string"
+      typeof meta.tool_sha256 !== "string"
     ) {
       continue;
     }
@@ -39,7 +39,7 @@ export function parseLlmsTxt(text) {
       name,
       description,
       toolPath: meta.tool,
-      sha256: meta.sha256,
+      sha256: meta.tool_sha256,
       version: typeof meta.version === "string" ? meta.version : undefined,
     });
   }

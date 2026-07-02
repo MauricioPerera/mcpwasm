@@ -26,10 +26,10 @@ for (const s of skills) {
   const toolRes = await fetch(base + s.tool);
   const toolText = await toolRes.text();
   const actual = createHash("sha256").update(toolText, "utf8").digest("hex");
-  const ok = actual === s.sha256;
+  const ok = actual === s.tool_sha256;
   if (!ok) allOk = false;
   console.log(`\n=== ${s.tool} ===`);
-  console.log("declared sha256:", s.sha256);
+  console.log("declared sha256:", s.tool_sha256);
   console.log("actual   sha256:", actual);
   console.log("match:", ok ? "OK" : "FAIL");
 }

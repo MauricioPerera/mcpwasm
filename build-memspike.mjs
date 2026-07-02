@@ -28,7 +28,7 @@ const quickjsWasmSrc = path.join(
   "dist",
   "emscripten-module.wasm"
 );
-const memWasmSrc = path.join(root, "vendor-minimemory", "minimemory_bg.wasm");
+const memWasmSrc = path.join(root, "node_modules", "@rckflr", "minimemory", "minimemory_bg.wasm");
 const snapshotSrc = path.join(root, "mem-docs.snapshot");
 const shaJson = JSON.parse(readFileSync(path.join(root, "mem-snapshot-sha.json"), "utf8"));
 const expectedSha = shaJson.sha256;
@@ -53,12 +53,12 @@ await build({
 });
 
 // 2) Copiar ambos wasm + snapshot junto al bundle. El import del wasm minimemory
-//    queda como ./vendor-minimemory/minimemory_bg.wasm (external preserva el
-//    specifier) => lo copiamos a dist-memspike/vendor-minimemory/ para que
-//    Miniflare lo resuelva. QuickJS wasm y snapshot van a la raiz del dist.
+//    queda como ./minimemory_bg.wasm (external preserva el specifier; TAREA24:
+//    wrapper JS bundleado desde el paquete npm) => lo copiamos a
+//    dist-memspike/minimemory_bg.wasm para que Miniflare lo resuelva. QuickJS
+//    wasm y snapshot van a la raiz del dist.
 await copyFile(quickjsWasmSrc, path.join(distDir, "quickjs-asyncify.wasm"));
-await mkdir(path.join(distDir, "vendor-minimemory"), { recursive: true });
-await copyFile(memWasmSrc, path.join(distDir, "vendor-minimemory", "minimemory_bg.wasm"));
+await copyFile(memWasmSrc, path.join(distDir, "minimemory_bg.wasm"));
 await copyFile(snapshotSrc, path.join(distDir, "mem-docs.snapshot"));
 
 console.log("build-memspike OK -> dist-memspike/worker.js + 2 wasm + mem-docs.snapshot");

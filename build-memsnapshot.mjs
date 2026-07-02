@@ -1,11 +1,10 @@
 // build-memsnapshot.mjs
 // Construye mem-docs.snapshot para el spike TAREA20 (minimemory + QuickJS).
 //
-// Usa la base embebida minimemory v3.2.0 (vendored en vendor-minimemory/), que
+// Usa la base embebida minimemory v3.2.0 (paquete npm @rckflr/minimemory), que
 // expone WasmOkfIndex: indice BM25-only (sin embeddings) con ingest_concept +
-// search + export_snapshot/import_snapshot. La API publicada en npm (3.0.1) NO
-// expone BM25 usable desde JS (ver TAREA20-REPORT.md), por eso se usa el build
-// v3.2.0 (wasm ~563KB) que agrega WasmOkfIndex.
+// search + export_snapshot/import_snapshot. TAREA24: consumida desde npm (mismo
+// wasm, byte-identico al que antes estaba vendorizado).
 //
 // Formato OKF: cada concepto es markdown con frontmatter YAML que REQUIERE un
 // campo `type` (sin `type` o frontmatter roto => ingest_concept devuelve 0
@@ -18,11 +17,13 @@
 // verifica el sha256 del snapshot bundleado contra la constante esperada antes
 // de importarlo (mismo principio de integridad que tool_sha256).
 
-import { initSync, WasmOkfIndex } from "./vendor-minimemory/minimemory.js";
+import { initSync, WasmOkfIndex } from "@rckflr/minimemory";
 import { readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 
-const WASM_PATH = "vendor-minimemory/minimemory_bg.wasm";
+const require = createRequire(import.meta.url);
+const WASM_PATH = require.resolve("@rckflr/minimemory/minimemory_bg.wasm");
 const SNAPSHOT_PATH = "mem-docs.snapshot";
 const SHA_PATH = "mem-snapshot-sha.json";
 

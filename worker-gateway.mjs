@@ -34,9 +34,11 @@ import { handleMcpMessageAsync } from "./mcp-core-async.mjs";
 import { parseLlmsTxt } from "./llmstxt-parse.mjs";
 
 // TAREA22: motor minimemory (WasmOkfIndex, BM25) para la capability de memoria.
-// Import estatico del .wasm (CompiledWasm en el build, mismo truco que QuickJS).
-import initMem, { WasmOkfIndex } from "./vendor-minimemory/minimemory.js";
-import MEM_WASM from "./vendor-minimemory/minimemory_bg.wasm";
+// TAREA24: el wrapper JS se consume desde el paquete npm @rckflr/minimemory (esbuild
+// lo bundlea desde node_modules); el .wasm sigue como import estatico verbatim
+// (CompiledWasm en el build, mismo truco que QuickJS).
+import initMem, { WasmOkfIndex } from "@rckflr/minimemory";
+import MEM_WASM from "./minimemory_bg.wasm";
 
 // Import estatico del .wasm ASYNCIFY (CompiledWasm en el build).
 import QUICKJS_WASM from "./quickjs-asyncify.wasm";

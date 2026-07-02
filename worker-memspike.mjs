@@ -24,12 +24,14 @@ import { newQuickJSAsyncWASMModuleFromVariant, newVariant } from "quickjs-emscri
 import baseAsyncifyVariant from "@jitl/quickjs-wasmfile-release-asyncify";
 import { AsyncToolHost } from "./host-async.mjs";
 import { handleMcpMessageAsync } from "./mcp-core-async.mjs";
-import initMem, { WasmOkfIndex } from "./vendor-minimemory/minimemory.js";
+import initMem, { WasmOkfIndex } from "@rckflr/minimemory";
 
 // Imports estaticos de los .wasm (workerd los compila via CompiledWasm) y del
-// snapshot (texto, via regla Text de Miniflare).
+// snapshot (texto, via regla Text de Miniflare). TAREA24: el wrapper JS de
+// minimemory se consume desde el paquete npm (bundleado por esbuild); el .wasm
+// queda como import verbatim (external *.wasm) y se copia junto al bundle.
 import QUICKJS_WASM from "./quickjs-asyncify.wasm";
-import MEM_WASM from "./vendor-minimemory/minimemory_bg.wasm";
+import MEM_WASM from "./minimemory_bg.wasm";
 import SNAPSHOT_TEXT from "./mem-docs.snapshot";
 
 // Variante asyncify QuickJS con modulo pre-compilado (mismo truco que worker.mjs).

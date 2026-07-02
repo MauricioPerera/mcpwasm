@@ -1,14 +1,13 @@
 // Verificacion LOCAL del snapshot de PRODUCCION (7c): descarga
-// /skills-index.snapshot de produccion, lo importa en WasmOkfIndex (vendor) y
+// /skills-index.snapshot de produccion, lo importa en WasmOkfIndex (npm) y
 // hace 2 busquedas:
 //   "tool_sha256 integrity verification" -> hits relevantes (top hit)
 //   "receta de paella"                   -> 0 hits o scores claramente peores
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { initSync, WasmOkfIndex } from "../vendor-minimemory/minimemory.js";
+import { createRequire } from "node:module";
+import { initSync, WasmOkfIndex } from "@rckflr/minimemory";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
 
 const base = process.argv[2];
 if (!base) {
@@ -16,7 +15,7 @@ if (!base) {
   process.exit(1);
 }
 
-initSync({ module: readFileSync(join(__dirname, "..", "vendor-minimemory", "minimemory_bg.wasm")) });
+initSync({ module: readFileSync(require.resolve("@rckflr/minimemory/minimemory_bg.wasm")) });
 
 const res = await fetch(base + "/skills-index.snapshot");
 const snapText = await res.text();

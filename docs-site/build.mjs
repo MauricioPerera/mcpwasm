@@ -17,7 +17,10 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { initSync, WasmOkfIndex } from "../vendor-minimemory/minimemory.js";
+import { createRequire } from "node:module";
+import { initSync, WasmOkfIndex } from "@rckflr/minimemory";
+
+const require = createRequire(import.meta.url);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const contentDir = join(__dirname, "content");
@@ -99,8 +102,8 @@ for (const src of DOC_SOURCES) {
 writeFileSync(join(__dirname, "doc-sources.json"), JSON.stringify(provenance, null, 2) + "\n", "utf8");
 
 // --- 2) Ingest de los 4 docs en WasmOkfIndex -> snapshot + sha256 ------------
-// init minimemory wasm (Node: initSync con buffer).
-initSync({ module: readFileSync(join(__dirname, "..", "vendor-minimemory", "minimemory_bg.wasm")) });
+// init minimemory wasm (Node: initSync con buffer). TAREA24: wasm desde npm.
+initSync({ module: readFileSync(require.resolve("@rckflr/minimemory/minimemory_bg.wasm")) });
 
 // Parsear cada doc por headings (level 1..3) -> secciones; extraer parrafos de
 // prosa (>= 40 chars, sin bloques de codigo). title = "<doc>: <seccion>".

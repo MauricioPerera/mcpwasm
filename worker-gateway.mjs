@@ -134,9 +134,13 @@ function makeFetchImpl(env) {
     const binding = bindings[origin];
     if (binding) {
       // Service binding: el host del URL se ignora, pathname+query pasan al
-      // worker destino. No pasamos AbortSignal (algunas impl de binding no lo
-      // soportan y el worker destino es trivial, resuelve en ms).
-      return binding.fetch(url);
+      // worker destino. Reenviamos el init (method, body, headers) para que
+      // POST/PUT lleguen al worker destino; sin init el binding degrada a GET.
+      // Quitamos AbortSignal: algunas impl de binding no lo soportan y el
+      // worker destino es trivial, resuelve en ms.
+      const init = { ...opts };
+      if (init && init.signal) delete init.signal;
+      return binding.fetch(url, init);
     }
     return fetch(url, opts);
   };

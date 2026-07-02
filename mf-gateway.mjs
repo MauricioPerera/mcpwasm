@@ -235,6 +235,153 @@ try {
 
   hostSc.dispose();
 
+  // --- (d) CAPABILITY POST (TAREA16) -----------------------------------------
+  // Verifica la extension host.fetchOrigin(path, opts) con un fetchImpl fake
+  // inyectado que captura la request saliente. Reusa el mismo quickjs.
+  //   (a) POST con body llega con method y body correctos y content-type default.
+  //   (b) method PUT -> throw dentro del sandbox.
+  //   (c) POST a otro origin -> throw "origin no permitido".
+  console.log("\n[d] capability POST (fetchImpl fake inyectado):");
+  let captured = null;
+  const fakeFetch = async (url, opts) => {
+    captured = { url, opts: opts || {} };
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const hostPost = new AsyncToolHost({
+    quickjs,
+    allowedOrigin: "https://test.local",
+    fetchImpl: fakeFetch,
+  });
+  await hostPost.init();
+  hostPost.loadToolSource([
+    "registerTool({ name: 'poster', description: 'POST helper', inputSchema: { type: 'object' },",
+    "  handler: async function (args) {",
+    "    var r = await host.fetchOrigin(args.path, { method: args.method, body: args.body, contentType: args.contentType });",
+    "    return r;",
+    "  } });",
+  ].join("\n"));
+
+  // (a) POST con body
+  const postRes = await hostPost.callTool("poster", {
+    path: "/api/order", method: "POST", body: JSON.stringify({ book_id: 1, qty: 2 }),
+  });
+  console.log("[d.a] POST capturado ->", JSON.stringify(captured));
+  check(postRes && postRes.status === 200, "POST: responde 200");
+  check(captured && captured.opts.method === "POST", "POST: method llega como POST");
+  check(captured && captured.opts.body === JSON.stringify({ book_id: 1, qty: 2 }), "POST: body llega byte-identico");
+  check(captured && captured.opts.headers && captured.opts.headers["content-type"] === "application/json",
+    "POST: content-type default application/json cuando hay body");
+
+  // GET sin opts sigue identico (sin body, sin headers)
+  captured = null;
+  await hostPost.callTool("poster", { path: "/api/search" });
+  check(captured && captured.opts.method === "GET", "GET: method default GET (compat)");
+  check(captured && captured.opts.body === undefined, "GET: sin body (compat)");
+  check(captured && captured.opts.headers === undefined, "GET: sin headers (compat)");
+
+  // (b) method PUT -> throw
+  let putThrew = false;
+  try {
+    await hostPost.callTool("poster", { path: "/api/order", method: "PUT", body: "x" });
+  } catch (e) {
+    putThrew = /method no permitido/i.test(String((e && e.message) || e));
+  }
+  check(putThrew, "PUT: throw 'method no permitido' dentro del sandbox");
+
+  // (c) POST a otro origin -> throw "origin no permitido"
+  let evilThrew = false;
+  try {
+    await hostPost.callTool("poster", {
+      path: "https://evil.com/api/order", method: "POST", body: "x",
+    });
+  } catch (e) {
+    evilThrew = /origin no permitido/i.test(String((e && e.message) || e));
+  }
+  check(evilThrew, "POST a otro origin: throw 'origin no permitido'");
+
+  hostPost.dispose();
+
+  // --- (e) REENVIO del init en la rama BINDING de makeFetchImpl (TAREA16b) ---
+  // El bug TAREA16: makeFetchImpl llamaba binding.fetch(url) sin reenviar opts,
+  // degradando POST a GET. El fix reenvia init (method/body/headers) al binding.
+  // Este check replica la rama binding con un fetchImpl fake + fake binding y
+  // verifica que method y body llegan al binding. Cubre la capa del gateway
+  // (fetchImpl -> binding.fetch), complemento del bloque [d] (host -> fetchImpl).
+  console.log("\n[e] reenvio init rama binding (fetchImpl fake + fake binding):");
+  {
+    let bindingCalls = [];
+    let globalCalls = [];
+    const fakeBinding = {
+      fetch: async (url, init) => {
+        bindingCalls.push({ url, init });
+        return new Response(JSON.stringify({ ok: true, order_id: 7, remaining_stock: 5 }), {
+          status: 200, headers: { "content-type": "application/json" },
+        });
+      },
+    };
+    // Replica exacta de la rama binding de makeFetchImpl en worker-gateway.mjs:
+    const bindings = { "https://book.local": fakeBinding };
+    const fetchImplBinding = async (url, opts) => {
+      let origin = null;
+      try { origin = new URL(url).origin; } catch { origin = null; }
+      const binding = bindings[origin];
+      if (binding) {
+        const init = { ...opts };
+        if (init && init.signal) delete init.signal;
+        return binding.fetch(url, init);
+      }
+      return fetch(url, opts);  // rama global (no ejercitada aqui)
+    };
+    // (a) POST con body al origin con binding -> binding.fetch recibe init con method+body
+    const postInit = { method: "POST", body: JSON.stringify({ book_id: 1, qty: 2 }),
+                       headers: { "content-type": "application/json" } };
+    const resp = await fetchImplBinding("https://book.local/api/order", postInit);
+    const respJson = await resp.json();
+    console.log("[e.a] binding.fetch llamado ->", JSON.stringify(bindingCalls[0]));
+    check(bindingCalls.length === 1, "binding: POST routed al binding (no al fetch global)");
+    check(bindingCalls[0] && bindingCalls[0].init && bindingCalls[0].init.method === "POST",
+      "binding: method llega como POST al binding (no degrada a GET)");
+    check(bindingCalls[0] && bindingCalls[0].init && bindingCalls[0].init.body === postInit.body,
+      "binding: body llega byte-identico al binding");
+    check(bindingCalls[0] && bindingCalls[0].init && bindingCalls[0].init.headers &&
+      bindingCalls[0].init.headers["content-type"] === "application/json",
+      "binding: content-type llega al binding");
+    check(respJson && respJson.ok === true && respJson.order_id === 7, "binding: respuesta del binding retorna al caller");
+
+    // (b) GET sin body al binding -> init llega con method GET (sin body)
+    bindingCalls = [];
+    await fetchImplBinding("https://book.local/api/book/1", { method: "GET" });
+    check(bindingCalls[0] && bindingCalls[0].init && bindingCalls[0].init.method === "GET",
+      "binding: GET tambien reenvia init (method GET)");
+    check(bindingCalls[0] && bindingCalls[0].init && bindingCalls[0].init.body === undefined,
+      "binding: GET sin body");
+
+    // (c) init con signal -> signal se quita (algunas impl de binding no lo soportan)
+    bindingCalls = [];
+    await fetchImplBinding("https://book.local/api/order", { method: "POST", body: "x", signal: "SIGNAL_X" });
+    check(bindingCalls[0] && bindingCalls[0].init && bindingCalls[0].init.signal === undefined,
+      "binding: AbortSignal se quita antes de pasar al binding");
+    check(bindingCalls[0] && bindingCalls[0].init && bindingCalls[0].init.method === "POST",
+      "binding: signal quitada pero method/body preservados");
+
+    // (d) origin sin binding -> rama fetch global (no toca al binding)
+    bindingCalls = [];
+    globalCalls = [];
+    const fetchOrig = globalThis.fetch;
+    globalThis.fetch = async (url, opts) => { globalCalls.push({ url, opts }); return new Response("ok"); };
+    try {
+      await fetchImplBinding("https://other.local/x", { method: "POST", body: "y" });
+      check(bindingCalls.length === 0, "global: origin sin binding NO toca al binding");
+      check(globalCalls.length === 1 && globalCalls[0].opts && globalCalls[0].opts.method === "POST",
+        "global: origin sin binding reenvia opts al fetch global (POST)");
+    } finally {
+      globalThis.fetch = fetchOrig;
+    }
+  }
+
   hostA.dispose();
   hostB.dispose();
   try { quickjs.dispose(); } catch { /* best-effort */ }

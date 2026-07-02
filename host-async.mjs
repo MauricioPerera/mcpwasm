@@ -38,9 +38,14 @@ const SANDBOX_PRELUDE_ASYNC = `
 
   // 'host' es la superficie de capabilities. fetchOrigin es async del lado del host
   // pero sincrona del lado del sandbox (puente asyncify __fetchOriginRaw).
+  // TAREA16: extension COMPATIBLE a POST. fetchOrigin(path, opts?) donde opts es
+  //   { method?: "GET"|"POST", body?: string, contentType?: string }.
+  //   Sin opts (o sin method) => GET (comportamiento anterior, byte-identico).
+  //   Las validaciones (method, body, content-type) las hace el host en
+  //   __fetchOriginRaw; si fallan lanzan dentro del sandbox.
   globalThis.host = {
-    fetchOrigin: function (path) {
-      const out = globalThis.__fetchOriginRaw(path);
+    fetchOrigin: function (path, opts) {
+      const out = globalThis.__fetchOriginRaw(path, opts ? JSON.stringify(opts) : "");
       return JSON.parse(out);
     },
   };
@@ -219,14 +224,52 @@ export class AsyncToolHost {
     }
 
     // Capability asyncified host.fetchOrigin. Desde QuickJS se llama como funcion
-    // sincrona (__fetchOriginRaw(path)); el cuerpo es async del host y asyncify
-    // suspende la pila wasm mientras corre. Devuelve un string JSON {status, body}.
-    // Si el origin no coincide con allowedOrigin -> throw (se propaga como
-    // excepcion dentro del sandbox via el mecanismo {error}/QTS_Throw de newFunction).
+    // sincrona (__fetchOriginRaw(path, optsJson)); el cuerpo es async del host y
+    // asyncify suspende la pila wasm mientras corre. Devuelve un string JSON
+    // {status, body}. Si el origin no coincide con allowedOrigin -> throw (se
+    // propaga como excepcion dentro del sandbox via {error}/QTS_Throw).
+    //
+    // TAREA16: extension COMPATIBLE a POST. El segundo arg es un string JSON con
+    // opts {method?, body?, contentType?} (siempre llega un string: "" cuando no
+    // hay opts, por lo que vm.getString es seguro). Reglas:
+    //  - method solo GET o POST (default GET). Otro -> throw DENTRO del sandbox.
+    //  - body solo string, max 16384 bytes. Otro tipo o > 16KB -> throw.
+    //  - content-type es el UNICO header controlable; default "application/json"
+    //    cuando hay body. Sin body => sin header content-type (puro GET).
+    //  - origin-scope NO cambia: path relativo o URL con exactamente el origin
+    //    permitido. Cualquier otro origin -> throw "origin no permitido".
+    //  - Truncado de respuesta a 4KB se mantiene.
+    // Las llamadas fetchOrigin(path) (sin opts) siguen identicas: method=GET, sin
+    // body, sin headers -> fetchImpl(url) igual que antes.
     const allowedOrigin = this._allowedOrigin;
     const fetchImpl = this._fetchImpl;
-    const cap = vm.newFunction("__fetchOriginRaw", async (pathH) => {
+    const MAX_BODY_BYTES = 16 * 1024;
+    const cap = vm.newFunction("__fetchOriginRaw", async (pathH, optsH) => {
       const path = vm.getString(pathH);
+      // opts siempre es un string (prelude envia "" si no hay opts).
+      const optsRaw = vm.getString(optsH);
+      let opts = {};
+      if (optsRaw) {
+        try { opts = JSON.parse(optsRaw); } catch { opts = {}; }
+      }
+      const method = (opts && typeof opts.method === "string" ? opts.method : "GET").toUpperCase();
+      if (method !== "GET" && method !== "POST") {
+        throw new Error("method no permitido: " + method);
+      }
+      let body = undefined;
+      if (opts && opts.body !== undefined && opts.body !== null) {
+        if (typeof opts.body !== "string") {
+          throw new Error("body debe ser string");
+        }
+        if (opts.body.length > MAX_BODY_BYTES) {
+          throw new Error("body excede 16KB");
+        }
+        body = opts.body;
+      }
+      let contentType = opts && typeof opts.contentType === "string" ? opts.contentType : null;
+      if (body !== undefined && !contentType) {
+        contentType = "application/json";
+      }
       let url;
       if (/^https?:\/\//i.test(path)) {
         url = new URL(path);
@@ -236,10 +279,15 @@ export class AsyncToolHost {
       if (url.origin !== allowedOrigin) {
         throw new Error("origin no permitido: " + url.origin);
       }
-      const resp = await fetchImpl(url.href);
+      const fetchOpts = { method };
+      if (body !== undefined) {
+        fetchOpts.body = body;
+        fetchOpts.headers = { "content-type": contentType };
+      }
+      const resp = await fetchImpl(url.href, fetchOpts);
       const text = await resp.text();
-      const body = text.length > 4096 ? text.slice(0, 4096) : text;
-      return vm.newString(JSON.stringify({ status: resp.status, body }));
+      const respBody = text.length > 4096 ? text.slice(0, 4096) : text;
+      return vm.newString(JSON.stringify({ status: resp.status, body: respBody }));
     });
     vm.setProp(vm.global, "__fetchOriginRaw", cap);
     cap.dispose();

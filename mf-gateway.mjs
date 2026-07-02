@@ -211,6 +211,34 @@ try {
   check(getDoc.body && getDoc.body.result && getDoc.body.result.isError === false,
     "docs: get_doc isError==false");
 
+  // --- (T26.a) memorySearch RESPETA k (BUG 1, Opcion A) -----------------------
+  // El puente reenvia TODOS los args posicionales => search_spec {q,k} pasa k
+  // real a makeMemorySearch (antes el puente descartaba k y siempre usaba 5).
+  // Query "attestation" matches 23 chunks del snapshot => k=1 acota a 1 hit y
+  // k=8 devuelve 8 (mas que k=1). Demuestra que k ya se respeta de extremo a extremo.
+  console.log("\n[T26.a] memorySearch respeta k (docs-site real, e2e):");
+  const docsK1 = await rpc(docsBase, {
+    jsonrpc: "2.0", id: 40, method: "tools/call",
+    params: { name: "search_spec", arguments: { q: "attestation", k: 1 } },
+  });
+  const docsK8 = await rpc(docsBase, {
+    jsonrpc: "2.0", id: 41, method: "tools/call",
+    params: { name: "search_spec", arguments: { q: "attestation", k: 8 } },
+  });
+  const hitsK1 = (docsK1.body && docsK1.body.result && docsK1.body.result.structuredContent &&
+                  Array.isArray(docsK1.body.result.structuredContent.hits))
+    ? docsK1.body.result.structuredContent.hits : null;
+  const hitsK8 = (docsK8.body && docsK8.body.result && docsK8.body.result.structuredContent &&
+                  Array.isArray(docsK8.body.result.structuredContent.hits))
+    ? docsK8.body.result.structuredContent.hits : null;
+  console.log("[T26.a] k=1 -> " + (hitsK1 ? hitsK1.length : "null") + " hits; k=8 -> " + (hitsK8 ? hitsK8.length : "null") + " hits");
+  check(docsK1.status === 200, "T26.a: search_spec k=1 HTTP 200");
+  check(docsK8.status === 200, "T26.a: search_spec k=8 HTTP 200");
+  check(hitsK1 !== null && hitsK1.length <= 1, "T26.a: k=1 devuelve <=1 hit (respeta k, no siempre 5)");
+  check(hitsK8 !== null && hitsK8.length > 1, "T26.a: k=8 devuelve >1 hit");
+  check(hitsK1 !== null && hitsK8 !== null && hitsK8.length > hitsK1.length,
+    "T26.a: k=8 devuelve MAS hits que k=1 (k se respeta de extremo a extremo)");
+
   // --- (T22.f) snapshot corrupto (LOCAL, sin red) -----------------------------
   // Origin fake servido por un service binding DOCS=(request)=>Response. Sirve
   // un llms.txt con UNA skill (cuyo tool_sha256 SI coincide con el tool.js
@@ -368,6 +396,36 @@ try {
   // doble (no el hackeo que A intento inyectar).
   const bRes = await hostB.callTool("b_target", { x: 21 });
   check(bRes && bRes.doubled === 42, "aislamiento: B intacta tras acciones de A (doubled=42, no hackeada)");
+
+  // --- (T26.b) extraCapability recibe DOS args posicionales (BUG 1, Opcion A) --
+  // Verifica que el puente de extraCapabilities reenvia TODOS los args posicionales
+  // como un array JSON (antes solo reenviaba el primero). Construye un
+  // AsyncToolHost local con una capability fake `probe` que graba el argsJson que
+  // recibe; una skill llama `host.probe('x', 5, true)` y debe llegar
+  // '["x",5,true]' (3 args posicionales preservados). Reusa el quickjs del bloque [a].
+  console.log("\n[T26.b] extraCapability 2+ args posicionales (carga local):");
+  let probeGot = "__none__";
+  const hostProbe = new AsyncToolHost({
+    quickjs,
+    allowedOrigin: "https://test.local",
+    extraCapabilities: {
+      probe: async (argsJson) => {
+        probeGot = argsJson;
+        return JSON.stringify({ ok: true });
+      },
+    },
+  });
+  await hostProbe.init();
+  hostProbe.loadToolSource([
+    "registerTool({ name: 'prober', description: 'probe', inputSchema: { type: 'object' },",
+    "  handler: async function () { return await host.probe('x', 5, true); } });",
+  ].join("\n"));
+  const probeRes = await hostProbe.callTool("prober", {});
+  console.log("[T26.b] probe recibio argsJson =", probeGot, "-> res =", JSON.stringify(probeRes));
+  check(probeRes && probeRes.ok === true, "T26.b: prober devuelve {ok:true} (capability ejecuta)");
+  check(probeGot === JSON.stringify(["x", 5, true]),
+    "T26.b: extraCapability recibio TODOS los args posicionales como array JSON '[[\"x\",5,true]]' (no solo el primero)");
+  hostProbe.dispose();
 
   // --- (c) CONFORMIDAD MCP structuredContent (TAREA14) -----------------------
   // Spec MCP 2025-06-18: structuredContent debe ser un OBJETO (record). Si la

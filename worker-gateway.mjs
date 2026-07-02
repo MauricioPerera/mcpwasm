@@ -75,16 +75,18 @@ function getMem() {
 
 // --- Capability host.memorySearch (TAREA22) -----------------------------------
 // Puente raw-JSON asyncified (via extraCapabilities de AsyncToolHost, mismo
-// patron que host.fetchOrigin). Recibe argsJson = JSON.stringify(primerArg) y
-// devuelve resultJson. La skill search_spec del docs-site llama
-// `host.memorySearch(args.q, k)`; el puente reenvia SOLO el primer arg posicional
-// => argsJson = JSON.stringify(args.q) = '"<query>"' (string JSON). El estilo
-// memspike `host.memorySearch({q,k})` llega como objeto. Se aceptan ambos:
-//  - string  -> query, k default 5
-//  - {q,k}   -> query y k del objeto
-// k se acota a [1,10] (tope). La skill ya acota k 1..10 client-side; el tope aca
-// es defensa en profundidad (el puente descarta k posicional, por lo que el k
-// efectivo en la llamada posicional es el default 5, que cumple <=10).
+// patron que host.fetchOrigin). TAREA26 (BUG 1, Opcion A): el puente reenvia
+// TODOS los args posicionales como un array JSON '[arg0, arg1, ...]'. La skill
+// search_spec del docs-site llama `host.memorySearch(args.q, k)` => argsJson =
+// '["<query>",k]'. El estilo objeto `host.memorySearch({q,k})` => '[{q,k}]'.
+// Desempaquetamos a (first, second) y aceptamos:
+//  - ["<q>", k]  -> query y k posicionales (search_spec)
+//  - [{q, k}]    -> query y k del objeto (estilo objeto posicional)
+//  - ["<q>"]     -> query, k default 5
+// Compat hacia atras (contrato viejo, 1 arg suelto sin envolver array):
+//  - "<q>" (string) -> query, k default 5
+//  - {q, k} (objeto) -> query y k del objeto
+// k se acota a [1,10] (tope, defensa en profundidad; la skill ya acota 1..10).
 // Devuelve {hits:[{text, score, title, concept_id}]} o {error:"..."}.
 // El indice WasmOkfIndex se construye perezosamente POR CLOSURE (la closure se
 // crea por request en PerSkillHost) => una instancia por request, sin estado
@@ -96,12 +98,22 @@ function makeMemorySearch(snapshotText) {
     let q = null;
     let k = 5;
     try {
-      const a = JSON.parse(argsJson);
-      if (typeof a === "string") {
-        q = a;
-      } else if (a && typeof a === "object") {
-        if (typeof a.q === "string") q = a.q;
-        if (typeof a.k === "number" && Number.isFinite(a.k)) k = Math.floor(a.k);
+      const parsed = JSON.parse(argsJson);
+      // Normaliza a (first, second) segun el contrato (array nuevo | suelto viejo).
+      let first = parsed;
+      let second = undefined;
+      if (Array.isArray(parsed)) {
+        first = parsed[0];
+        second = parsed[1];
+      }
+      if (typeof first === "string") {
+        q = first;
+        if (typeof second === "number" && Number.isFinite(second)) k = Math.floor(second);
+      } else if (first && typeof first === "object") {
+        if (typeof first.q === "string") q = first.q;
+        if (typeof first.k === "number" && Number.isFinite(first.k)) k = Math.floor(first.k);
+        // k posicional adicional [obj, k] (inusual pero barato de soportar).
+        if (typeof second === "number" && Number.isFinite(second)) k = Math.floor(second);
       }
     } catch {
       return JSON.stringify({ error: "memorySearch: args JSON invalido" });

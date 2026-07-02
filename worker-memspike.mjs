@@ -89,6 +89,9 @@ async function initEngine(env) {
 // --- Capability host.memorySearch(argsJson) => resultJson --------------------
 // Puente raw-JSON: recibe '{"q":"..."}', devuelve '{"hits":[{text,score,section}]}'.
 // Si el motor no cargo (sha invalido), devuelve '{"error":"..."}' (error controlado).
+// TAREA26 (BUG 1, Opcion A): el puente reenvia TODOS los args posicionales como
+// un array JSON. search_docs llama `host.memorySearch({q})` => '[{q}]'; aqui
+// desempaquetamos el array. Compat: arg suelto objeto {q} o string "q".
 function makeMemorySearch(env) {
   return async function memorySearch(argsJson) {
     let engine;
@@ -100,8 +103,14 @@ function makeMemorySearch(env) {
     if (engine.error) return JSON.stringify({ error: engine.error });
     let q = "";
     try {
-      const args = JSON.parse(argsJson);
-      q = typeof args.q === "string" ? args.q : "";
+      const parsed = JSON.parse(argsJson);
+      let first = parsed;
+      if (Array.isArray(parsed)) first = parsed[0];
+      if (typeof first === "string") {
+        q = first;
+      } else if (first && typeof first === "object") {
+        q = typeof first.q === "string" ? first.q : "";
+      }
     } catch {
       return JSON.stringify({ error: "memorySearch: args JSON invalido" });
     }

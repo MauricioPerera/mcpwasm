@@ -155,11 +155,15 @@ export class AsyncToolHost {
   //    NO crash del gateway). El spike no lo pasa => default 10000 => compat.
   //  - extraCapabilities (opcional, default ninguna): mapa { nombre: async (argsJson) => resultJson }
   //    que inyecta host.<nombre> con el MISMO puente raw-JSON que fetchOrigin. Cada
-  //    capability se expone DENTRO del sandbox como host.<nombre>(args) =>
+  //    capability se expone DENTRO del sandbox como host.<nombre>(...args) =>
   //    JSON.parse(globalThis.__<nombre>Raw(JSON.stringify(args))); el host registra
   //    __<nombre>Raw como funcion asyncified (asyncify suspende la pila wasm mientras
-  //    corre el async del host). Extension COMPATIBLE (TAREA20): sin extraCapabilities
-  //    el comportamiento es byte-identico al previo (npm test/spike/gateway verdes).
+  //    corre el async del host). TAREA26 (BUG 1, Opcion A): el puente reenvia TODOS
+  //    los args posicionales como un array JSON '[arg0, arg1, ...]'; la fn de la
+  //    capability recibe ese array (desempaquetandolo segun su contrato). Antes
+  //    reenviaba solo el primer arg posicional => llamadas `host.<name>(a, b)`
+  //    perdia `b`. Extension COMPATIBLE (TAREA20): sin extraCapabilities el
+  //    comportamiento es byte-identico al previo (npm test/spike/gateway verdes).
   //    Uso: spike minimemory inyecta host.memorySearch(argsJson) => resultJson.
   constructor({ quickjs, quickjsModule, allowedOrigin, memoryLimitBytes, maxStackSizeBytes, interruptDeadlineMs, interruptMaxInvocations, fetchImpl, fetchTimeoutMs, extraCapabilities }) {
     if (typeof allowedOrigin !== "string" || !allowedOrigin) {
@@ -337,8 +341,17 @@ export class AsyncToolHost {
       // DENTRO del sandbox -> isError:true, no crash del gateway.
       fetchOpts.signal = AbortSignal.timeout(fetchTimeoutMs);
       const TIMEOUT_TAG = "__fetchOriginTimeout__";
+      // TAREA26 (BUG 2): capturamos el id del timer del backstop para hacerle
+      // clearTimeout al resolver/rechazar el fetch. Sin esto, en el camino feliz
+      // (fetch resuelve rapido) el setTimeout queda colgado hasta fetchTimeoutMs
+      // (10s por llamada a fetchOrigin) -> leak menor de timers. Se limpia en
+      // finally trael Promise.race (corre tanto en resolve como en throw), de
+      // modo que el timer nunca sobrevive a la carrera. El comportamiento de
+      // timeout es intacto: si el fetch no resuelve y vence el timer, el backstop
+      // sigue lanzando TIMEOUT_TAG -> "fetchOrigin timeout".
+      let timerId;
       const timeoutP = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error(TIMEOUT_TAG)), fetchTimeoutMs);
+        timerId = setTimeout(() => reject(new Error(TIMEOUT_TAG)), fetchTimeoutMs);
       });
       let resp;
       try {
@@ -351,6 +364,8 @@ export class AsyncToolHost {
           throw new Error("fetchOrigin timeout");
         }
         throw e;
+      } finally {
+        clearTimeout(timerId);
       }
       const text = await resp.text();
       const respBody = text.length > 4096 ? text.slice(0, 4096) : text;
@@ -397,12 +412,19 @@ export class AsyncToolHost {
 
     // TAREA20: inyecta host.<nombre> para cada capability extra. El prelude base
     // ya definio globalThis.host = { fetchOrigin }; aqui solo agregamos metodos.
+    // TAREA26 (BUG 1, Opcion A): el wrapper reenvia TODOS los args posicionales
+    // (rest ...args) como un array JSON al puente raw, en vez de solo el primer
+    // arg. Antes `function (args)` reenviaba un unico arg => una llamada
+    // `host.<name>(a, b)` perdia `b` (p.ej. search_spec pasaba `host.memorySearch(q, k)`
+    // y k se descartaba). Ahora `host.<name>(a, b)` envia '["a",b]' y el lado host
+    // (la fn de extraCapabilities) desempaqueta el array. `...args` es siempre un
+    // array (posiblemente vacio) => no hace falta el guard `args === undefined`.
     if (extraCaps) {
       const extraHostSrc = Object.keys(extraCaps)
         .map(function (name) {
           return (
-            "globalThis.host." + name + " = function (args) {" +
-            " return JSON.parse(globalThis.__" + name + "Raw(JSON.stringify(args === undefined ? null : args)));" +
+            "globalThis.host." + name + " = function (...args) {" +
+            " return JSON.parse(globalThis.__" + name + "Raw(JSON.stringify(args)));" +
             "};"
           );
         })

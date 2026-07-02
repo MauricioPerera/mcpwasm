@@ -424,12 +424,13 @@ What it does **not** guarantee:
 | `demo-site/` | Demo publisher site (`llms.txt` + `sum_numbers` / `server_time` skills). Deployed at `llmstxt-demo-site.rckflr.workers.dev`. |
 | `bookstore/` | Realistic publisher: D1-backed catalog (52 books), read skills + `create_order` write skill, plus permanent robustness fixtures (`corrupt_skill` hash-mismatch, `busy_loop` infinite loop). Deployed at `llmstxt-bookstore.rckflr.workers.dev`. |
 | `docs-site/` | Docs publisher: serves the llms-txt-skills spec documents + a `skills-index.snapshot` (BM25, `minimemory-okf-v1`), with `search_spec` (BM25 via `host.memorySearch`), `get_doc`, and `list_docs` skills. Deployed at `llmstxt-docs.rckflr.workers.dev`. |
-| `TAREA*-REPORT.md` (26 reports, one per milestone) | Development reports (see below). |
+| `TAREA*-REPORT.md` (one per milestone) | Development reports (see below). |
 
 ## Development notes
 
-Each milestone is documented in its `TAREA*-REPORT.md` (26 reports, TAREA1
-through TAREA26). The non-obvious bits live there:
+Each milestone is documented in its `TAREA*-REPORT.md` (TAREA1 through TAREA27;
+`TAREA2` was skipped in numbering and `TAREA12B` is a continuation of TAREA12).
+The non-obvious bits live there:
 
 - `TAREA4-REPORT.md` — deploying to Cloudflare Workers: the `CompiledWasm` rule
   and why importing the `.wasm` as a static module avoids

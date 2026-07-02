@@ -1,0 +1,4 @@
+name = "llmstxt-docs"
+main = "worker.mjs"
+compatibility_date = "2026-06-01"
+account_id = "091122c40cc6f8d0d421cbc90e2caca8"

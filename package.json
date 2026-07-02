@@ -1,0 +1,17 @@
+{
+  "name": "toolhost-mcp",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node build.mjs && node mf-test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "miniflare": "^3.20250718.0",
+    "quickjs-emscripten": "^0.32.0",
+    "quickjs-emscripten-core": "^0.32.0",
+    "@jitl/quickjs-wasmfile-release-sync": "^0.32.0"
+  }
+}

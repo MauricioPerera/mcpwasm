@@ -1,0 +1,8 @@
+name = "llmstxt-bookstore"
+main = "worker.mjs"
+compatibility_date = "2026-06-01"
+account_id = "091122c40cc6f8d0d421cbc90e2caca8"
+[[d1_databases]]
+binding = "DB"
+database_name = "bookstore-db"
+database_id = "7c1279c5-7845-4221-b8a2-aa4e1ef6eeba"

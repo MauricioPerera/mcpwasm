@@ -16,6 +16,16 @@ function err(id, code, message) {
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
+// Spec MCP (2025-06-18): structuredContent debe ser un OBJETO (record).
+// Si el handler devuelve un array o un primitivo, lo envolvemos en { result: <valor> }.
+// content[0].text sigue siendo JSON.stringify del resultado ORIGINAL sin envolver.
+function wrapStructuredContent(result) {
+  if (result !== null && typeof result === "object" && !Array.isArray(result)) {
+    return result;
+  }
+  return { result };
+}
+
 export async function handleMcpMessageAsync(host, msg) {
   if (!msg || msg.jsonrpc !== "2.0" || typeof msg.method !== "string") {
     return err(msg && msg.id !== undefined ? msg.id : null, -32600, "Invalid Request");
@@ -53,7 +63,7 @@ export async function handleMcpMessageAsync(host, msg) {
         const result = await host.callTool(name, args);
         return ok(msg.id, {
           content: [{ type: "text", text: JSON.stringify(result) }],
-          structuredContent: result,
+          structuredContent: wrapStructuredContent(result),
           isError: false,
         });
       } catch (e) {

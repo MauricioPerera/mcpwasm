@@ -5,7 +5,7 @@
 // Checks minimos (imprime todo):
 //   1. POST /mcp?origin=<demo> initialize -> 200 con result.
 //   2. tools/list -> contiene sum_numbers y server_time con sus inputSchema.
-//   3. tools/call sum_numbers {a:2,b:40} -> structuredContent con 42.
+//   3. tools/call sum_numbers {a:2,b:40} -> structuredContent.result con 42 (envuelto, spec MCP).
 //   4. tools/call server_time -> structuredContent con epoch numerico.
 //   5. POST /mcp?origin=https://example.com -> HTTP 403.
 //   6. POST /mcp sin origin -> HTTP 403.
@@ -26,6 +26,7 @@ import path from "node:path";
 import { newQuickJSAsyncWASMModuleFromVariant, newVariant } from "quickjs-emscripten-core";
 import baseAsyncifyVariant from "@jitl/quickjs-wasmfile-release-asyncify";
 import { AsyncToolHost } from "./host-async.mjs";
+import { handleMcpMessageAsync } from "./mcp-core-async.mjs";
 
 const DEMO_ORIGIN = "https://llmstxt-demo-site.rckflr.workers.dev";
 
@@ -98,7 +99,13 @@ try {
   console.log("[3] sum_numbers ->", JSON.stringify(sum.body));
   const sumSc = sum.body && sum.body.result && sum.body.result.structuredContent;
   check(sum.status === 200, "sum_numbers: HTTP 200");
-  check(sumSc && sumSc === 42, "sum_numbers: structuredContent === 42");
+  // FIX T14: sum_numbers devuelve 42 (primitivo). Spec MCP exige structuredContent
+  // como OBJETO -> envuelto en { result: 42 }. content[0].text sigue siendo "42".
+  check(sumSc && sumSc.result === 42, "sum_numbers: structuredContent.result === 42 (envuelto)");
+  check(sumSc && !Array.isArray(sumSc) && typeof sumSc === "object", "sum_numbers: structuredContent es objeto no-array");
+  check(sum.body && sum.body.result && sum.body.result.content &&
+        sum.body.result.content[0] && sum.body.result.content[0].text === "42",
+        "sum_numbers: content[0].text es el JSON original sin envolver (\"42\")");
   check(sum.headers["x-gw-discovery"] === "hit", "cache: 3er request (sum_numbers) X-Gw-Discovery=hit");
 
   // 4) tools/call server_time -> epoch numerico (via fetchOrigin al demo site)
@@ -188,6 +195,45 @@ try {
   // doble (no el hackeo que A intento inyectar).
   const bRes = await hostB.callTool("b_target", { x: 21 });
   check(bRes && bRes.doubled === 42, "aislamiento: B intacta tras acciones de A (doubled=42, no hackeada)");
+
+  // --- (c) CONFORMIDAD MCP structuredContent (TAREA14) -----------------------
+  // Spec MCP 2025-06-18: structuredContent debe ser un OBJETO (record). Si la
+  // tool devuelve un array o un primitivo, se envuelve en { result: <valor> }.
+  // Verificamos via handleMcpMessageAsync (el nucleo del gateway) con dos tools
+  // locales: una que devuelve un array (search_catalog-like) y una que devuelve
+  // un primitivo. Reusa el mismo quickjs del bloque de aislamiento.
+  console.log("\n[c] conformidad structuredContent (array + primitivo envueltos):");
+  const hostSc = new AsyncToolHost({ quickjs, allowedOrigin: "https://test.local" });
+  await hostSc.init();
+  hostSc.loadToolSource([
+    "registerTool({ name: 'list_things', description: 'devuelve array', inputSchema: { type: 'object' },",
+    "  handler: function () { return [{ id: 1, title: 'Dune' }, { id: 2, title: 'Dune Messiah' }]; } });",
+    "registerTool({ name: 'answer', description: 'devuelve primitivo', inputSchema: { type: 'object' },",
+    "  handler: function () { return 42; } });",
+  ].join("\n"));
+
+  const arrMsg = { jsonrpc: "2.0", id: 101, method: "tools/call",
+    params: { name: "list_things", arguments: {} } };
+  const arrRes = await handleMcpMessageAsync(hostSc, arrMsg);
+  console.log("list_things ->", JSON.stringify(arrRes.result.structuredContent));
+  const arrSc = arrRes.result && arrRes.result.structuredContent;
+  check(arrSc && !Array.isArray(arrSc) && typeof arrSc === "object", "conformidad: structuredContent es objeto no-array (no array crudo)");
+  check(arrSc && Array.isArray(arrSc.result) && arrSc.result.length === 2, "conformidad: structuredContent.result es el array de libros");
+  check(arrRes.result.content && arrRes.result.content[0] &&
+        JSON.parse(arrRes.result.content[0].text).length === 2,
+        "conformidad: content[0].text es el array original sin envolver");
+
+  const primMsg = { jsonrpc: "2.0", id: 102, method: "tools/call",
+    params: { name: "answer", arguments: {} } };
+  const primRes = await handleMcpMessageAsync(hostSc, primMsg);
+  console.log("answer ->", JSON.stringify(primRes.result.structuredContent));
+  const primSc = primRes.result && primRes.result.structuredContent;
+  check(primSc && !Array.isArray(primSc) && typeof primSc === "object", "conformidad: primitivo envuelto en objeto");
+  check(primSc && primSc.result === 42, "conformidad: primitivo -> structuredContent.result === 42");
+  check(primRes.result.content && primRes.result.content[0] && primRes.result.content[0].text === "42",
+        "conformidad: primitivo content[0].text sin envolver");
+
+  hostSc.dispose();
 
   hostA.dispose();
   hostB.dispose();

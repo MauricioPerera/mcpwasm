@@ -1,0 +1,12 @@
+## Recomendación: *Foundation*
+
+| Campo | Valor |
+|---|---|
+| **Título** | Foundation |
+| **Autor** | Isaac Asimov |
+| **Precio** | $12.99 |
+| **Stock** | 20 unidades |
+
+Disponible (stock 20, >0), dentro del presupuesto (<$15), género science-fiction.
+
+Otros candidatos disponibles del mismo filtro por si prefieres algo más barato: *I, Robot* (Asimov, $9.99, stock 25) o *Count Zero* (Gibson, $10.50, stock 6). Descartados por agotado: *Second Foundation* y *Mona Lisa Overdrive* (stock 0).

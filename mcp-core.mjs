@@ -13,6 +13,17 @@ function err(id, code, message) {
   return { jsonrpc: "2.0", id, error: { code, message } };
 }
 
+// Spec MCP (2025-06-18): structuredContent debe ser un OBJETO (record).
+// Si el handler devuelve un array o un primitivo (numero, string, boolean, null),
+// lo envolvemos en { result: <valor> } para conformidad con el SDK del cliente.
+// content[0].text sigue siendo JSON.stringify del resultado ORIGINAL sin envolver.
+function wrapStructuredContent(result) {
+  if (result !== null && typeof result === "object" && !Array.isArray(result)) {
+    return result;
+  }
+  return { result };
+}
+
 // host: instancia de ToolHost. msg: objeto JSON-RPC.
 export function handleMcpMessage(host, msg) {
   if (!msg || msg.jsonrpc !== "2.0" || typeof msg.method !== "string") {
@@ -52,7 +63,7 @@ export function handleMcpMessage(host, msg) {
         // Formato MCP: content array. Devolvemos el resultado estructurado como texto.
         return ok(msg.id, {
           content: [{ type: "text", text: JSON.stringify(result) }],
-          structuredContent: result,
+          structuredContent: wrapStructuredContent(result),
           isError: false,
         });
       } catch (e) {

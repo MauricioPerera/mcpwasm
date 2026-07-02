@@ -2,3 +2,13 @@ name = "toolhost-mcp"
 main = "worker.mjs"
 compatibility_date = "2026-06-01"
 compatibility_flags = ["nodejs_compat"]
+
+# Cuenta Mauricio.perera@gmail.com (fija la cuenta para modo no-interactivo).
+account_id = "091122c40cc6f8d0d421cbc90e2caca8"
+
+# Regla de modulo para que el import "./quickjs.wasm" se trate como
+# WebAssembly.Module pre-compilado (CompiledWasm) en el build de wrangler.
+[[rules]]
+type = "CompiledWasm"
+globs = ["**/*.wasm"]
+fallthrough = false

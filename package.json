@@ -12,6 +12,7 @@
     "esbuild": "^0.25.0",
     "miniflare": "^4.20260630.0",
     "quickjs-emscripten": "^0.32.0",
-    "quickjs-emscripten-core": "^0.32.0"
+    "quickjs-emscripten-core": "^0.32.0",
+    "wrangler": "^4.106.0"
   }
 }

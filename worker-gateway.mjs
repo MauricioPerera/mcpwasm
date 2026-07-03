@@ -1,5 +1,5 @@
 // worker-gateway.mjs
-// TAREA7: gateway llms.txt -> MCP.  TAREA9: contexto por skill + cache de descubrimiento en isolate.
+// Gateway llms.txt -> MCP (Streamable HTTP, JSON-RPC 2.0 por POST).
 //
 // Dado un origin permitido (?origin=<url-encoded>):
 //   1) descubre sus skills ejecutables (llms.txt + tool.js verificado por sha256),
@@ -7,17 +7,11 @@
 //      skill no puede ver ni pisar __tools/globals de otra). tools/list agrega los
 //      schemas de todos los contextos; tools/call enruta al contexto de la skill.
 //      El hardening por contexto se mantiene (mismos valores: 64MB / 1MB / 2s).
-//   3) expone MCP Streamable HTTP (initialize / tools/list / tools/call) via
-//      mcp-core-async.mjs.
+//   3) expone MCP (initialize / tools/list / tools/call) via mcp-core-async.mjs.
 //
-// Cache de descubrimiento (TAREA9): Map a nivel de modulo (isolate) origin ->
-//   { skills: [{name, description, inputSchema, code, sha256}], rejected, expiresAt }
-// con TTL 60s y max 16 origins (evict FIFO). Salta fetch de llms.txt + tool.js +
-// verificacion sha256 en requests calientes del mismo isolate: la verificacion se
-// hace al poblar la entrada y el codigo cacheado es inmutable por hash. Los
-// contextos QuickJS NO se cachean (se crean por request); lo cacheado es texto.
-// El cache de caches.default existente se mantiene como SEGUNDA capa (tool.js
-// inmutable por sha; llms.txt TTL 60s).
+// Cache de descubrimiento en el isolate (capa 1, ver mas abajo) + caches.default
+// (capa 2). Los contextos QuickJS NO se cachean (se crean por request); lo
+// cacheado es texto inmutable por hash.
 //
 // WORKER-TO-WORKER (error 1042): un Worker que hace fetch a otro Worker de la
 // MISMA cuenta Cloudflare via workers.dev falla con "error code: 1042". El demo
@@ -33,10 +27,10 @@ import { AsyncToolHost } from "./host-async.mjs";
 import { handleMcpMessageAsync } from "./mcp-core-async.mjs";
 import { parseLlmsTxt } from "./llmstxt-parse.mjs";
 
-// TAREA22: motor minimemory (WasmOkfIndex, BM25) para la capability de memoria.
-// TAREA24: el wrapper JS se consume desde el paquete npm @rckflr/minimemory (esbuild
-// lo bundlea desde node_modules); el .wasm sigue como import estatico verbatim
-// (CompiledWasm en el build, mismo truco que QuickJS).
+// Motor minimemory (WasmOkfIndex, BM25) para la capability de memoria. El
+// wrapper JS se consume del paquete npm @rckflr/minimemory (esbuild lo bundlea
+// desde node_modules); el .wasm sigue como import estatico verbatim (CompiledWasm
+// en el build, mismo truco que QuickJS).
 import initMem, { WasmOkfIndex } from "@rckflr/minimemory";
 import MEM_WASM from "./minimemory_bg.wasm";
 
@@ -55,13 +49,12 @@ function getQuickjs() {
   return _quickjsPromise;
 }
 
-// --- Motor minimemory (TAREA22): init wasm cacheado a nivel isolate ----------
-// initMem instancia el wasm de minimemory (modulo pre-compilado por workerd).
-// El wasm-instance se cachea en el modulo minimemory (singleton `wasm`); lo
+// --- init wasm de minimemory, cacheado a nivel isolate ------------------------
+// initMem instancia el wasm de minimemory (modulo pre-compilado por workerd). Lo
 // cacheamos a nivel isolate con una unica promesa. Las instancias WasmOkfIndex
 // se crean POR REQUEST desde el snapshot verificado (sin estado compartido entre
 // requests): new WasmOkfIndex() + idx.import_snapshot(text). Si initMem falla,
-// reseteamos la promesa para reintentar en el siguiente request.
+// reseteamos la promesa para reintentar en el siguiente request (no envenenar).
 let _memPromise = null;
 function getMem() {
   if (!_memPromise) {
@@ -73,13 +66,13 @@ function getMem() {
   return _memPromise;
 }
 
-// --- Capability host.memorySearch (TAREA22) -----------------------------------
+// --- Capability host.memorySearch ----------------------------------------------
 // Puente raw-JSON asyncified (via extraCapabilities de AsyncToolHost, mismo
-// patron que host.fetchOrigin). TAREA26 (BUG 1, Opcion A): el puente reenvia
-// TODOS los args posicionales como un array JSON '[arg0, arg1, ...]'. La skill
-// search_spec del docs-site llama `host.memorySearch(args.q, k)` => argsJson =
-// '["<query>",k]'. El estilo objeto `host.memorySearch({q,k})` => '[{q,k}]'.
-// Desempaquetamos a (first, second) y aceptamos:
+// patron que host.fetchOrigin). El puente reenvia TODOS los args posicionales
+// como un array JSON '[arg0, arg1, ...]'. La skill search_spec del docs-site
+// llama `host.memorySearch(args.q, k)` => argsJson = '["<query>",k]'. El estilo
+// objeto `host.memorySearch({q,k})` => '[{q,k}]'. Desempaquetamos a (first,
+// second) y aceptamos:
 //  - ["<q>", k]  -> query y k posicionales (search_spec)
 //  - [{q, k}]    -> query y k del objeto (estilo objeto posicional)
 //  - ["<q>"]     -> query, k default 5
@@ -145,7 +138,7 @@ function makeMemorySearch(snapshotText) {
   };
 }
 
-// --- Mutex de ejecucion por modulo wasm (TAREA19) ---------------------------
+// --- Mutex de ejecucion por modulo wasm ---------------------------------------
 // El modulo QuickJS ASYNCIFY solo soporta UNA suspension async a la vez; el
 // modulo se cachea a nivel isolate (getQuickjs). Requests concurrentes del
 // mismo isolate que ejecuten wasm (crear contextos, loadToolSource, callTool,
@@ -166,20 +159,20 @@ function withModuleLock(fn) {
   return result;
 }
 
-// --- Cache de descubrimiento en el isolate (TAREA9, capa 1) -------------------
-// Map a nivel de modulo origin -> { skills, rejected, snapshotText, expiresAt }.
+// --- Cache de descubrimiento en el isolate (capa 1) ---------------------------
+// Map a nivel de modulo origin -> { skills, rejected, snapshotText, verdicts, expiresAt }.
 // TTL 60s. Max 16 origins; al llenarse, evict el mas viejo (FIFO por orden de
 // insercion del Map). Los contextos QuickJS NO se cachean: lo cacheado es texto
-// (code ya verificado + metadata +, TAREA22, el TEXTO del snapshot de memoria
-// verificado por sha256). La verificacion sha256 (tool.js y snapshot) se hace al
-// poblar la entrada; lo cacheado es inmutable por hash => no se re-verifica en
-// hit. snapshotText es null si el origin no declara memoria o la verificacion
-// fallo (la capability no se inyecta en ese caso).
+// (code ya verificado + metadata + el TEXTO del snapshot de memoria verificado
+// por sha256). La verificacion sha256 (tool.js y snapshot) se hace al poblar la
+// entrada; lo cacheado es inmutable por hash => no se re-verifica en hit.
+// snapshotText es null si el origin no declara memoria o la verificacion fallo
+// (la capability no se inyecta en ese caso).
 const ISOLATE_TTL_MS = 60_000;
 const ISOLATE_MAX_ENTRIES = 16;
 const isolateCache = new Map();
 
-// --- Single-flight del descubrimiento (TAREA19) ------------------------------
+// --- Single-flight del descubrimiento -----------------------------------------
 // Map a nivel isolate origin -> Promise del descubrimiento en vuelo. Los miss
 // concurrentes del mismo origin esperan la MISMA promesa en vez de refetear
 // llms.txt + tool.js cada uno (estampida bajo fan-out frio). La entrada se
@@ -207,7 +200,7 @@ function isolateCachePut(origin, skills, rejected, snapshotText, verdicts) {
     skills,
     rejected,
     snapshotText: snapshotText || null,
-    verdicts: verdicts || null, // TAREA25: {verdicts, counts} o null (modo off)
+    verdicts: verdicts || null, // {verdicts, counts} o null (modo off)
     expiresAt: Date.now() + ISOLATE_TTL_MS,
   });
 }
@@ -256,7 +249,7 @@ function makeFetchImpl(env) {
     bindings["https://llmstxt-bookstore.rckflr.workers.dev"] = env.BOOKSTORE;
   }
   if (env && env.DOCS) {
-    // TAREA22: docs-site mismo motivo (misma cuenta -> error 1042 sin binding).
+    // docs-site: mismo motivo (misma cuenta -> error 1042 sin binding).
     bindings["https://llmstxt-docs.rckflr.workers.dev"] = env.DOCS;
   }
   return async function fetchImpl(url, opts) {
@@ -303,7 +296,7 @@ async function sha256Hex(text) {
     .join("");
 }
 
-// --- TAREA25: Attestations (ext-skill-attestations v0.2) ---------------------
+// --- Attestations (ext-skill-attestations v0.2) --------------------------------
 // Tercer anillo de confianza: atestaciones firmadas Ed25519 por revisores
 // registrados, publicadas por el origin en
 // /.well-known/agent-skills/attestations.json. El gateway las descubre junto a
@@ -478,19 +471,16 @@ function attestHeaderStr(counts) {
 //  - skills: cada entrada lleva el `code` (tool.js) verificado por sha256 e
 //    inmutable por hash; `inputSchema` queda undefined aqui y se extrae del
 //    contexto QuickJS en runtime (mismo comportamiento observable que antes).
-//  - snapshotText (TAREA22): TEXTO del snapshot de memoria verificado por
-//    sha256, o null si el origin no declara memoria, el format es unsupported,
-//    o la verificacion fallo. Se cachea en el isolate junto a las skills; el
-//    indice WasmOkfIndex se construye por request desde este texto.
-//  - verdicts/counts (TAREA25): {verdicts:{name->verdict}, counts:{...}} o null
-//    en modo off. Computados al poblar el cache (mismo TTL 60s que las skills);
-//    dependen del registro de revisores (env, estable por deploy) y la fecha
-//    UTC (estable por dia dentro del TTL).
-//  - discovery: "hit" (capa 1 isolate, cache fria leida del cache) | "miss"
-//    (este request hizo el fetch real, poblado ahora). Single-flight: los miss
-//    concurrentes del mismo origin que esperan la promesa en vuelo reportan
-//    "hit" (leyeron del cache tras el fetch unico del iniciador; ellos no
-//    tocan la red) => un solo fetch de llms.txt + tool.js por estampida.
+//  - snapshotText: TEXTO del snapshot de memoria verificado por sha256, o null
+//    si el origin no declara memoria, el format es unsupported, o la verificacion
+//    fallo. Se cachea en el isolate junto a las skills; el indice WasmOkfIndex
+//    se construye por request desde este texto.
+//  - verdicts/counts: {verdicts:{name->verdict}, counts:{...}} o null en modo
+//    off. Computados al poblar el cache (mismo TTL 60s que las skills); dependen
+//    del registro de revisores (env, estable por deploy) y la fecha UTC (estable
+//    por dia dentro del TTL).
+//  - discovery: "hit" (capa 1 isolate) | "miss" (este request hizo el fetch
+//    real, poblado ahora). Ver single-flight mas abajo.
 async function discoverSkills(origin, fetchImpl, attestCtx) {
   // --- Capa 1: cache de descubrimiento en el isolate ---
   const cached = isolateCacheGet(origin);
@@ -504,7 +494,7 @@ async function discoverSkills(origin, fetchImpl, attestCtx) {
     };
   }
 
-  // --- Single-flight (TAREA19): miss concurrentes del mismo origin ---
+  // --- Single-flight: miss concurrentes del mismo origin ---
   // Si hay un descubrimiento en vuelo para este origin, esperarlo en vez de
   // refetear. Si resuelve OK, el iniciador ya poblo el cache => leerlo y
   // reportar "hit" (el fetch lo hizo el iniciador; este request no toco la
@@ -633,7 +623,7 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx) {
     });
   }
 
-  // --- TAREA22: snapshot de memoria (fetch + verify sha256) -----------------
+  // --- snapshot de memoria (fetch + verify sha256) ----------------------------
   // Si el origin declara memoria soportada (format minimemory-okf-v1), se
   // descarga el snapshot por el mismo fetchImpl/bindings y timeout que el resto
   // y se verifica sha256 contra snapshot_sha256. Solo si coincide se cachea el
@@ -683,7 +673,7 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx) {
     console.warn("[gateway] skills-memory format unsupported: '" + memory.format + "' -> memory NO inyectada");
   }
 
-  // --- TAREA25: Attestations (fetch + veredictos) ---------------------------
+  // --- Attestations (fetch + veredictos) -------------------------------------
   // En modo off no se fetchea attestations.json (comportamiento previo intacto).
   // En advisory/enforcing: descargar el array, computar veredicto por skill y
   // cacheo junto a las skills (mismo TTL). 404 del archivo = null (sin
@@ -715,19 +705,19 @@ class PerSkillHost {
     this._allowedOrigin = allowedOrigin;
     this._fetchImpl = fetchImpl;
     this._skills = skills; // [{name, code, ...}]
-    this._snapshotText = snapshotText || null; // TAREA22: snapshot verificado o null
+    this._snapshotText = snapshotText || null; // snapshot verificado o null
     this._byName = new Map(); // name -> AsyncToolHost
     this._order = []; // names en orden de carga
   }
 
   async init() {
-    // TAREA22: si hay snapshot verificado, se inyecta la capability
-    // host.memorySearch en TODAS las skills del origin via extraCapabilities
-    // (mismo puente raw-JSON asyncified que host.fetchOrigin). Se pasa la MISMA
-    // closure a cada skill => una sola instancia WasmOkfIndex por request (sin
-    // estado compartido entre requests: la closure se crea por request aqui).
-    // Sin snapshot verificado -> extraCapabilities null -> comportamiento
-    // byte-identico al previo (demo-site y bookstore intactos).
+    // Si hay snapshot verificado, se inyecta la capability host.memorySearch en
+    // TODAS las skills del origin via extraCapabilities (mismo puente raw-JSON
+    // asyncified que host.fetchOrigin). Se pasa la MISMA closure a cada skill =>
+    // una sola instancia WasmOkfIndex por request (sin estado compartido entre
+    // requests: la closure se crea por request aqui). Sin snapshot verificado ->
+    // extraCapabilities null -> comportamiento byte-identico al previo (demo-site
+    // y bookstore intactos).
     const extraCaps = this._snapshotText
       ? { memorySearch: makeMemorySearch(this._snapshotText) }
       : null;
@@ -779,7 +769,7 @@ function json(obj, status = 200, discovery, attest) {
   // descubrimiento, p.ej. errores de validacion). Solo-test/observabilidad; no
   // filtra nada sensible (es el estado del cache del isolate para este origin).
   if (discovery) headers["x-gw-discovery"] = discovery;
-  // X-Gw-Attestations (TAREA25): conteos por veredicto, solo en modo != off.
+  // X-Gw-Attestations: conteos por veredicto, solo en modo != off.
   if (attest) headers["x-gw-attestations"] = attest;
   return new Response(JSON.stringify(obj), { status, headers });
 }
@@ -792,7 +782,7 @@ function allowedOrigins(env) {
     .filter((s) => s.length > 0);
 }
 
-// --- timingSafeEqualStr (TAREA28) -------------------------------------------
+// --- timingSafeEqualStr -------------------------------------------------------
 // Comparacion de strings en tiempo (aprox) constante para el header
 // Authorization. Patron "double HMAC": clave efimera por llamada
 // (crypto.getRandomValues), HMAC-SHA256 de cada valor con crypto.subtle, y
@@ -842,11 +832,12 @@ export default {
       return new Response("Method Not Allowed", { status: 405 });
     }
 
-    // --- Auth Bearer opcional-por-config (TAREA15) ---
+    // --- Auth Bearer opcional-por-config ---
     // Si env.AUTH_TOKEN esta definido y no vacio -> POST /mcp exige
-    // Authorization: "Bearer <AUTH_TOKEN>" (comparacion exacta). Si falta o no
-    // coincide -> 401 JSON {"error":"unauthorized"} SIN tocar el resto del flujo.
-    // Si env.AUTH_TOKEN no esta definido -> comportamiento actual (abierto, dev).
+    // Authorization: "Bearer <AUTH_TOKEN>" (comparacion tiempo-constante via
+    // timingSafeEqualStr). Si falta o no coincide -> 401 JSON
+    // {"error":"unauthorized"} SIN tocar el resto del flujo. Si env.AUTH_TOKEN
+    // no esta definido -> comportamiento actual (abierto, dev).
     if (env && env.AUTH_TOKEN && env.AUTH_TOKEN.length > 0) {
       const expected = "Bearer " + env.AUTH_TOKEN;
       const got = request.headers.get("authorization") || "";
@@ -897,7 +888,7 @@ export default {
     // fetch inyectado (binding para same-account, fetch global para el resto).
     const fetchImpl = makeFetchImpl(env);
 
-    // TAREA25: modo de atestacion + registro de revisores (config del runtime).
+    // Modo de atestacion + registro de revisores (config del runtime).
     const mode = attestationMode(env);
     const reviewers = parseReviewers(env);
     const attestCtx = { mode, reviewers };
@@ -928,7 +919,7 @@ export default {
     // descubiertas (antes del filtrado enforcing), solo en modo != off.
     const aHeader = attestHeaderStr(verdicts && verdicts.counts);
 
-    // --- TAREA25: modo enforcing: excluir skills no-attested (como hash mismatch) ---
+    // --- Modo enforcing: excluir skills no-attested (como hash mismatch) ---
     if (mode === "enforcing" && verdicts) {
       const kept = [];
       for (const s of skills) {
@@ -953,7 +944,7 @@ export default {
       );
     }
 
-    // --- Host por request + ejecucion MCP, serializada por modulo (TAREA19) ---
+    // --- Host por request + ejecucion MCP, serializada por modulo ---
     // Un contexto QuickJS por skill (hardening por contexto). TODA la ejecucion
     // que toca/suspende el wasm (init: newContext+loadToolSource; handleMcp:
     // listTools/callTool; dispose) va bajo withModuleLock para no intercalar
@@ -985,8 +976,8 @@ export default {
         aHeader
       );
     }
-    // TAREA25: exposicion advisory — tag " [attestation: <verdict>]" al final de
-    // la description de cada tool en tools/list (modo != off). En enforcing las
+    // Exposicion advisory — tag " [attestation: <verdict>]" al final de la
+    // description de cada tool en tools/list (modo != off). En enforcing las
     // tools cargadas son solo attested, pero igual se etiquetan.
     if (mode !== "off" && verdicts && response && response.result && Array.isArray(response.result.tools)) {
       for (const t of response.result.tools) {

@@ -1,30 +1,24 @@
 // host-async.mjs
-// AsyncToolHost: analogo async de ToolHost (host.mjs) para el spike TAREA5.
-//
-// Diferencias clave vs ToolHost (sincrono):
-//  - Usa la variante ASYNCIFY de quickjs-emscripten (newQuickJSAsyncWASMModuleFromVariant),
-//    que permite que codigo sincrono DENTRO del sandbox espere funciones async del host
-//    (asyncify suspende/reanuda la pila wasm).
-//  - callTool es ASYNC: el handler de la tool puede ser async y usar `await` sobre una
-//    capability async del host (host.fetchOrigin).
-//  - Inyecta la capability host.fetchOrigin(path): hace fetch HTTP real RESTRINGIDO a un
-//    unico origin permitido. Cualquier URL/origin distinto -> throw "origin no permitido"
-//    que se propaga como excepcion DENTRO del sandbox.
+// AsyncToolHost: analogo async de ToolHost (host.mjs).
 //
 // Ruta tecnica: ASYNCIFY (paquete @jitl/quickjs-wasmfile-release-asyncify).
-// Por que: el handler debe ser `async` con `await` y la capability debe hacer fetch real
-// (async). Asyncify es el unico mecanismo que deja llamar a una funcion async del host
-// desde codigo QuickJS que se ve sincrono, sin reescribir la tool como promesas manuales.
-// La alternativa promesas+executePendingJobs requeriria que el autor de la tool maneje
-// promesas QuickJS a mano; descartada para mantener la ergonomia `await` pedida.
+// El handler de la tool es `async` con `await` sobre capabilities async del
+// host (p.ej. fetchOrigin real). Asyncify es el unico mecanismo que deja
+// llamar a una funcion async del host desde codigo QuickJS que se ve sincrono,
+// sin reescribir la tool como promesas manuales (alternativa executePendingJobs
+// descartada: obligaria al autor de la tool a manejar promesas QuickJS a mano).
 
 import { newQuickJSAsyncWASMModuleFromVariant, newVariant } from "quickjs-emscripten-core";
 import baseAsyncifyVariant from "@jitl/quickjs-wasmfile-release-asyncify";
 
-// Prelude que corre DENTRO del sandbox antes de las tools. Igual al sincrono salvo:
-//  - host.fetchOrigin(path) -> JSON.parse(globalThis.__fetchOriginRaw(path))
-//    __fetchOriginRaw es la capability asyncified: desde QuickJS se ve SINCRONA
-//    (asyncify suspende la pila wasm mientras el host hace el fetch real).
+// Prelude que corre DENTRO del sandbox antes de las tools.
+//  - host.fetchOrigin(path, opts?) -> JSON.parse(globalThis.__fetchOriginRaw(...)):
+//    __fetchOriginRaw es la capability asyncified (desde QuickJS se ve SINCRONA;
+//    asyncify suspende la pila wasm mientras el host hace el fetch real).
+//  - opts: { method?: "GET"|"POST", body?: string, contentType?: string }.
+//    Sin opts (o sin method) => GET (byte-identico al comportamiento previo).
+//    Las validaciones las hace el host en __fetchOriginRaw; si fallan lanzan
+//    DENTRO del sandbox.
 //  - __dispatch es `async`: hace `await t.handler(args)` para soportar handlers async.
 const SANDBOX_PRELUDE_ASYNC = `
   globalThis.__tools = {};
@@ -73,98 +67,77 @@ const SANDBOX_PRELUDE_ASYNC = `
   };
 `;
 
-// --- Hardening (TAREA7 gateway): limites del runtime QuickJS ------------------
-// Valores por defecto aplicados a TODO AsyncToolHost (incluido el spike TAREA5,
-// que sigue verde porque sus tools son triviales y rapidas).
-//  - MEMORY_LIMIT_BYTES: tope de memoria del runtime (64MB). Cubre tools que
-//    acumulan strings/arrays enormes; QuickJS lanza "memory limit exceeded" y
-//    aborta la evaluacion (se propaga como error de la tool).
-//  - MAX_STACK_SIZE_BYTES: pila de llamada (1MB). Evita recursion infinita
+// --- Limites del runtime QuickJS ------------------------------------------------
+//  - MEMORY_LIMIT_BYTES (64MB): tope de memoria. QuickJS lanza "memory limit
+//    exceeded" y aborta la evaluacion (se propaga como error de la tool).
+//  - MAX_STACK_SIZE_BYTES (1MB): pila de llamada. Evita recursion infinita
 //    explosiva antes de que actue el interruptHandler.
-//  - INTERRUPT_DEADLINE_MS: deadline wall-clock por callTool (2s). El
+//  - INTERRUPT_DEADLINE_MS (2s): deadline wall-clock por callTool. El
 //    interruptHandler compara Date.now() contra this._deadline; si se excede,
-//    devuelve true y QuickJS interrumpe el bucle infinito en curso.
+//    devuelve true y QuickJS interrumpe el bucle en curso.
 //    OJO: en Cloudflare Workers el reloj (Date.now) se CONGELA durante ejecucion
 //    sincrona (mitigacion Spectre): dentro de un while(true){} Date.now() nunca
-//    avanza y este check NUNCA corta (TAREA12: busy_loop colgo ~40s hasta 1102).
-//    Por eso hay un segundo mecanismo DETERMINISTA: presupuesto por conteo de
-//    invocaciones del interruptHandler (ver INTERRUPT_MAX_INVOCATIONS).
+//    avanza y este check NUNCA corta. Por eso hay un segundo mecanismo
+//    DETERMINISTA: presupuesto por conteo de invocaciones (ver abajo).
 //  - INTERRUPT_MAX_INVOCATIONS: presupuesto DETERMINISTA por callTool/loadToolSource.
 //    QuickJS llama al interruptHandler periodicamente mientras ejecuta bytecode;
 //    llevamos un contador (this._interruptCount) que se resetea al inicio de cada
-//    callTool/loadToolSource y devuelve true (interrumpe) al superar N invocaciones.
-//    A diferencia del deadline wall-clock, NO depende del reloj: cuenta cuantas
-//    veces QuickJS invoco al handler. Una tool legitima que pasa la mayor parte del
-//    tiempo en `await host.fetchOrigin` (asyncify suspende la pila => el handler NO
-//    se llama durante la suspension) consume pocas invocaciones; un while(true){}
-//    puro sincrono las consume rapidamente => interrumpe. Calibrado con margen
-//    amplio (50-100x) sobre la skill legitima mas pesada (ver TAREA12B-REPORT.md).
-// APIs usadas (verificadas en node_modules/quickjs-emscripten-core/dist/index.d.ts):
-//   vm.runtime.setMemoryLimit(bytes)   -> QuickJSRuntime#setMemoryLimit
-//   vm.runtime.setMaxStackSize(bytes)  -> QuickJSRuntime#setMaxStackSize
-//   vm.runtime.setInterruptHandler(cb) -> QuickJSRuntime#setInterruptHandler
-//   cb: (runtime) => boolean | undefined | void  (true => interrumpe)
+//    callTool/loadToolSource y devuelve true al superar N invocaciones. A
+//    diferencia del deadline wall-clock, NO depende del reloj: cuenta cuantas
+//    veces QuickJS invoco al handler. Una tool legitima que pasa la mayor parte
+//    del tiempo en `await host.fetchOrigin` (asyncify suspende la pila => el
+//    handler NO se llama durante la suspension) consume pocas invocaciones; un
+//    while(true){} puro sincrono las consume rapido => interrumpe.
+// APIs: vm.runtime.setMemoryLimit / setMaxStackSize / setInterruptHandler(cb);
+//   cb: (runtime) => boolean | undefined | void  (true => interrumpe).
 const DEFAULT_MEMORY_LIMIT_BYTES = 64 * 1024 * 1024; // 64 MB
 const DEFAULT_MAX_STACK_SIZE_BYTES = 1024 * 1024; // 1 MB
 const DEFAULT_INTERRUPT_DEADLINE_MS = 2000; // 2s por callTool (wall-clock; efectivo en Node/tests; congelado en Workers)
-// Calibrado empiricamente (ver TAREA12B-REPORT.md): las skills legitimas reales
-// (bookstore stock_report/search_catalog/get_book, spike fetch_home/fetch_evil,
-// demo sum_numbers/server_time) consumen 0 invocaciones del interruptHandler por
-// callTool (asyncify suspende la pila durante `await host.fetchOrigin` => el
-// handler no se llama). Un proxy de compute pesado legitimo (1M de adiciones en
-// un loop tight) consume ~200 invocaciones. Ponemos N=20000 (100x ese proxy;
-// margen amplio sobre cualquier skill legitima real, que es ~0). Un while(true){}
+// Calibrado empiricamente: las skills legitimas reales consumen 0 invocaciones
+// del interruptHandler por callTool (asyncify suspende la pila durante el await
+// => el handler no se llama). Un proxy de compute pesado legitimo (1M de
+// adiciones en un loop tight) consume ~200 invocaciones. N=20000 = 100x ese
+// proxy, margen amplio sobre cualquier skill legitima real (~0). Un while(true){}
 // vacio consume 20000 invocaciones en ~1s en Node y ~4s en workerd (WASM mas
-// lento) => corte acotado muy por debajo del limite de plataforma (1102, ~40s).
+// lento) => corte acotado muy por debajo del limite de plataforma (~40s).
 const DEFAULT_INTERRUPT_MAX_INVOCATIONS = 20000;
-// TAREA17: timeout wall-clock por fetch de la capability host.fetchOrigin (10s).
-// AbortSignal.timeout esta soportado en workerd con compatibility_date 2026-06-01
-// (verificado: API Web estandar disponible en workerd desde 2023, sin flag). El
-// backstop Promise.race garantiza el corte aun si el fetchImpl ignora el signal.
+// Timeout wall-clock por fetch de host.fetchOrigin (10s). AbortSignal.timeout
+// soportado en workerd (API Web estandar, sin flag). El backstop Promise.race
+// garantiza el corte aun si el fetchImpl ignora el signal (ver mas abajo).
 const DEFAULT_FETCH_TIMEOUT_MS = 10000;
 
 export class AsyncToolHost {
-  // Opciones:
-  //  - quickjs: modulo QuickJSAsyncWASMModule ya construido (recomendado en Workers,
-  //    para reusar el modulo compilado). Si no se pasa, se construye uno nuevo (Node).
-  //  - quickjsModule: WebAssembly.Module pre-compilado para construir la variante asyncify.
+  // Opciones del constructor:
+  //  - quickjs: QuickJSAsyncWASMModule ya construido (recomendado en Workers,
+  //    reusa el modulo compilado). Si no se pasa, se construye uno nuevo (Node).
+  //  - quickjsModule: WebAssembly.Module pre-compilado para la variante asyncify.
   //  - allowedOrigin: origin unico permitido para host.fetchOrigin. Obligatorio.
-  //  - memoryLimitBytes (opcional, default 64MB): tope de memoria del runtime.
-  //  - maxStackSizeBytes (opcional, default 1MB): pila de llamadas.
-  //  - interruptDeadlineMs (opcional, default 2000): deadline wall-clock por callTool.
-  //    Poner <=0 desactiva el interruptHandler (solo queda el guard de bombeo).
-  //  - interruptMaxInvocations (opcional, default DEFAULT_INTERRUPT_MAX_INVOCATIONS):
-  //    presupuesto DETERMINISTA por invocaciones del interruptHandler por
-  //    callTool/loadToolSource. Salva contra while(true){} cuando el reloj esta
-  //    congelado (Cloudflare Workers). Ver comentario en la constante.
-  //  - fetchImpl (opcional, default global fetch): funcion (url, opts) => Response
-  //    usada por la capability host.fetchOrigin. Permite al gateway (TAREA7)
-  //    inyectar un fetch que enrute origins de la misma cuenta Cloudflare via
-  //    service binding (bypass del error 1042 worker-to-worker por workers.dev).
-  //    El spike no lo pasa => usa fetch global => sigue verde.
-  //  - fetchTimeoutMs (opcional, default 10000): timeout wall-clock por fetch
-  //    de la capability host.fetchOrigin. El gas determinista (interruptMaxInvocations)
-  //    acota CPU pero NO esperas de red: un origin lento colgaria la invocacion
-  //    aunque el handler no consuma invocaciones del interrupt (asyncify suspende
-  //    la pila durante el await). Este timeout acota la espera. Se implementa con
-  //    AbortSignal.timeout(fetchTimeoutMs) en el signal del fetch (un fetch bien
-  //    comportado aborta la conexion) MAS un Promise.race de backstop que garantiza
-  //    el corte aun si el fetchImpl ignora el signal (p.ej. un binding que lo
-  //    descarta). Al disparar aflora DENTRO del sandbox como error "fetchOrigin
-  //    timeout" (throw de la capability -> excepcion del sandbox -> isError:true,
-  //    NO crash del gateway). El spike no lo pasa => default 10000 => compat.
-  //  - extraCapabilities (opcional, default ninguna): mapa { nombre: async (argsJson) => resultJson }
-  //    que inyecta host.<nombre> con el MISMO puente raw-JSON que fetchOrigin. Cada
-  //    capability se expone DENTRO del sandbox como host.<nombre>(...args) =>
-  //    JSON.parse(globalThis.__<nombre>Raw(JSON.stringify(args))); el host registra
-  //    __<nombre>Raw como funcion asyncified (asyncify suspende la pila wasm mientras
-  //    corre el async del host). TAREA26 (BUG 1, Opcion A): el puente reenvia TODOS
-  //    los args posicionales como un array JSON '[arg0, arg1, ...]'; la fn de la
-  //    capability recibe ese array (desempaquetandolo segun su contrato). Antes
-  //    reenviaba solo el primer arg posicional => llamadas `host.<name>(a, b)`
-  //    perdia `b`. Extension COMPATIBLE (TAREA20): sin extraCapabilities el
-  //    comportamiento es byte-identico al previo (npm test/spike/gateway verdes).
-  //    Uso: spike minimemory inyecta host.memorySearch(argsJson) => resultJson.
+  //  - memoryLimitBytes (default 64MB): tope de memoria del runtime.
+  //  - maxStackSizeBytes (default 1MB): pila de llamadas.
+  //  - interruptDeadlineMs (default 2000): deadline wall-clock por callTool.
+  //    <=0 desactiva el interruptHandler (solo queda el guard de bombeo).
+  //  - interruptMaxInvocations (default 20000): presupuesto DETERMINISTA por
+  //    invocaciones del interruptHandler. Salva contra while(true){} cuando el
+  //    reloj esta congelado (Workers). Ver comentario en la constante.
+  //  - fetchImpl (default global fetch): (url, opts) => Response usada por
+  //    host.fetchOrigin. Permite inyectar un fetch que enrute origins de la
+  //    misma cuenta Cloudflare via service binding (bypass del error 1042
+  //    worker-to-worker por workers.dev).
+  //  - fetchTimeoutMs (default 10000): timeout wall-clock por fetch. El gas
+  //    determinista (interruptMaxInvocations) acota CPU pero NO esperas de red:
+  //    un origin lento colgaria la invocacion aunque el handler no consuma
+  //    invocaciones (asyncify suspende la pila durante el await). Doble mecanismo:
+  //    AbortSignal.timeout en el signal del fetch (un fetch bien comportado
+  //    aborta) MAS un Promise.race de backstop que garantiza el corte aun si el
+  //    fetchImpl ignora el signal (p.ej. un binding que lo descarta). Al
+  //    disparar aflora DENTRO del sandbox como error "fetchOrigin timeout"
+  //    (throw -> excepcion del sandbox -> isError:true, NO crash del gateway).
+  //  - extraCapabilities (default ninguna): mapa { nombre: async (argsJson) =>
+  //    resultJson } que inyecta host.<nombre> con el MISMO puente raw-JSON que
+  //    fetchOrigin (asyncify suspende la pila wasm mientras corre el async del
+  //    host). El puente reenvia TODOS los args posicionales como un array JSON
+  //    '[arg0, arg1, ...]'; la fn de la capability recibe ese array. Sin
+  //    extraCapabilities el comportamiento es byte-identico al previo.
   constructor({ quickjs, quickjsModule, allowedOrigin, memoryLimitBytes, maxStackSizeBytes, interruptDeadlineMs, interruptMaxInvocations, fetchImpl, fetchTimeoutMs, extraCapabilities }) {
     if (typeof allowedOrigin !== "string" || !allowedOrigin) {
       throw new Error("AsyncToolHost requiere allowedOrigin");
@@ -173,7 +146,7 @@ export class AsyncToolHost {
     this._quickjsModule = quickjsModule || null;
     this._allowedOrigin = allowedOrigin;
     this._fetchImpl = typeof fetchImpl === "function" ? fetchImpl : ((u, o) => fetch(u, o));
-    // TAREA20: capabilities extra inyectadas como host.<nombre> (puente raw-JSON
+    // Capabilities extra inyectadas como host.<nombre> (puente raw-JSON
     // asyncified, mismo patron que __fetchOriginRaw). null/undefined => ninguna.
     this._extraCapabilities = extraCapabilities || null;
     this._fetchTimeoutMs =
@@ -194,9 +167,9 @@ export class AsyncToolHost {
     this._deadline = Number.MAX_SAFE_INTEGER;
     // Contador de invocaciones del interruptHandler y flag de activacion. El flag
     // arranca en false (init/listTools no interrumpen); se pone true al entrar a
-    // loadToolSource/callTool y se restaura al salir. El contador se resetea a 0 al
-    // inicio de cada loadToolSource/callTool y NO se borra al salir (queda disponible
-    // para calibration/observabilidad: host._interruptCount tras una llamada).
+    // loadToolSource/callTool y se restaura al salir. El contador se resetea a 0
+    // al inicio de cada loadToolSource/callTool y NO se borra al salir (queda
+    // disponible para calibration/observabilidad: host._interruptCount).
     this._interruptCount = 0;
     this._interruptActive = false;
     this._vm = null;
@@ -217,7 +190,7 @@ export class AsyncToolHost {
     const vm = this._quickjs.newContext();
     this._vm = vm;
 
-    // --- Hardening: limites del runtime QuickJS (TAREA7 gateway) -------------
+    // --- Limites del runtime QuickJS ---------------------------------------
     // newContext() crea su propio runtime, asi que estos limites aplican solo
     // a este contexto (host por request => runtime por request).
     try {
@@ -262,9 +235,9 @@ export class AsyncToolHost {
     // {status, body}. Si el origin no coincide con allowedOrigin -> throw (se
     // propaga como excepcion dentro del sandbox via {error}/QTS_Throw).
     //
-    // TAREA16: extension COMPATIBLE a POST. El segundo arg es un string JSON con
-    // opts {method?, body?, contentType?} (siempre llega un string: "" cuando no
-    // hay opts, por lo que vm.getString es seguro). Reglas:
+    // Extension a POST: el segundo arg es un string JSON con opts
+    // {method?, body?, contentType?} (siempre llega un string: "" cuando no hay
+    // opts, por lo que vm.getString es seguro). Reglas:
     //  - method solo GET o POST (default GET). Otro -> throw DENTRO del sandbox.
     //  - body solo string, max 16384 bytes. Otro tipo o > 16KB -> throw.
     //  - content-type es el UNICO header controlable; default "application/json"
@@ -272,8 +245,8 @@ export class AsyncToolHost {
     //  - origin-scope NO cambia: path relativo o URL con exactamente el origin
     //    permitido. Cualquier otro origin -> throw "origin no permitido".
     //  - Truncado de respuesta a 4KB se mantiene.
-    // Las llamadas fetchOrigin(path) (sin opts) siguen identicas: method=GET, sin
-    // body, sin headers -> fetchImpl(url) igual que antes.
+    // fetchOrigin(path) (sin opts) sigue identico: method=GET, sin body, sin
+    // headers -> fetchImpl(url) igual que antes.
     const allowedOrigin = this._allowedOrigin;
     const fetchImpl = this._fetchImpl;
     const fetchTimeoutMs = this._fetchTimeoutMs;
@@ -300,12 +273,11 @@ export class AsyncToolHost {
         }
         body = opts.body;
       }
-      // TAREA17: body con GET no tiene sentido (GET no lleva body en la capability)
-      // y adems algunos runtimes/proxies lo rechazan o lo descartan silenciosamente.
-      // Si method resuelve a GET y opts.body esta presente (no undefined/null, ya
-      // validado como string <=16KB arriba) -> throw DENTRO del sandbox, mismo
-      // patron que los throws de method/body. Se hace tras validar body para que
-      // un body invalido (no string / >16KB) siga lanzando su mensaje especifico.
+      // body con GET no tiene sentido y ademas algunos runtimes/proxies lo
+      // rechazan o descartan silenciosamente. Si method resuelve a GET y hay
+      // body (ya validado como string <=16KB arriba) -> throw DENTRO del
+      // sandbox. Se hace tras validar body para que un body invalido siga
+      // lanzando su mensaje especifico.
       if (method === "GET" && body !== undefined) {
         throw new Error("body no permitido con GET");
       }
@@ -327,27 +299,26 @@ export class AsyncToolHost {
         fetchOpts.body = body;
         fetchOpts.headers = { "content-type": contentType };
       }
-      // TAREA17: timeout wall-clock por fetch. Doble mecanismo:
+      // Timeout wall-clock por fetch. Doble mecanismo:
       //  (1) AbortSignal.timeout(fetchTimeoutMs) en fetchOpts.signal: un fetch
       //      bien comportado (global undici / workerd) aborta la conexion al
       //      vencer, liberando recursos.
       //  (2) Promise.race contra un timer de backstop: garantiza el corte aun si
       //      el fetchImpl ignora el signal (p.ej. un service binding que descarta
-      //      signal, ver rama binding de makeFetchImpl en worker-gateway.mjs) o si
-      //      nunca resuelve. El timer NO usa Date.now (congelado en Workers durante
-      //      ejecucion sincrona): setTimeout dispara en tiempo real del event loop,
-      //      que SI avanza porque el await cede.
+      //      signal, ver makeFetchImpl en worker-gateway.mjs) o si nunca resuelve.
+      //      El timer NO usa Date.now (congelado en Workers durante ejecucion
+      //      sincrona): setTimeout dispara en tiempo real del event loop, que SI
+      //      avanza porque el await cede.
       // Al disparar (signal abort o backstop) se lanza "fetchOrigin timeout"
       // DENTRO del sandbox -> isError:true, no crash del gateway.
       fetchOpts.signal = AbortSignal.timeout(fetchTimeoutMs);
       const TIMEOUT_TAG = "__fetchOriginTimeout__";
-      // TAREA26 (BUG 2): capturamos el id del timer del backstop para hacerle
-      // clearTimeout al resolver/rechazar el fetch. Sin esto, en el camino feliz
-      // (fetch resuelve rapido) el setTimeout queda colgado hasta fetchTimeoutMs
-      // (10s por llamada a fetchOrigin) -> leak menor de timers. Se limpia en
-      // finally trael Promise.race (corre tanto en resolve como en throw), de
-      // modo que el timer nunca sobrevive a la carrera. El comportamiento de
-      // timeout es intacto: si el fetch no resuelve y vence el timer, el backstop
+      // Capturamos el id del timer del backstop para hacerle clearTimeout al
+      // resolver/rechazar el fetch. Sin esto, en el camino feliz (fetch resuelve
+      // rapido) el setTimeout queda colgado hasta fetchTimeoutMs (10s por
+      // llamada a fetchOrigin) -> leak menor de timers. Se limpia en finally
+      // del Promise.race (corre tanto en resolve como en throw). El timeout
+      // queda intacto: si el fetch no resuelve y vence el timer, el backstop
       // sigue lanzando TIMEOUT_TAG -> "fetchOrigin timeout".
       let timerId;
       const timeoutP = new Promise((_, reject) => {
@@ -374,12 +345,12 @@ export class AsyncToolHost {
     vm.setProp(vm.global, "__fetchOriginRaw", cap);
     cap.dispose();
 
-    // TAREA20: capabilities extra (extraCapabilities). Misma mecanica que
-    // __fetchOriginRaw: funcion asyncified (argsJson: string) => resultJson: string.
-    // asyncify suspende la pila wasm del sandbox mientras corre el async del host.
-    // Las __<nombre>Raw se setean ANTES del prelude; los metodos host.<nombre> que
-    // las invocan se inyectan DESPUES del prelude (el prelude base queda intacto =>
-    // sin extraCapabilities el comportamiento es byte-identico al previo).
+    // Capabilities extra (extraCapabilities). Misma mecanica que __fetchOriginRaw:
+    // funcion asyncified (argsJson: string) => resultJson: string. asyncify
+    // suspende la pila wasm del sandbox mientras corre el async del host. Las
+    // __<nombre>Raw se setean ANTES del prelude; los metodos host.<nombre> que
+    // las invocan se inyectan DESPUES del prelude (el prelude base queda intacto
+    // => sin extraCapabilities el comportamiento es byte-identico al previo).
     const extraCaps = this._extraCapabilities;
     if (extraCaps) {
       for (const name of Object.keys(extraCaps)) {
@@ -410,15 +381,13 @@ export class AsyncToolHost {
     }
     pre.value.dispose();
 
-    // TAREA20: inyecta host.<nombre> para cada capability extra. El prelude base
-    // ya definio globalThis.host = { fetchOrigin }; aqui solo agregamos metodos.
-    // TAREA26 (BUG 1, Opcion A): el wrapper reenvia TODOS los args posicionales
-    // (rest ...args) como un array JSON al puente raw, en vez de solo el primer
-    // arg. Antes `function (args)` reenviaba un unico arg => una llamada
-    // `host.<name>(a, b)` perdia `b` (p.ej. search_spec pasaba `host.memorySearch(q, k)`
-    // y k se descartaba). Ahora `host.<name>(a, b)` envia '["a",b]' y el lado host
-    // (la fn de extraCapabilities) desempaqueta el array. `...args` es siempre un
-    // array (posiblemente vacio) => no hace falta el guard `args === undefined`.
+    // Inyecta host.<nombre> para cada capability extra. El prelude base ya
+    // definio globalThis.host = { fetchOrigin }; aqui solo agregamos metodos.
+    // El wrapper reenvia TODOS los args posicionales (rest ...args) como un array
+    // JSON al puente raw, en vez de solo el primer arg. Sin esto una llamada
+    // `host.<name>(a, b)` perdia `b` (el puente descartaba args extra). Ahora
+    // envia '["a",b]' y el lado host desempaqueta el array. `...args` es siempre
+    // un array (posiblemente vacio) => no hace falta guard `args === undefined`.
     if (extraCaps) {
       const extraHostSrc = Object.keys(extraCaps)
         .map(function (name) {

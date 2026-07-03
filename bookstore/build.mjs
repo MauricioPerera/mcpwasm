@@ -7,7 +7,7 @@
 // gateway. Su tool.js es valido y se sirve normalmente, pero el tool_sha256
 // declarado en /llms.txt es DELIBERADAMENTE incorrecto (64 ceros). Un gateway
 // conforme DEBE excluir esta skill al detectar el mismatch. No corregir.
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -66,6 +66,18 @@ const llmsTxt =
   `## Skills\n\n` +
   skillLines.join("\n") + "\n";
 
+// Attestaciones (ext-skill-attestations v0.2). Array JSON publicado en
+// /.well-known/agent-skills/attestations.json. Firmado fuera de linea con
+// scripts/attest.mjs (clave privada en .attester-key.json, gitignored). Solo
+// se atestan las skills legitimas; corrupt_skill (hash mismatch) y busy_loop
+// (fixture de interrupt) quedan unattested a proposito. Si no existe el
+// archivo -> array vacio.
+const attestationsRaw = existsSync(join(contentDir, "attestations.json"))
+  ? readFileSync(join(contentDir, "attestations.json"), "utf8")
+  : "[]";
+const attestations = JSON.parse(attestationsRaw);
+console.log("attestations:", attestations.length, "entrada(s)");
+
 // Genera worker.mjs. El contenido se incrusta byte-exacto via JSON.stringify.
 const workerConstants = Object.keys(skills).map((name) => {
   const s = skills[name];
@@ -84,6 +96,7 @@ const worker =
 `// AUTOGENERADO por build.mjs. No editar a mano.
 ${workerConstants}
 const LLMS_TXT = ${JSON.stringify(llmsTxt)};
+const ATTESTATIONS = ${JSON.stringify(attestations)};
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: JSON_HEADERS });
@@ -117,6 +130,10 @@ export default {
     }
 
 ${toolRouteMap}
+
+    if (path === "/.well-known/agent-skills/attestations.json") {
+      return new Response(JSON.stringify(ATTESTATIONS), { headers: { "content-type": "application/json; charset=utf-8" } });
+    }
 
     return json({ error: "Not Found", path }, 404);
   }

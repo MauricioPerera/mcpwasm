@@ -3,7 +3,7 @@
 // byte-exacto) y wrangler.toml. Los sha256 declarados en /llms.txt coinciden con
 // el contenido servido porque el worker sirve el MISMO string sobre el que se
 // hasheo.
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,17 @@ const serverSkill = read("server_time.SKILL.md");
 const sumHash = sha256(sumTool);
 const serverHash = sha256(serverTool);
 
+// Attestaciones (ext-skill-attestations v0.2). Array JSON publicado en
+// /.well-known/agent-skills/attestations.json. Firmado fuera de linea con
+// scripts/attest.mjs (clave privada en .attester-key.json, gitignored). Si no
+// existe el archivo -> array vacio (0 atestaciones; skills listadas pero
+// unattested).
+const attestationsRaw = existsSync(join(contentDir, "attestations.json"))
+  ? readFileSync(join(contentDir, "attestations.json"), "utf8")
+  : "[]";
+const attestations = JSON.parse(attestationsRaw);
+console.log("attestations:", attestations.length, "entrada(s)");
+
 const llmsTxt =
   `# llms-txt-skills demo site\n\n` +
   `> Demo site publishing executable skills per the llms-txt-skills standard with a provisional extension for executable skills.\n\n` +
@@ -35,7 +46,8 @@ const worker =
   `const SERVER_TOOL_JS = ${JSON.stringify(serverTool)};\n` +
   `const SUM_SKILL_MD = ${JSON.stringify(sumSkill)};\n` +
   `const SERVER_SKILL_MD = ${JSON.stringify(serverSkill)};\n` +
-  `const LLMS_TXT = ${JSON.stringify(llmsTxt)};\n\n` +
+  `const LLMS_TXT = ${JSON.stringify(llmsTxt)};\n` +
+  `const ATTESTATIONS = ${JSON.stringify(attestations)};\n\n` +
   `export default {\n` +
   `  async fetch(request) {\n` +
   `    const url = new URL(request.url);\n` +
@@ -59,6 +71,9 @@ const worker =
   `    }\n` +
   `    if (path === "/skills/server_time/tool.js") {\n` +
   `      return new Response(SERVER_TOOL_JS, { headers: { "content-type": "application/javascript; charset=utf-8" } });\n` +
+  `    }\n` +
+  `    if (path === "/.well-known/agent-skills/attestations.json") {\n` +
+  `      return new Response(JSON.stringify(ATTESTATIONS), { headers: { "content-type": "application/json; charset=utf-8" } });\n` +
   `    }\n` +
   `    return new Response("Not Found", { status: 404 });\n` +
   `  }\n` +

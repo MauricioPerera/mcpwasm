@@ -1,0 +1,38 @@
+[
+  {
+    "origin": "https://llmstxt-bookstore.rckflr.workers.dev",
+    "skill": "search_catalog",
+    "tool_sha256": "d1220dcd2dd6b6c57b363edbfc2f0f620457cc98d2cc087baa3c7ef45782f175",
+    "attester": "human:mauricio",
+    "signed_on": "2026-07-03",
+    "valid_until": "2027-07-02",
+    "signature": "h0eVe5H/bk9nNCBholq2+6vDD1j+bn2G8HLmQOCEZjki9Jh/aO5EMUsXxsno8KnTRxpkg+mGpXUDxrxkerUGCg=="
+  },
+  {
+    "origin": "https://llmstxt-bookstore.rckflr.workers.dev",
+    "skill": "get_book",
+    "tool_sha256": "1b9a78f984ba5bf66450b422b23d151e37139dd05330b73f1b0bd42ae2b8b2ca",
+    "attester": "human:mauricio",
+    "signed_on": "2026-07-03",
+    "valid_until": "2027-07-02",
+    "signature": "FXnfAiAoUpV8ERvpxMBZi0AlBrX32UWTtyxCYQm7EfNep8Fy6Tw1OKVjkkcIsmaAaSON9agcqG8D21+ovvPFBQ=="
+  },
+  {
+    "origin": "https://llmstxt-bookstore.rckflr.workers.dev",
+    "skill": "stock_report",
+    "tool_sha256": "86b166f2e9ec95112a18ec6bd4a12b2e5ee707137bace0366c74114a42e99b1f",
+    "attester": "human:mauricio",
+    "signed_on": "2026-07-03",
+    "valid_until": "2027-07-02",
+    "signature": "5Pr2f25gXzoAhbRviLZy6pcxIkdxyEzVV/b3ToDZabDZ4UQnfv7pi+wKevo7uA382d5qWzruQuBwXY3ipBBVCA=="
+  },
+  {
+    "origin": "https://llmstxt-bookstore.rckflr.workers.dev",
+    "skill": "create_order",
+    "tool_sha256": "a7dbdf120c6bff98e3cfd601e784bcf591c1a897559e902046c2ca88f650b3f1",
+    "attester": "human:mauricio",
+    "signed_on": "2026-07-03",
+    "valid_until": "2027-07-02",
+    "signature": "tZ1TzqOnx8z+Gf8oECKgLZkUjBRfmYBlTOCIt7FqB++D4WhW96HWq6pCcAZ0NqbfAYQCkG2HH3bIoNDvtMXZDw=="
+  }
+]

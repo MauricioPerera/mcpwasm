@@ -1,0 +1,20 @@
+[
+  {
+    "origin": "https://llmstxt-demo-site.rckflr.workers.dev",
+    "skill": "sum_numbers",
+    "tool_sha256": "58daf86111bf7278446eb7e0e8c6384713b50cdb6fa97ac039e23846d723dc3e",
+    "attester": "human:mauricio",
+    "signed_on": "2026-07-03",
+    "valid_until": "2027-07-02",
+    "signature": "a7CyF4vk6uq8tutTrhnY53H79hysUOgQ4mxzwhCfb/OL8FqZl0K1DJglBOXfRYCEuJ7rMohGLYHYluQmgyxbDA=="
+  },
+  {
+    "origin": "https://llmstxt-demo-site.rckflr.workers.dev",
+    "skill": "server_time",
+    "tool_sha256": "5b9255eca41a95cc0cf38322dc973062133e1ce1e757da8cab8fdeb16ec934f5",
+    "attester": "human:mauricio",
+    "signed_on": "2026-07-03",
+    "valid_until": "2027-07-02",
+    "signature": "hPOetTcpK87g6rGKwgMqYmXEMEedj9tWhAR/GSRm3B+y0jJHZRaq1kHTvq0mbgEnNys/1aTukQD4OGslidGkCA=="
+  }
+]

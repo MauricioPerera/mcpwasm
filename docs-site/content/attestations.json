@@ -16,5 +16,14 @@
     "signed_on": "2026-07-02",
     "valid_until": "2027-07-02",
     "signature": "WvlhjJAfQGBYZte4XQDD+C3OpGcyJIoiBPNsNs+vjbDoi0/7jwUhw4NrPfvXRJkYu4mTzWA6dMWTzPzdxvI2CA=="
+  },
+  {
+    "origin": "https://llmstxt-docs.rckflr.workers.dev",
+    "skill": "list_docs",
+    "tool_sha256": "17d6175805386a0829012ab088c72ca98058255564a47230903c697432666735",
+    "attester": "human:mauricio",
+    "signed_on": "2026-07-03",
+    "valid_until": "2027-07-02",
+    "signature": "hdY0j0SmYg+DKE69rvgdK22FVdzuB1ULbU+PFo0zOALzXvT36aQrIYC49sFlpNLaajqEkyczQDemhIoIek9GCQ=="
   }
 ]

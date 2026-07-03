@@ -792,6 +792,33 @@ function allowedOrigins(env) {
     .filter((s) => s.length > 0);
 }
 
+// --- timingSafeEqualStr (TAREA28) -------------------------------------------
+// Comparacion de strings en tiempo (aprox) constante para el header
+// Authorization. Patron "double HMAC": clave efimera por llamada
+// (crypto.getRandomValues), HMAC-SHA256 de cada valor con crypto.subtle, y
+// comparacion de los dos digests (32 bytes fijos) con un acumulador XOR sin
+// short-circuit. Neutraliza tanto el contenido como la longitud (los digests
+// siempre miden 32 bytes -> no ramifica por longitud). WebCrypto puro
+// (crypto.subtle / crypto.getRandomValues), valido en workerd.
+async function timingSafeEqualStr(a, b) {
+  const enc = new TextEncoder();
+  const keyBytes = crypto.getRandomValues(new Uint8Array(32));
+  const key = await crypto.subtle.importKey(
+    "raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+  );
+  const [da, db] = await Promise.all([
+    crypto.subtle.sign("HMAC", key, enc.encode(a)),
+    crypto.subtle.sign("HMAC", key, enc.encode(b)),
+  ]);
+  const xa = new Uint8Array(da);
+  const xb = new Uint8Array(db);
+  let acc = 0;
+  for (let i = 0; i < xa.length; i++) {
+    acc |= xa[i] ^ xb[i];
+  }
+  return acc === 0;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -823,7 +850,7 @@ export default {
     if (env && env.AUTH_TOKEN && env.AUTH_TOKEN.length > 0) {
       const expected = "Bearer " + env.AUTH_TOKEN;
       const got = request.headers.get("authorization") || "";
-      if (got !== expected) {
+      if (!(await timingSafeEqualStr(got, expected))) {
         return new Response(JSON.stringify({ error: "unauthorized" }), {
           status: 401,
           headers: { "content-type": "application/json", "access-control-allow-origin": "*" },

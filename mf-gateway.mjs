@@ -754,9 +754,45 @@ try {
     console.log("[f.4] bearer correcto tools/list ->", (toolsAuth || []).length, "tools");
     check(okList.status === 200, "auth: Bearer correcto -> tools/list 200");
     check(Array.isArray(toolsAuth) && toolsAuth.length > 0, "auth: tools/list trae tools tras auth");
+
+    // --- (TAREA28) timingSafeEqualStr: 6 casos de comparacion tiempo-constante ---
+    // (T28.a) sin header -> 401 (ya cubierto por f.1; reafirmado aqui)
+    check(noAuth.status === 401, "T28.a: sin Authorization -> 401 (timing-safe)");
+
+    // (T28.b) token incorrecto de la MISMA longitud que el correcto -> 401
+    // ("test-token-0123456789abcdeg": misma longitud, ultimo byte cambiado).
+    const sameLenWrong = "Bearer test-token-0123456789abcdeg";
+    check(sameLenWrong.length === ("Bearer " + AUTH_TEST_TOKEN).length,
+      "T28.b: sanity mismo-longitud construido bien");
+    const badSameLen = await rpcAuth(base2, { jsonrpc: "2.0", id: 10, method: "initialize" },
+      { authorization: sameLenWrong });
+    console.log("[T28.b] bearer mismo-longitud incorrecto ->", JSON.stringify(badSameLen.body));
+    check(badSameLen.status === 401, "T28.b: token incorrecto misma longitud -> 401");
+
+    // (T28.c) token incorrecto de DISTINTA longitud -> 401
+    const badDiffLen = await rpcAuth(base2, { jsonrpc: "2.0", id: 11, method: "initialize" },
+      { authorization: "Bearer short" });
+    console.log("[T28.c] bearer distinta-longitud incorrecto ->", JSON.stringify(badDiffLen.body));
+    check(badDiffLen.status === 401, "T28.c: token incorrecto distinta longitud -> 401");
+
+    // (T28.d) token correcto -> 200 (regresion del happy path con timing-safe)
+    const okTs = await rpcAuth(base2, { jsonrpc: "2.0", id: 12, method: "initialize" },
+      { authorization: "Bearer " + AUTH_TEST_TOKEN });
+    check(okTs.status === 200, "T28.d: token correcto -> 200 (timing-safe no rompe happy path)");
+
+    // (T28.e) prefijo "Bearer " correcto pero token vacio ("Bearer " solo) -> 401
+    const bearerOnly = await rpcAuth(base2, { jsonrpc: "2.0", id: 13, method: "initialize" },
+      { authorization: "Bearer " });
+    console.log("[T28.e] 'Bearer ' solo ->", JSON.stringify(bearerOnly.body));
+    check(bearerOnly.status === 401, "T28.e: 'Bearer ' solo (token vacio) -> 401");
   } finally {
     await mfAuth.dispose();
   }
+
+  // (T28.f) sin env.AUTH_TOKEN configurado -> pasa sin auth (200). La instancia
+  // principal (mf, sin AUTH_TOKEN) ya probo initialize -> 200 en el check [1];
+  // aqui se reafirma explicitamente como caso (f) del hardening.
+  check(init.status === 200, "T28.f: sin env.AUTH_TOKEN -> pasa sin auth (200, modo dev)");
 
   hostA.dispose();
   hostB.dispose();

@@ -134,7 +134,9 @@ const offlineFakes = OFFLINE ? buildOfflineFakes() : null;
 // Fabrica Miniflare con la config comun del gateway. En offline inyecta los fakes
 // DEMO/DOCS (solo si el caller no pidio un DOCS propio, p.ej. T22.f/T25) y el
 // interceptor outboundService. En online produce opts byte-identicos a hoy.
-function gwMiniflare({ bindings, serviceBindings }) {
+// T38: durableObjects opcional (p.ej. {RATE_LIMITER:"RateLimiter"}) -> solo lo
+// piden las instancias de T38; sin el, opts byte-identicos a hoy (default intacto).
+function gwMiniflare({ bindings, serviceBindings, durableObjects }) {
   const opts = {
     scriptPath: fileURLToPath(new URL("./dist-gateway/worker.js", import.meta.url)),
     modules: true,
@@ -147,6 +149,7 @@ function gwMiniflare({ bindings, serviceBindings }) {
     bindings: bindings || {},
   };
   if (serviceBindings) opts.serviceBindings = { ...serviceBindings };
+  if (durableObjects) opts.durableObjects = { ...durableObjects };
   if (OFFLINE) {
     if (!opts.serviceBindings) opts.serviceBindings = {};
     if (!opts.serviceBindings.DEMO) opts.serviceBindings.DEMO = offlineFakes.demo;
@@ -992,6 +995,177 @@ try {
     }
   } finally {
     await mfT37.dispose();
+  }
+
+  // --- (T38) RATE LIMITING por cliente (Durable Object, opt-in por binding) -----
+  // Instancia Miniflare propia con durableObjects {RATE_LIMITER:"RateLimiter"},
+  // env.CLIENTS (modo por-cliente) con un cliente rpm=3 y otro sin rpm, y
+  // RATE_WINDOW_MS corto (1500ms) para testear el reset sin esperar 60s. Fake DEMO
+  // (hermetico, sin red). Verifica:
+  //   (a) rpm=3 -> 3 OK con Remaining 3->2->1 y 4to -> 429 con Retry-After y
+  //       Remaining 0 (+ X-Gw-Client post-auth);
+  //   (b) tras esperar la ventana corta, reset (vuelve a pasar, Remaining=3);
+  //   (c) cliente sin rpm en el mismo registro -> nunca 429 ni llamada al DO
+  //       (sin headers de rate limit);
+  //   (d) modo clients con rpm pero SIN binding RATE_LIMITER -> limiter inactivo,
+  //       las requests pasan (opt-in por binding; los checks T37 sin binding
+  //       siguen verdes sin tocarlos);
+  //   (e) modo legado AUTH_TOKEN -> sin headers de rate limit.
+  // Tokens de fantasia obvios (FAKE en el literal); nunca se loguean secretos.
+  console.log("\n[T38] rate limiting por cliente (Durable Object, hermetico):");
+  const t38Fakes = buildOfflineFakes();
+  const shaT38 = (s) => createHash("sha256").update(s, "utf8").digest("hex");
+  const T38_TOKEN_RPM = "t38-rpm3-secret-FAKE-RRRR";
+  const T38_TOKEN_NORPM = "t38-norpm-secret-FAKE-NNNN";
+  const T38_WINDOW = 1500;
+  const CLIENTS_T38 = JSON.stringify({
+    [shaT38(T38_TOKEN_RPM)]: { client_id: "cliente-rpm3", rpm: 3 },
+    [shaT38(T38_TOKEN_NORPM)]: { client_id: "cliente-norpm" }, // sin rpm
+  });
+  const mfT38 = gwMiniflare({
+    bindings: {
+      ALLOWED_ORIGINS: DEMO_ORIGIN,
+      CLIENTS: CLIENTS_T38,
+      RATE_WINDOW_MS: T38_WINDOW,
+    },
+    serviceBindings: { DEMO: t38Fakes.demo },
+    durableObjects: { RATE_LIMITER: "RateLimiter" },
+  });
+  async function rpcT38(p, payload, headers) {
+    const res = await mfT38.dispatchFetch("http://localhost" + p, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(headers || {}) },
+      body: JSON.stringify(payload),
+    });
+    let body = null; try { body = await res.json(); } catch { body = await res.text(); }
+    return { status: res.status, body, headers: Object.fromEntries(res.headers) };
+  }
+  const t38Base = "/mcp?origin=" + encodeURIComponent(DEMO_ORIGIN);
+  const authRpm = { authorization: "Bearer " + T38_TOKEN_RPM };
+  const authNoRpm = { authorization: "Bearer " + T38_TOKEN_NORPM };
+  try {
+    // Alinea al inicio de una ventana fresca para que las 4 requests de (a) caigan
+    // en la MISMA ventana (evita flakiness por straddle del borde de ventana).
+    const alignMs = T38_WINDOW - (Date.now() % T38_WINDOW) + 50;
+    await new Promise((res) => setTimeout(res, alignMs));
+
+    // (T38.a) rpm=3 -> 3 OK Remaining 3,2,1 ; 4to -> 429 con Retry-After y Remaining 0
+    const r1 = await rpcT38(t38Base, { jsonrpc: "2.0", id: 1, method: "initialize" }, authRpm);
+    const r2 = await rpcT38(t38Base, { jsonrpc: "2.0", id: 2, method: "tools/list" }, authRpm);
+    const r3 = await rpcT38(t38Base, { jsonrpc: "2.0", id: 3, method: "initialize" }, authRpm);
+    const r4 = await rpcT38(t38Base, { jsonrpc: "2.0", id: 4, method: "initialize" }, authRpm);
+    console.log("[T38.a] rem seq:", r1.headers["x-gw-ratelimit-remaining"],
+      r2.headers["x-gw-ratelimit-remaining"], r3.headers["x-gw-ratelimit-remaining"],
+      "| r4 status=" + r4.status, "rem=" + r4.headers["x-gw-ratelimit-remaining"],
+      "retry-after=" + r4.headers["retry-after"]);
+    check(r1.status === 200 && r2.status === 200 && r3.status === 200,
+      "T38.a: 3 requests OK (200) dentro de cuota");
+    check(r1.headers["x-gw-ratelimit-remaining"] === "3", "T38.a: 1er OK Remaining=3");
+    check(r2.headers["x-gw-ratelimit-remaining"] === "2", "T38.a: 2do OK Remaining=2");
+    check(r3.headers["x-gw-ratelimit-remaining"] === "1", "T38.a: 3er OK Remaining=1");
+    check(r1.headers["x-gw-ratelimit-limit"] === "3", "T38.a: header Limit=3");
+    check(!!r1.headers["x-gw-ratelimit-reset"], "T38.a: header Reset presente (epoch seg)");
+    check(r1.headers["x-gw-client"] === "cliente-rpm3", "T38.a: X-Gw-Client en respuesta OK");
+    check(r4.status === 429, "T38.a: 4to request -> 429");
+    check(r4.body && r4.body.error === "rate_limited", 'T38.a: 429 body {"error":"rate_limited"}');
+    check(r4.headers["x-gw-ratelimit-remaining"] === "0", "T38.a: 429 Remaining=0");
+    check(!!r4.headers["retry-after"], "T38.a: 429 lleva Retry-After");
+    check(Number(r4.headers["retry-after"]) >= 1, "T38.a: Retry-After >= 1 seg");
+    check(r4.headers["x-gw-client"] === "cliente-rpm3", "T38.a: 429 lleva X-Gw-Client (post-auth)");
+
+    // (T38.b) tras esperar la ventana corta, reset: vuelve a pasar (200, Remaining=3)
+    await new Promise((res) => setTimeout(res, T38_WINDOW + 250));
+    const r5 = await rpcT38(t38Base, { jsonrpc: "2.0", id: 5, method: "initialize" }, authRpm);
+    console.log("[T38.b] tras ventana: status=" + r5.status,
+      "remaining=" + r5.headers["x-gw-ratelimit-remaining"]);
+    check(r5.status === 200, "T38.b: tras ventana -> 200 (reset, vuelve a pasar)");
+    check(r5.headers["x-gw-ratelimit-remaining"] === "3",
+      "T38.b: reset -> Remaining=3 (contador reiniciado)");
+
+    // (T38.c) cliente sin rpm en el mismo registro -> nunca 429 ni llamada al DO.
+    // 5 requests seguidas del cliente sin rpm -> todas 200, sin headers de rate
+    // limit (el limiter queda inactivo para este cliente: rpm null).
+    let norpmAll200 = true, norpmNo429 = true, norpmNoRateHdr = true;
+    for (let i = 0; i < 5; i++) {
+      const r = await rpcT38(t38Base, { jsonrpc: "2.0", id: 100 + i, method: "initialize" }, authNoRpm);
+      if (r.status !== 200) norpmAll200 = false;
+      if (r.status === 429) norpmNo429 = false;
+      if (r.headers["x-gw-ratelimit-remaining"] !== undefined) norpmNoRateHdr = false;
+    }
+    console.log("[T38.c] cliente sin rpm: 5x 200?", norpmAll200, "sin rate hdr?", norpmNoRateHdr);
+    check(norpmAll200, "T38.c: cliente sin rpm -> 5 requests 200 (sin limitar)");
+    check(norpmNo429, "T38.c: cliente sin rpm -> nunca 429");
+    check(norpmNoRateHdr, "T38.c: cliente sin rpm -> sin headers de rate limit (DO no invocado)");
+  } finally {
+    await mfT38.dispose();
+  }
+
+  // (T38.d) modo clients con rpm pero SIN binding RATE_LIMITER -> limiter inactivo,
+  // las requests pasan (opt-in por binding). Los checks T37 (sin binding) ya
+  // pasaron arriba sin tocarlos; aqui se confirma explicitamente el opt-in.
+  {
+    const mfNoBinding = gwMiniflare({
+      bindings: { ALLOWED_ORIGINS: DEMO_ORIGIN, CLIENTS: CLIENTS_T38, RATE_WINDOW_MS: T38_WINDOW },
+      serviceBindings: { DEMO: t38Fakes.demo },
+      // SIN durableObjects => env.RATE_LIMITER ausente => limiter inactivo
+    });
+    async function rpcNB(p, payload, headers) {
+      const res = await mfNoBinding.dispatchFetch("http://localhost" + p, {
+        method: "POST", headers: { "content-type": "application/json", ...(headers || {}) },
+        body: JSON.stringify(payload),
+      });
+      let body = null; try { body = await res.json(); } catch { body = await res.text(); }
+      return { status: res.status, body, headers: Object.fromEntries(res.headers) };
+    }
+    try {
+      // 5 requests del cliente rpm=3 SIN binding -> todas 200, sin headers de rate limit
+      let all200 = true, noRateHdr = true;
+      for (let i = 0; i < 5; i++) {
+        const r = await rpcNB(t38Base, { jsonrpc: "2.0", id: 200 + i, method: "initialize" }, authRpm);
+        if (r.status !== 200) all200 = false;
+        if (r.headers["x-gw-ratelimit-remaining"] !== undefined) noRateHdr = false;
+      }
+      console.log("[T38.d] sin binding: 5x 200?", all200, "sin rate hdr?", noRateHdr);
+      check(all200, "T38.d: sin binding RATE_LIMITER -> 5 requests 200 (limiter inactivo, opt-in por binding)");
+      check(noRateHdr, "T38.d: sin binding -> sin headers de rate limit (DO no invocado)");
+      // GET / indica rate limiting INACTIVO
+      const getRes = await mfNoBinding.dispatchFetch("http://localhost/", { method: "GET" });
+      const getText = await getRes.text();
+      check(/Rate limiting INACTIVO/.test(getText), "T38.d: GET / indica Rate limiting INACTIVO (binding ausente)");
+    } finally {
+      await mfNoBinding.dispose();
+    }
+  }
+
+  // (T38.e) modo legado AUTH_TOKEN -> sin headers de rate limit (sin DO, sin CLIENTS).
+  // Una respuesta 200 del modo legado NO lleva headers de rate limit ni X-Gw-Client.
+  {
+    const T38_LEGACY = "t38-legacy-shared-FAKE-LLLL";
+    const mfLeg = gwMiniflare({
+      bindings: { ALLOWED_ORIGINS: DEMO_ORIGIN, AUTH_TOKEN: T38_LEGACY },
+      serviceBindings: { DEMO: t38Fakes.demo },
+      // SIN CLIENTS, SIN durableObjects => modo legado, limiter inactivo
+    });
+    async function rpcLeg(p, payload, headers) {
+      const res = await mfLeg.dispatchFetch("http://localhost" + p, {
+        method: "POST", headers: { "content-type": "application/json", ...(headers || {}) },
+        body: JSON.stringify(payload),
+      });
+      let body = null; try { body = await res.json(); } catch { body = await res.text(); }
+      return { status: res.status, body, headers: Object.fromEntries(res.headers) };
+    }
+    try {
+      const r = await rpcLeg(t38Base, { jsonrpc: "2.0", id: 1, method: "initialize" },
+        { authorization: "Bearer " + T38_LEGACY });
+      console.log("[T38.e] modo legado: status=" + r.status,
+        "rate rem hdr?", r.headers["x-gw-ratelimit-remaining"]);
+      check(r.status === 200, "T38.e: modo legado AUTH_TOKEN -> 200");
+      check(r.headers["x-gw-ratelimit-remaining"] === undefined,
+        "T38.e: modo legado -> sin headers de rate limit (limiter inactivo)");
+      check(!r.headers["x-gw-client"], "T38.e: modo legado -> sin X-Gw-Client (no modo por-cliente)");
+    } finally {
+      await mfLeg.dispose();
+    }
   }
 
   hostA.dispose();

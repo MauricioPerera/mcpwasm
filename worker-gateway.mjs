@@ -657,7 +657,7 @@ class PerSkillHost {
   }
 }
 
-function json(obj, status = 200, discovery, attest, client) {
+function json(obj, status = 200, discovery, attest, client, rl) {
   const headers = { "content-type": "application/json", "access-control-allow-origin": "*" };
   // X-Gw-Discovery: "miss"|"hit"|"none" (antes de descubrimiento). Observabilidad,
   // no filtra nada sensible (estado del cache del isolate para este origin).
@@ -666,6 +666,14 @@ function json(obj, status = 200, discovery, attest, client) {
   if (attest) headers["x-gw-attestations"] = attest;
   // X-Gw-Client: identidad del cliente (T37), solo en modo por-cliente tras auth.
   if (client) headers["x-gw-client"] = client;
+  // X-Gw-RateLimit-* (T38): estado del rate limiter, solo cuando el limiter esta
+  // ACTIVO y la request esta dentro de cuota (rl = {allowed,limit,remaining,
+  // reset_epoch_ms}). El 429 y el 500-unavailable arman sus propios headers.
+  if (rl) {
+    headers["x-gw-ratelimit-limit"] = String(rl.limit);
+    headers["x-gw-ratelimit-remaining"] = String(rl.remaining);
+    headers["x-gw-ratelimit-reset"] = String(Math.floor(rl.reset_epoch_ms / 1000));
+  }
   return new Response(JSON.stringify(obj), { status, headers });
 }
 
@@ -736,6 +744,115 @@ function parseClients(env) {
   return { mode: "clients", registry };
 }
 
+// T38: rate limiting por cliente (opt-in, sin tocar el default). Llama al DO
+// RateLimiter (binding env.RATE_LIMITER) con body {rpm}; el DO id por nombre =
+// client_id => una instancia de storage aislada por cliente. Devuelve
+// {allowed, limit, remaining, reset_epoch_ms}. Lanza ante cualquier fallo del DO
+// (HTTP no-ok, JSON invalido, excepcion) => el caller responde 500 fail-closed
+// observable (rate_limiter_unavailable). Solo se invoca si rateLimiterActive.
+async function checkRateLimit(env, clientId, rpm) {
+  const id = env.RATE_LIMITER.idFromName(clientId);
+  const stub = env.RATE_LIMITER.get(id);
+  const doResp = await stub.fetch("http://rate-limiter.local/check", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ rpm }),
+  });
+  if (!doResp.ok) {
+    throw new Error("rate limiter DO HTTP " + doResp.status);
+  }
+  let data;
+  try {
+    data = await doResp.json();
+  } catch (e) {
+    throw new Error("rate limiter DO respuesta no-JSON: " + String(e && e.message || e));
+  }
+  if (
+    !data ||
+    typeof data.allowed !== "boolean" ||
+    typeof data.limit !== "number" ||
+    typeof data.remaining !== "number" ||
+    typeof data.reset_epoch_ms !== "number"
+  ) {
+    throw new Error("rate limiter DO respuesta malformada");
+  }
+  return data;
+}
+
+// T38: RateLimiter Durable Object. Contador de ventana fija persistido en el
+// storage del DO (NO en memoria: el DO puede ser evictado del memory y re-creado
+// per-request; el storage sobrevive). Una instancia por client_id (el gateway la
+// direcciona con env.RATE_LIMITER.idFromName(client_id) => storage aislado por
+// cliente). Protocolo interno: POST /check con body {rpm} -> JSON
+// {allowed, limit, remaining, reset_epoch_ms}. Ventana: env.RATE_WINDOW_MS
+// (default 60000; configurable SOLO para testear el reset sin esperar 60s).
+//
+// Semantica de ventana fija con precheck: allowed iff count_previo < rpm; el
+// contador SOLO se incrementa si la request es admitida (las rechazadas no
+// consumen cuota). remaining = rpm - count_previo => la secuencia de responses
+// admitidos muestra rpm, rpm-1, ..., 1 y el primer rechazo muestra 0. El
+// reset_epoch_ms es el borde final de la ventana actual (epoch ms). SQLite-backed
+// (wrangler migration new_sqlite_classes) => funciona en todos los planes.
+export class RateLimiter {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+  }
+
+  async fetch(request) {
+    // Body {rpm}: lo provee el gateway desde el registro del cliente (T37).
+    let rpm = null;
+    try {
+      const body = await request.json();
+      if (body && typeof body.rpm === "number" && Number.isFinite(body.rpm)) {
+        rpm = Math.floor(body.rpm);
+      }
+    } catch {
+      return new Response(JSON.stringify({ error: "bad request" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (typeof rpm !== "number" || rpm < 1) {
+      return new Response(JSON.stringify({ error: "rpm invalido" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    const windowMs = Number(this.env && this.env.RATE_WINDOW_MS) || 60000;
+    const now = Date.now();
+    const windowStart = Math.floor(now / windowMs) * windowMs;
+    const windowEnd = windowStart + windowMs;
+
+    // Registro persistido: {windowStart, count}. Si no hay o la ventana expiro,
+    // se reinicia (count 0 en la ventana nueva). El storage sobrevive a eviccion.
+    let rec = await this.state.storage.get("rl");
+    if (!rec || typeof rec.windowStart !== "number" || typeof rec.count !== "number") {
+      rec = { windowStart, count: 0 };
+    }
+    if (rec.windowStart !== windowStart) {
+      rec = { windowStart, count: 0 };
+    }
+
+    const allowed = rec.count < rpm;
+    const remaining = Math.max(0, rpm - rec.count);
+    if (allowed) {
+      rec.count += 1;
+      await this.state.storage.put("rl", { windowStart: rec.windowStart, count: rec.count });
+    }
+    return new Response(
+      JSON.stringify({
+        allowed,
+        limit: rpm,
+        remaining,
+        reset_epoch_ms: windowEnd,
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  }
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -761,12 +878,20 @@ export default {
           ? "Auth ACTIVADO (token compartido legado): POST /mcp exige header Authorization: Bearer <AUTH_TOKEN>.\n"
           : "Auth DESACTIVADO (modo dev): sin token. Definir env.CLIENTS (por-cliente) o env.AUTH_TOKEN (legado) para activarlo.\n";
       }
+      // T38: estado del rate limiting (opt-in por binding env.RATE_LIMITER). Solo
+      // aplica en modo por-cliente y para clientes con rpm definido; sin binding el
+      // limiter queda inactivo y el flujo es byte-identico al previo.
+      const rlOn = !!(env && env.RATE_LIMITER);
+      const rateLine = rlOn
+        ? "Rate limiting ACTIVADO: clientes con rpm (env.CLIENTS) se limitan por ventana fija via Durable Object (binding RATE_LIMITER); headers X-Gw-RateLimit-Limit/-Remaining/-Reset, 429 al exceder.\n"
+        : "Rate limiting INACTIVO (binding RATE_LIMITER ausente): sin limitacion por cliente.\n";
       return new Response(
         "llmstxt-gateway\n" +
           "Gateway llms.txt -> MCP (Streamable HTTP, JSON-RPC 2.0 por POST).\n" +
           "Uso: POST " + url.origin + "/mcp?origin=<url-encoded-origin>\n" +
           "El origin debe estar en la allowlist (ALLOWED_ORIGINS).\n" +
           authLine +
+          rateLine +
           "Metodos MCP: initialize | tools/list | tools/call\n",
         { headers: { "content-type": "text/plain; charset=utf-8" } }
       );
@@ -789,6 +914,7 @@ export default {
     // intacto (AUTH_TOKEN comparacion tiempo-constante, o modo dev si ausente).
     // rpm queda en el registro para T38 (rate limiting) pero NO se aplica todavia.
     let clientId = null; // null = no exponer X-Gw-Client (legado/dev, o 401)
+    let clientRpm = null; // T38: rpm del cliente (numero) o null (sin rate limit)
     if (clientsCtx.mode === "failclosed") {
       return new Response(JSON.stringify({ error: "unauthorized" }), {
         status: 401,
@@ -813,6 +939,7 @@ export default {
         });
       }
       clientId = entry.client_id;
+      clientRpm = typeof entry.rpm === "number" ? entry.rpm : null; // T38
     } else if (env && env.AUTH_TOKEN && env.AUTH_TOKEN.length > 0) {
       // modo legado: AUTH_TOKEN compartido (comparacion tiempo-constante).
       const expected = "Bearer " + env.AUTH_TOKEN;
@@ -825,6 +952,52 @@ export default {
       }
     }
 
+    // --- Rate limiting por cliente (T38, opt-in) -------------------------------
+    // Activo SOLO si se cumplen las 3: modo clients + rpm del cliente no-null +
+    // binding env.RATE_LIMITER presente. En cualquier otro caso (modo legado, modo
+    // dev, cliente sin rpm, binding ausente) NO se llama al DO y el flujo queda
+    // intacto (rl = null -> json() no añade headers, comportamiento byte-identico).
+    // DO id por nombre = client_id (storage aislado por cliente). Fallo del DO con
+    // el limiter activo -> 500 fail-closed observable (rate_limiter_unavailable).
+    let rl = null;
+    const rateLimiterActive =
+      clientsCtx.mode === "clients" &&
+      clientId !== null &&
+      typeof clientRpm === "number" &&
+      !!(env && env.RATE_LIMITER);
+    if (rateLimiterActive) {
+      try {
+        rl = await checkRateLimit(env, clientId, clientRpm);
+      } catch (e) {
+        console.warn("[gateway] rate limiter DO fallo: " + String((e && e.message) || e) + " -> 500 fail-closed");
+        return new Response(JSON.stringify({ error: "rate_limiter_unavailable" }), {
+          status: 500,
+          headers: {
+            "content-type": "application/json",
+            "access-control-allow-origin": "*",
+            "x-gw-client": clientId,
+          },
+        });
+      }
+      if (!rl.allowed) {
+        // Cuota excedida: 429 + Retry-After (segundos hasta la ventana nueva) +
+        // los mismos headers con Remaining 0. X-Gw-Client (post-auth).
+        const retryAfterSec = Math.max(1, Math.ceil((rl.reset_epoch_ms - Date.now()) / 1000));
+        return new Response(JSON.stringify({ error: "rate_limited" }), {
+          status: 429,
+          headers: {
+            "content-type": "application/json",
+            "access-control-allow-origin": "*",
+            "x-gw-client": clientId,
+            "retry-after": String(retryAfterSec),
+            "x-gw-ratelimit-limit": String(rl.limit),
+            "x-gw-ratelimit-remaining": "0",
+            "x-gw-ratelimit-reset": String(Math.floor(rl.reset_epoch_ms / 1000)),
+          },
+        });
+      }
+    }
+
     const originParam = url.searchParams.get("origin");
     if (!originParam) {
       return json(
@@ -832,7 +1005,8 @@ export default {
         403,
         "none",
         null,
-        clientId
+        clientId,
+        rl
       );
     }
     let origin;
@@ -844,7 +1018,8 @@ export default {
         403,
         "none",
         null,
-        clientId
+        clientId,
+        rl
       );
     }
     const allowed = allowedOrigins(env);
@@ -854,7 +1029,8 @@ export default {
         403,
         "none",
         null,
-        clientId
+        clientId,
+        rl
       );
     }
 
@@ -862,7 +1038,7 @@ export default {
     try {
       msg = await request.json();
     } catch {
-      return json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400, "none", null, clientId);
+      return json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400, "none", null, clientId, rl);
     }
 
     // fetch inyectado (binding para same-account, fetch global para el resto).
@@ -892,7 +1068,8 @@ export default {
         502,
         "miss",
         null,
-        clientId
+        clientId,
+        rl
       );
     }
 
@@ -921,7 +1098,8 @@ export default {
         502,
         discovery,
         aHeader,
-        clientId
+        clientId,
+        rl
       );
     }
 
@@ -953,7 +1131,8 @@ export default {
         500,
         discovery,
         aHeader,
-        clientId
+        clientId,
+        rl
       );
     }
     // Exposicion advisory — tag " [attestation: <verdict>]" al final de la
@@ -971,8 +1150,13 @@ export default {
       const headers202 = { "x-gw-discovery": discovery };
       if (aHeader) headers202["x-gw-attestations"] = aHeader;
       if (clientId) headers202["x-gw-client"] = clientId;
+      if (rl) {
+        headers202["x-gw-ratelimit-limit"] = String(rl.limit);
+        headers202["x-gw-ratelimit-remaining"] = String(rl.remaining);
+        headers202["x-gw-ratelimit-reset"] = String(Math.floor(rl.reset_epoch_ms / 1000));
+      }
       return new Response(null, { status: 202, headers: headers202 });
     }
-    return json(response, 200, discovery, aHeader, clientId);
+    return json(response, 200, discovery, aHeader, clientId, rl);
   },
 };

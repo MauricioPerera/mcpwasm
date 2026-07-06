@@ -23,6 +23,8 @@ import { Miniflare } from "miniflare";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { newQuickJSAsyncWASMModuleFromVariant, newVariant } from "quickjs-emscripten-core";
 import baseAsyncifyVariant from "@jitl/quickjs-wasmfile-release-asyncify";
 import { AsyncToolHost } from "./host-async.mjs";
@@ -34,15 +36,127 @@ const DEMO_ORIGIN = "https://llmstxt-demo-site.rckflr.workers.dev";
 // (igual que el demo-site). En prod el binding DOCS bypassa el error 1042.
 const DOCS_ORIGIN = "https://llmstxt-docs.rckflr.workers.dev";
 
-const mf = new Miniflare({
-  scriptPath: fileURLToPath(new URL("./dist-gateway/worker.js", import.meta.url)),
-  modules: true,
-  modulesRules: [
-    { type: "ESModule", include: ["**/*.js"] },
-    { type: "CompiledWasm", include: ["**/*.wasm"] },
-  ],
-  compatibilityDate: "2026-06-01",
-  compatibilityFlags: ["nodejs_compat"],
+// TAREA35: modo OFFLINE hermetico (`node mf-gateway.mjs --offline`). Flag argv (no
+// env: VAR=1 no es portable a Windows). En offline, TODAS las instancias Miniflare
+// que hoy salen a red reciben serviceBindings {DEMO: fake, DOCS: fake} + un
+// interceptor outboundService que bloquea cualquier fetch saliente no atado a un
+// binding. Los fakes sirven contenido byte-coherente (sha256 de los tool.js
+// servidos == declarados en /llms.txt; snapshot BM25 real + su sha256) para que
+// TODOS los checks existentes pasen sin tocar una linea de red. Sin --offline el
+// flujo online queda intacto (gwMiniflare produce opts byte-identicos a hoy).
+const OFFLINE = process.argv.includes("--offline");
+
+// Construye los fakes + interceptor leyendo el contenido REAL de demo-site/ y
+// docs-site/ (leerlos si, modificarlos no). Los sha256 se computan sobre los bytes
+// exactos servidos => coherencia byte-a-byte con lo que el gateway verifica.
+function buildOfflineFakes() {
+  const root = path.dirname(fileURLToPath(import.meta.url));
+  const read = (rel) => readFileSync(path.join(root, rel), "utf8");
+  const sha = (s) => createHash("sha256").update(s, "utf8").digest("hex");
+
+  // --- DEMO fake: 2 skills (sum_numbers, server_time) + /api/time -------------
+  const sumTool = read("demo-site/content/sum_numbers.tool.js");
+  const serverTool = read("demo-site/content/server_time.tool.js");
+  const demoLlmsTxt =
+    "# llms-txt-skills demo site\n\n" +
+    "> Demo site publishing executable skills per the llms-txt-skills standard with a provisional extension for executable skills.\n\n" +
+    "## Skills\n\n" +
+    "- [sum_numbers](/skills/sum_numbers/SKILL.md): Sum two numbers a and b. <!-- skill: " +
+      JSON.stringify({ version: "1.0.0", tool: "/skills/sum_numbers/tool.js", tool_sha256: sha(sumTool) }) + " -->\n" +
+    "- [server_time](/skills/server_time/SKILL.md): Return the current server time. <!-- skill: " +
+      JSON.stringify({ version: "1.0.0", tool: "/skills/server_time/tool.js", tool_sha256: sha(serverTool) }) + " -->\n";
+  const DEMO_EPOCH = 1788254400000; // fijo, determinista (los checks solo exigen epoch numerico)
+  const demoHandler = (request) => {
+    const u = new URL(request.url);
+    let body = "not found", status = 404, ct = "text/plain; charset=utf-8";
+    if (u.pathname === "/llms.txt") { body = demoLlmsTxt; status = 200; ct = "text/plain; charset=utf-8"; }
+    else if (u.pathname === "/skills/sum_numbers/tool.js") { body = sumTool; status = 200; ct = "application/javascript; charset=utf-8"; }
+    else if (u.pathname === "/skills/server_time/tool.js") { body = serverTool; status = 200; ct = "application/javascript; charset=utf-8"; }
+    else if (u.pathname === "/api/time") { body = JSON.stringify({ now: "2026-07-02T12:00:00.000Z", epoch: DEMO_EPOCH }); status = 200; ct = "application/json; charset=utf-8"; }
+    else if (u.pathname === "/.well-known/agent-skills/attestations.json") { body = "[]"; status = 200; ct = "application/json; charset=utf-8"; }
+    return new Response(body, { status, headers: { "content-type": ct } });
+  };
+
+  // --- DOCS fake completo: 3 skills + snapshot BM25 real + 4 docs -------------
+  const docsSkillNames = ["search_spec", "get_doc", "list_docs"];
+  const docsDesc = {
+    search_spec: "BM25 search over the llms-txt-skills spec snapshot (4 docs). Returns hits {text,score,title,concept_id}.",
+    get_doc: "Fetch one of the 4 published documents by name. Returns {name,length,content} (content truncated to 4000 chars).",
+    list_docs: "List the 4 published documents with title and path. Static, no fetch.",
+  };
+  const docsToolSrc = {}, docsToolSha = {};
+  for (const n of docsSkillNames) {
+    docsToolSrc[n] = read("docs-site/content/" + n + ".tool.js");
+    docsToolSha[n] = sha(docsToolSrc[n]);
+  }
+  const snapshot = read("docs-site/skills-index.snapshot");
+  const snapshotSha = sha(snapshot);
+  const docNames = ["rfc-skills-in-llms-txt", "ext-executable-skills", "ext-skill-attestations", "mcpwasm-readme"];
+  const docsContent = {};
+  for (const n of docNames) docsContent[n] = read("docs-site/content/docs/" + n + ".md");
+  const skillLines = docsSkillNames.map((n) =>
+    "- [" + n + "](/skills/" + n + "/SKILL.md): " + docsDesc[n] + " <!-- skill: " +
+      JSON.stringify({ version: "1.0.0", tool: "/skills/" + n + "/tool.js", tool_sha256: docsToolSha[n] }) + " -->"
+  ).join("\n");
+  const docsLlmsTxt =
+    "# llmstxt-docs\n\n" +
+    "> Publisher of the llms-txt-skills standard documents. Serves the RFC, the executable-skills and skill-attestations extensions, and the mcpwasm reference README, plus a hash-pinned BM25 search snapshot and 3 executable skills to query them.\n\n" +
+    "<!-- skills-memory: " +
+      JSON.stringify({ snapshot: "/skills-index.snapshot", snapshot_sha256: snapshotSha, format: "minimemory-okf-v1" }) + " -->\n\n" +
+    "## Skills\n\n" + skillLines + "\n";
+  const docsHandler = (request) => {
+    const u = new URL(request.url);
+    let body = "not found", status = 404, ct = "text/plain; charset=utf-8";
+    if (u.pathname === "/llms.txt") { body = docsLlmsTxt; status = 200; ct = "text/plain; charset=utf-8"; }
+    else if (u.pathname === "/skills-index.snapshot") { body = snapshot; status = 200; ct = "application/octet-stream"; }
+    else if (u.pathname.startsWith("/skills/") && u.pathname.endsWith("/tool.js")) {
+      const name = u.pathname.split("/")[2];
+      if (docsToolSrc[name]) { body = docsToolSrc[name]; status = 200; ct = "application/javascript; charset=utf-8"; }
+    } else if (u.pathname.startsWith("/docs/") && u.pathname.endsWith(".md")) {
+      const name = u.pathname.slice("/docs/".length, -3);
+      if (docsContent[name]) { body = docsContent[name]; status = 200; ct = "text/markdown; charset=utf-8"; }
+    } else if (u.pathname === "/.well-known/agent-skills/attestations.json") { body = "[]"; status = 200; ct = "application/json; charset=utf-8"; }
+    return new Response(body, { status, headers: { "content-type": ct } });
+  };
+
+  // Interceptor de red saliente: atrapa cualquier fetch del worker que NO vaya a
+  // un service binding (rama global de makeFetchImpl). Devuelve 598 (firma propia)
+  // -> el gateway lo surfacea como "llms.txt: HTTP 598" -> 500. Suite verde con
+  // esto activo == hermeticidad por maquina.
+  const interceptor = (request) =>
+    new Response("OFFLINE: outbound fetch blocked (hermetic mode): " + request.url, { status: 598 });
+
+  return { demo: demoHandler, docs: docsHandler, interceptor };
+}
+
+const offlineFakes = OFFLINE ? buildOfflineFakes() : null;
+
+// Fabrica Miniflare con la config comun del gateway. En offline inyecta los fakes
+// DEMO/DOCS (solo si el caller no pidio un DOCS propio, p.ej. T22.f/T25) y el
+// interceptor outboundService. En online produce opts byte-identicos a hoy.
+function gwMiniflare({ bindings, serviceBindings }) {
+  const opts = {
+    scriptPath: fileURLToPath(new URL("./dist-gateway/worker.js", import.meta.url)),
+    modules: true,
+    modulesRules: [
+      { type: "ESModule", include: ["**/*.js"] },
+      { type: "CompiledWasm", include: ["**/*.wasm"] },
+    ],
+    compatibilityDate: "2026-06-01",
+    compatibilityFlags: ["nodejs_compat"],
+    bindings: bindings || {},
+  };
+  if (serviceBindings) opts.serviceBindings = { ...serviceBindings };
+  if (OFFLINE) {
+    if (!opts.serviceBindings) opts.serviceBindings = {};
+    if (!opts.serviceBindings.DEMO) opts.serviceBindings.DEMO = offlineFakes.demo;
+    if (!opts.serviceBindings.DOCS) opts.serviceBindings.DOCS = offlineFakes.docs;
+    opts.outboundService = offlineFakes.interceptor;
+  }
+  return new Miniflare(opts);
+}
+
+const mf = gwMiniflare({
   bindings: {
     ALLOWED_ORIGINS: DEMO_ORIGIN + "," + DOCS_ORIGIN,
   },
@@ -285,15 +399,7 @@ try {
     }
     return new Response(body, { status, headers: { "content-type": ct } });
   };
-  const mfFake = new Miniflare({
-    scriptPath: fileURLToPath(new URL("./dist-gateway/worker.js", import.meta.url)),
-    modules: true,
-    modulesRules: [
-      { type: "ESModule", include: ["**/*.js"] },
-      { type: "CompiledWasm", include: ["**/*.wasm"] },
-    ],
-    compatibilityDate: "2026-06-01",
-    compatibilityFlags: ["nodejs_compat"],
+  const mfFake = gwMiniflare({
     bindings: { ALLOWED_ORIGINS: DOCS_ORIGIN },
     serviceBindings: { DOCS: fakeDocsHandler },
   });
@@ -701,15 +807,7 @@ try {
   // probó arriba; aquí se cubre la rama de auth sin tocar el flujo MCP.
   console.log("\n[f] auth Bearer (AUTH_TOKEN de prueba en 2da instancia):");
   const AUTH_TEST_TOKEN = "test-token-0123456789abcdef";
-  const mfAuth = new Miniflare({
-    scriptPath: fileURLToPath(new URL("./dist-gateway/worker.js", import.meta.url)),
-    modules: true,
-    modulesRules: [
-      { type: "ESModule", include: ["**/*.js"] },
-      { type: "CompiledWasm", include: ["**/*.wasm"] },
-    ],
-    compatibilityDate: "2026-06-01",
-    compatibilityFlags: ["nodejs_compat"],
+  const mfAuth = gwMiniflare({
     bindings: {
       ALLOWED_ORIGINS: DEMO_ORIGIN,
       AUTH_TOKEN: AUTH_TEST_TOKEN,
@@ -814,15 +912,7 @@ try {
   // cache tras el fetch unico). Esto hace el single-flight observable por
   // header: 1 miss + (N-1) hit = 1 solo fetch.
   console.log("\n[h] concurrencia local (5 tools/call en paralelo, isolate fresco):");
-  const mf2 = new Miniflare({
-    scriptPath: fileURLToPath(new URL("./dist-gateway/worker.js", import.meta.url)),
-    modules: true,
-    modulesRules: [
-      { type: "ESModule", include: ["**/*.js"] },
-      { type: "CompiledWasm", include: ["**/*.wasm"] },
-    ],
-    compatibilityDate: "2026-06-01",
-    compatibilityFlags: ["nodejs_compat"],
+  const mf2 = gwMiniflare({
     bindings: { ALLOWED_ORIGINS: DEMO_ORIGIN },
   });
   async function rpc2(p, payload) {
@@ -1001,15 +1091,7 @@ try {
     };
   }
   function attMf(mode, noAtt) {
-    return new Miniflare({
-      scriptPath: fileURLToPath(new URL("./dist-gateway/worker.js", import.meta.url)),
-      modules: true,
-      modulesRules: [
-        { type: "ESModule", include: ["**/*.js"] },
-        { type: "CompiledWasm", include: ["**/*.wasm"] },
-      ],
-      compatibilityDate: "2026-06-01",
-      compatibilityFlags: ["nodejs_compat"],
+    return gwMiniflare({
       bindings: { ALLOWED_ORIGINS: DOCS_ORIGIN, REVIEWERS, ATTESTATION_MODE: mode },
       serviceBindings: { DOCS: makeFakeDocs({ noAttestations: noAtt }) },
     });
@@ -1099,6 +1181,47 @@ try {
       "att.404: header X-Gw-Attestations = 0attested,0expired,0invalid,4unattested");
   } finally {
     await mfAtt404.dispose();
+  }
+
+  // --- (T35) HERMETICIDAD offline: el interceptor NO es decorativo -------------
+  // Misma gateway worker, ALLOWED_ORIGINS=DEMO (pasa el check 403), interceptor
+  // activo, PERO sin binding DEMO -> makeFetchImpl cae al fetch global -> el
+  // interceptor lo bloquea (status 598, firma propia) -> discovery falla -> 500
+  // con error que cita "HTTP 598". Demuestra que el interceptor atrapa la ruta de
+  // red real del gateway (no es decorativo). Solo corre en --offline.
+  if (OFFLINE) {
+    console.log("\n[T35] hermeticidad offline (interceptor bloquea fetch saliente):");
+    const mfHerm = new Miniflare({
+      scriptPath: fileURLToPath(new URL("./dist-gateway/worker.js", import.meta.url)),
+      modules: true,
+      modulesRules: [
+        { type: "ESModule", include: ["**/*.js"] },
+        { type: "CompiledWasm", include: ["**/*.wasm"] },
+      ],
+      compatibilityDate: "2026-06-01",
+      compatibilityFlags: ["nodejs_compat"],
+      bindings: { ALLOWED_ORIGINS: DEMO_ORIGIN },
+      outboundService: offlineFakes.interceptor,
+      // SIN serviceBindings: el fetch al demo cae al fetch global -> interceptor.
+    });
+    async function rpcHerm(p, payload) {
+      const res = await mfHerm.dispatchFetch("http://localhost" + p, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
+      });
+      let body = null; try { body = await res.json(); } catch { body = await res.text(); }
+      return { status: res.status, body };
+    }
+    try {
+      const herm = await rpcHerm("/mcp?origin=" + encodeURIComponent(DEMO_ORIGIN),
+        { jsonrpc: "2.0", id: 1, method: "initialize" });
+      console.log("[T35] initialize sin binding + interceptor ->", JSON.stringify(herm.body).slice(0, 200));
+      check(herm.status === 502,
+        "T35: sin binding + interceptor -> HTTP 502 (discovery fallo: el fetch saliente fue bloqueado, no servido por red real)");
+      check(herm.body && herm.body.error && /598/.test(herm.body.error.message),
+        "T35: el error cita HTTP 598 (firma del interceptor: hermeticidad por maquina, no decorativo)");
+    } finally {
+      await mfHerm.dispose();
+    }
   }
 
   console.log("\n" + (failures === 0 ? "TODOS LOS CHECKS VERDE" : failures + " CHECK(S) ROJO(S)"));

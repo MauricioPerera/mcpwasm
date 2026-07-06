@@ -9,7 +9,8 @@
     "spike": "node build-spike.mjs && node mf-spike.mjs",
     "gateway": "node build-gateway.mjs && node mf-gateway.mjs",
     "gateway:offline": "node build-gateway.mjs && node mf-gateway.mjs --offline",
-    "memspike": "node build-memsnapshot.mjs && node build-memspike.mjs && node mf-memspike.mjs"
+    "memspike": "node build-memsnapshot.mjs && node build-memspike.mjs && node mf-memspike.mjs",
+    "validate-publisher": "node scripts/validate-publisher.mjs"
   },
   "devDependencies": {
     "@jitl/quickjs-wasmfile-release-asyncify": "^0.32.0",

@@ -253,6 +253,9 @@ The private key lives in `.attester-key.json` and is **local and gitignored** â€
 never commit it, and it is never printed by the tool. No key material belongs
 in this repo or in `REVIEWERS` (only public keys).
 
+Third-party publishers (sites you do not control): see [`ONBOARDING.md`](./ONBOARDING.md)
+for the eligibility, review, attestation, activation, and revocation process.
+
 ## Quick start
 
 Requirements: Node 18+ and `npm install` (already done in this checkout).

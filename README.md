@@ -1,5 +1,7 @@
 # mcpwasm — Static MCP
 
+[![CI](https://github.com/MauricioPerera/mcpwasm/actions/workflows/ci.yml/badge.svg)](https://github.com/MauricioPerera/mcpwasm/actions/workflows/ci.yml)
+
 **Static MCP: your tools are files, not servers.** Tools are published as
 static, hash-verified content and executed sandboxed on demand. What static
 site hosting did to web servers — "don't run Apache, publish HTML" — this does
@@ -425,6 +427,18 @@ What it does **not** guarantee:
 | `bookstore/` | Realistic publisher: D1-backed catalog (52 books), read skills + `create_order` write skill, plus permanent robustness fixtures (`corrupt_skill` hash-mismatch, `busy_loop` infinite loop). Deployed at `llmstxt-bookstore.rckflr.workers.dev`. |
 | `docs-site/` | Docs publisher: serves the llms-txt-skills spec documents + a `skills-index.snapshot` (BM25, `minimemory-okf-v1`), with `search_spec` (BM25 via `host.memorySearch`), `get_doc`, and `list_docs` skills. Deployed at `llmstxt-docs.rckflr.workers.dev`. |
 | `TAREA*-REPORT.md` (one per milestone) | Development reports (see below). |
+| `.github/workflows/ci.yml` | GitHub Actions CI: runs the four suites (test/spike/gateway/memspike) on push and pull_request to `main`. |
+
+## CI
+
+The workflow in `.github/workflows/ci.yml` runs the four suites — `npm test`,
+`npm run spike`, `npm run gateway`, `npm run memspike` — each preceded by its
+own build, on every push and pull_request to `main`. It runs on
+`ubuntu-latest` with Node 22 and `npm ci` (with cache), and times out after
+15 minutes. The `gateway` and `memspike` suites reach the deployed
+production workers (`*.rckflr.workers.dev`) over the public internet, so CI
+depends on those workers being up: an outage on their side surfaces as a
+red run here, not a regression in this repo.
 
 ## Development notes
 

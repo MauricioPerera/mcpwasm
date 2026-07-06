@@ -23,7 +23,8 @@ import { Miniflare } from "miniflare";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { newQuickJSAsyncWASMModuleFromVariant, newVariant } from "quickjs-emscripten-core";
 import baseAsyncifyVariant from "@jitl/quickjs-wasmfile-release-asyncify";
@@ -136,7 +137,11 @@ const offlineFakes = OFFLINE ? buildOfflineFakes() : null;
 // interceptor outboundService. En online produce opts byte-identicos a hoy.
 // T38: durableObjects opcional (p.ej. {RATE_LIMITER:"RateLimiter"}) -> solo lo
 // piden las instancias de T38; sin el, opts byte-identicos a hoy (default intacto).
-function gwMiniflare({ bindings, serviceBindings, durableObjects }) {
+// T40: cachePersist opcional (path a directorio temporal) -> solo lo piden las
+// instancias de T40 para simular cross-isolate (caches.default respaldado en
+// disco por Miniflare via un Durable Object CacheObject con storage localDisk).
+// Sin el, caches.default es volatile por instancia (byte-identico a hoy).
+function gwMiniflare({ bindings, serviceBindings, durableObjects, cachePersist }) {
   const opts = {
     scriptPath: fileURLToPath(new URL("./dist-gateway/worker.js", import.meta.url)),
     modules: true,
@@ -150,6 +155,7 @@ function gwMiniflare({ bindings, serviceBindings, durableObjects }) {
   };
   if (serviceBindings) opts.serviceBindings = { ...serviceBindings };
   if (durableObjects) opts.durableObjects = { ...durableObjects };
+  if (cachePersist) opts.cachePersist = cachePersist;
   if (OFFLINE) {
     if (!opts.serviceBindings) opts.serviceBindings = {};
     if (!opts.serviceBindings.DEMO) opts.serviceBindings.DEMO = offlineFakes.demo;
@@ -1167,6 +1173,131 @@ try {
       await mfLeg.dispose();
     }
   }
+
+  // --- (T40) CACHE L2 del RESULTADO de descubrimiento (cross-isolate) -----------
+  // El gateway ahora cachea el RESULTADO post-verificacion (skills+rejected+
+  // snapshotText+verdicts) en caches.default, key `gw:disc:<origin>:<fingerprint>`
+  // (fingerprint = sha256 de {mode, reviewers, date UTC}), TTL 60s. Un NUEVO
+  // isolate con mismo deploy+config+dia hidrata la capa 1 desde el L2 y responde
+  // X-Gw-Discovery: "l2" sin fetchar al origin ni re-verificar. Se simula
+  // cross-isolate con cachePersist apuntando dos+ instancias Miniflare NUEVAS al
+  // MISMO directorio temporal (caches.default respaldado en disco por Miniflare).
+  // Hermetico: fake DEMO con CONTADOR de requests (siempre fakes, sin red). Verifica:
+  //   (a) instancia A: 1er request -> miss; 2do -> hit (capa 1).
+  //   (b) instancia B NUEVA (mismo cachePersist, misma config): 1er request al
+  //       MISMO origin -> l2, Y el fake NO recibio ningun fetch nuevo (contador
+  //       quieto entre A y B).
+  //   (c) tools/call en B tras hidratar por l2 -> resultado correcto (42).
+  //   (d) instancia C (mismo cachePersist, ATTESTATION_MODE distinto) -> miss
+  //       (fingerprint invalida; el contador del fake SI incrementa).
+  console.log("\n[T40] cache L2 del resultado (cross-isolate via cachePersist):");
+  const t40CacheDir = mkdtempSync(path.join(tmpdir(), "mf-t40-disc-"));
+  let t40FetchCount = 0;
+  // Fake DEMO con contador: envuelve el handler offline (contenido byte-coherente,
+  // sha256 de los tool.js servidos == declarados en /llms.txt). Cuenta CADA request
+  // que llega al origin (llms.txt, tool.js, attestations.json).
+  const t40DemoFakes = buildOfflineFakes();
+  const t40DemoHandler = (request) => {
+    t40FetchCount++;
+    return t40DemoFakes.demo(request);
+  };
+  function t40Mf(mode) {
+    // Misma config base; mode varía entre instancias para invalidar el fingerprint.
+    const bindings = { ALLOWED_ORIGINS: DEMO_ORIGIN };
+    if (mode) bindings.ATTESTATION_MODE = mode;
+    return gwMiniflare({
+      bindings,
+      serviceBindings: { DEMO: t40DemoHandler },
+      cachePersist: t40CacheDir,
+    });
+  }
+  async function rpcT40(mfX, p, payload) {
+    const res = await mfX.dispatchFetch("http://localhost" + p, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
+    });
+    let body = null; try { body = await res.json(); } catch { body = await res.text(); }
+    return { status: res.status, body, headers: Object.fromEntries(res.headers) };
+  }
+  const t40Base = "/mcp?origin=" + encodeURIComponent(DEMO_ORIGIN);
+
+  // (a) Instancia A (cachePersist=dirX): 1er request -> miss, 2do -> hit (capa 1).
+  const mfA = t40Mf(); // config default: ATTESTATION_MODE off, sin REVIEWERS
+  try {
+    const aInit = await rpcT40(mfA, t40Base, { jsonrpc: "2.0", id: 1, method: "initialize" });
+    console.log("[T40.a] A 1er initialize -> discovery=" + aInit.headers["x-gw-discovery"] +
+      " status=" + aInit.status + " fetchCount=" + t40FetchCount);
+    check(aInit.status === 200, "T40.a: A 1er request HTTP 200");
+    check(aInit.headers["x-gw-discovery"] === "miss", "T40.a: A 1er request X-Gw-Discovery=miss (L2 vacio, descubrimiento real)");
+    const aList = await rpcT40(mfA, t40Base, { jsonrpc: "2.0", id: 2, method: "tools/list" });
+    console.log("[T40.a] A 2do tools/list -> discovery=" + aList.headers["x-gw-discovery"]);
+    check(aList.headers["x-gw-discovery"] === "hit", "T40.a: A 2do request X-Gw-Discovery=hit (capa 1, sin fetch)");
+    check(t40FetchCount > 0, "T40.a: A fetcheo el origin (fetchCount=" + t40FetchCount + " > 0)");
+  } finally {
+    await mfA.dispose();
+  }
+
+  // (b) Instancia B NUEVA (mismo cachePersist=dirX, misma config default).
+  // Isolate frio => cache capa 1 vacio => consulta L2 => HIT (escrito por A,
+  // compartido via cachePersist) => hidrata capa 1 y responde "l2" SIN fetch.
+  const mfB = t40Mf(); // misma config default => mismo fingerprint => mismo L2 key
+  try {
+    const countBeforeB = t40FetchCount;
+    const bInit = await rpcT40(mfB, t40Base, { jsonrpc: "2.0", id: 1, method: "initialize" });
+    const countAfterB = t40FetchCount;
+    console.log("[T40.b] B 1er initialize -> discovery=" + bInit.headers["x-gw-discovery"] +
+      " status=" + bInit.status + " fetchCount " + countBeforeB + "->" + countAfterB);
+    check(bInit.status === 200, "T40.b: B 1er request HTTP 200");
+    check(bInit.headers["x-gw-discovery"] === "l2",
+      "T40.b: B 1er request X-Gw-Discovery=l2 (L2 hit cross-isolate, hidrata capa 1)");
+    check(countAfterB === countBeforeB,
+      "T40.b: B NO fetcheo el origin (contador quieto: " + countBeforeB + "->" + countAfterB + ", L2 short-circuit)");
+
+    // (c) tools/call en B tras hidratar por l2 -> la skill ejecuta bien desde el
+    // resultado hidratado (sum_numbers devuelve 42).
+    const bSum = await rpcT40(mfB, t40Base, {
+      jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "sum_numbers", arguments: { a: 2, b: 40 } },
+    });
+    const bSumSc = bSum.body && bSum.body.result && bSum.body.result.structuredContent;
+    console.log("[T40.c] B tools/call sum_numbers ->", JSON.stringify(bSum.body).slice(0, 160),
+      "discovery=" + bSum.headers["x-gw-discovery"]);
+    check(bSum.status === 200, "T40.c: B tools/call sum_numbers HTTP 200 (ejecuta desde resultado hidratado)");
+    check(bSumSc && bSumSc.result === 42, "T40.c: B sum_numbers structuredContent.result === 42");
+    check(bSum.headers["x-gw-discovery"] === "hit",
+      "T40.c: B 2do request X-Gw-Discovery=hit (capa 1 hidratada por el L2)");
+  } finally {
+    await mfB.dispose();
+  }
+
+  // (d) Instancia C NUEVA (mismo cachePersist, ATTESTATION_MODE distinto).
+  // Fingerprint distinto => key L2 distinta => miss => descubrimiento completo
+  // (el contador del fake SI incrementa). Modo advisory => ademas fetchea
+  // attestations.json (el default off de A/B no lo hacia).
+  const mfC = t40Mf("advisory"); // fingerprint distinto => L2 miss
+  try {
+    const countBeforeC = t40FetchCount;
+    const cInit = await rpcT40(mfC, t40Base, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const countAfterC = t40FetchCount;
+    const cTools = cInit.body && cInit.body.result && cInit.body.result.tools;
+    console.log("[T40.d] C 1er tools/list -> discovery=" + cInit.headers["x-gw-discovery"] +
+      " status=" + cInit.status + " fetchCount " + countBeforeC + "->" + countAfterC +
+      " attest=" + cInit.headers["x-gw-attestations"]);
+    check(cInit.status === 200, "T40.d: C 1er request HTTP 200");
+    check(cInit.headers["x-gw-discovery"] === "miss",
+      "T40.d: C 1er request X-Gw-Discovery=miss (fingerprint invalida el L2)");
+    check(countAfterC > countBeforeC,
+      "T40.d: C SI fetcheo el origin (contador " + countBeforeC + "->" + countAfterC + ", fingerprint distinto => descubrimiento real)");
+    check(Array.isArray(cTools) && cTools.length === 2,
+      "T40.d: C descubre 2 skills desde el origin (sum_numbers, server_time)");
+    // modo advisory => header X-Gw-Attestations presente (fake sirve "[]" => todo unattested)
+    check(!!cInit.headers["x-gw-attestations"],
+      "T40.d: C en advisory lleva X-Gw-Attestations (veredictos computados en el miss real)");
+  } finally {
+    await mfC.dispose();
+  }
+
+  // Limpieza del dir temporal de cache (SQLite del CacheObject).
+  try { rmSync(t40CacheDir, { recursive: true, force: true }); } catch { /* best-effort */ }
 
   hostA.dispose();
   hostB.dispose();

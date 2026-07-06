@@ -1,8 +1,11 @@
 // worker-gateway.mjs — Gateway llms.txt -> MCP (Streamable HTTP, JSON-RPC 2.0 por POST).
 // Descubre skills de un origin (?origin=<url-encoded>), carga CADA una en su propio
 // contexto QuickJS (aislamiento tool<->tool, hardening 64MB/1MB/2s) y expone MCP.
-// Cache de descubrimiento isolate (capa 1, TTL 60s) + caches.default (capa 2); los
-// contextos NO se cachean (por request); lo cacheado es texto inmutable por hash.
+// Cache de descubrimiento isolate (capa 1, TTL 60s) + caches.default (capa 2):
+// (a) insumos crudos (llms.txt TTL 60s, tool.js inmutable por hash) y (b) desde
+// T40, el RESULTADO post-verificacion (skills+rejected+snapshotText+verdicts) key
+// `gw:disc:<origin>:<fingerprint>` (TTL 60s, cross-isolate). Los contextos NO se
+// cachean (por request); lo cacheado es texto inmutable por hash.
 
 import "./shim.mjs"; // primero: location/self para el loader del wasm
 import { newQuickJSAsyncWASMModuleFromVariant, newVariant } from "quickjs-emscripten-core";
@@ -152,6 +155,15 @@ function isolateCachePut(origin, skills, rejected, snapshotText, verdicts) {
 const LLMS_TTL_MS = 60_000;
 const FETCH_TIMEOUT_MS = 5000;
 
+// T40: cache L2 del RESULTADO de descubrimiento (no solo insumos), cross-isolate
+// via caches.default. Key `gw:disc:${origin}:${fingerprint}` donde fingerprint =
+// sha256 hex de JSON.stringify({mode, reviewers, date UTC}). Mismo TTL que la
+// capa 1 (60s): el L2 hidrata el isolate y responde "l2" sin tocar el origin ni
+// re-verificar (sin sha256 de tool.js, sin Ed25519). Cambio de ATTESTATION_MODE,
+// REVIEWERS o dia UTC => fingerprint distinto => key distinta (cero veredictos
+// stale; critico en enforcing).
+const DISC_L2_TTL_MS = 60_000;
+
 async function cacheGet(key) {
   try {
     const c = caches.default;
@@ -267,6 +279,22 @@ function todayUtcStr() {
   const m = String(d.getUTCMonth() + 1).padStart(2, "0");
   const day = String(d.getUTCDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
+}
+
+// T40: fingerprint de config del descubrimiento = sha256 hex de
+// JSON.stringify({mode: ATTESTATION_MODE||"off", reviewers: REVIEWERS||"",
+// date: <UTC YYYY-MM-DD>}). Key del L2 (orden de claves estable: mode, reviewers,
+// date). Un cambio de modo, de revisores o de dia UTC => fingerprint distinto =>
+// key distinta (cero veredictos stale dentro del TTL). rawMode/rawReviewers son
+// los strings crudos de env (no el modo normalizado ni el objeto parseado): asi
+// un config "basura" mapea a su propia key en vez de colisionar con "off".
+async function discFingerprint(attestCtx) {
+  const fpInput = JSON.stringify({
+    mode: (attestCtx && attestCtx.rawMode) || "off",
+    reviewers: (attestCtx && attestCtx.rawReviewers) || "",
+    date: todayUtcStr(),
+  });
+  return sha256Hex(fpInput);
 }
 
 function b64ToBytes(s) {
@@ -385,6 +413,67 @@ function attestHeaderStr(counts) {
   );
 }
 
+// T40: serializacion del RESULTADO de descubrimiento para el L2 (cross-isolate).
+// TODO lo guardado es JSON-round-trippable: skills = [{name, description, code,
+// sha256}] (inputSchema es undefined en runtime y JSON lo descarta; se reconstruye
+// como undefined al hidratar — el schema se extrae del contexto QuickJS por
+// request, no se cachea), rejected = [{name, reason}], snapshotText = string|null,
+// verdicts = {verdicts,counts}|null. Marcador {kind:"gw-disc", v:1} para parse
+// defensivo. code (tool.js) ya esta verificado por sha256 al poblar => el L2
+// cachea contenido post-verificacion; no se re-verifica al hidratar (igual que la
+// capa 1, que tampoco re-verifica en hit).
+function serializeDiscL2(skills, rejected, snapshotText, verdicts) {
+  return JSON.stringify({
+    kind: "gw-disc",
+    v: 1,
+    skills,
+    rejected,
+    snapshotText: snapshotText || null,
+    verdicts: verdicts || null,
+  });
+}
+
+// T40: parse DEFENSIVO del L2. Entrada malformada, shape inesperada o error =>
+// null (el caller la trata como miss y sigue con descubrimiento completo). El L2
+// nunca puede tumbar un request: cualquier duda => miss. Valida kind/v, que
+// skills sea array con {name string, code string, sha256 string}, rejected array,
+// y verdicts null o {verdicts, counts}. Reconstruye skills con inputSchema
+// undefined (dropped por JSON).
+function parseDiscL2(raw) {
+  try {
+    const o = JSON.parse(raw);
+    if (!o || typeof o !== "object" || o.kind !== "gw-disc" || o.v !== 1) return null;
+    if (!Array.isArray(o.skills)) return null;
+    const skills = [];
+    for (const s of o.skills) {
+      if (!s || typeof s !== "object") return null;
+      if (typeof s.name !== "string" || typeof s.code !== "string" || typeof s.sha256 !== "string") return null;
+      skills.push({
+        name: s.name,
+        description: typeof s.description === "string" ? s.description : "",
+        inputSchema: undefined, // se extrae del contexto QuickJS en runtime
+        code: s.code,
+        sha256: s.sha256,
+      });
+    }
+    if (!Array.isArray(o.rejected)) return null;
+    const rejected = o.rejected.filter(
+      (r) => r && typeof r === "object" && typeof r.name === "string" && typeof r.reason === "string"
+    );
+    let verdicts = null;
+    if (o.verdicts !== null && o.verdicts !== undefined) {
+      if (!o.verdicts || typeof o.verdicts !== "object") return null;
+      if (!o.verdicts.verdicts || typeof o.verdicts.verdicts !== "object") return null;
+      if (!o.verdicts.counts || typeof o.verdicts.counts !== "object") return null;
+      verdicts = { verdicts: o.verdicts.verdicts, counts: o.verdicts.counts };
+    }
+    const snapshotText = typeof o.snapshotText === "string" ? o.snapshotText : null;
+    return { skills, rejected, snapshotText, verdicts };
+  } catch {
+    return null;
+  }
+}
+
 // Descubre y verifica las skills de un origin. Devuelve
 // { skills, rejected, discovery, snapshotText, verdicts, counts }:
 //  - skills: `code` (tool.js) verificado por sha256 e inmutable por hash (inputSchema
@@ -393,7 +482,8 @@ function attestHeaderStr(counts) {
 //    verify fallo). Indice WasmOkfIndex por request desde este texto.
 //  - verdicts/counts: {verdicts,counts} o null en modo off (computados al poblar;
 //    revisores estable por deploy, fecha UTC estable por dia dentro del TTL 60s).
-//  - discovery: "hit" (capa 1) | "miss" (este request hizo el fetch real).
+//  - discovery: "hit" (capa 1) | "l2" (capa 2 del resultado, cross-isolate) |
+//    "miss" (este request hizo el fetch real).
 async function discoverSkills(origin, fetchImpl, attestCtx) {
   const cached = isolateCacheGet(origin);
   if (cached) {
@@ -438,10 +528,33 @@ async function discoverSkills(origin, fetchImpl, attestCtx) {
 }
 
 // Cuerpo del descubrimiento (fetch llms.txt + tool.js + verify sha256). Puebla el
-// cache de isolate (capa 1). Devuelve { skills, rejected, discovery:"miss", snapshotText, verdicts, counts }.
+// cache de isolate (capa 1). Devuelve { skills, rejected, discovery:"miss"|"l2", snapshotText, verdicts, counts }.
 async function discoverSkillsInner(origin, fetchImpl, attestCtx) {
   const rejected = [];
   const skills = [];
+
+  // T40: cache L2 del RESULTADO (cross-isolate via caches.default). Se consulta
+  // SOLO en el iniciador del single-flight (los waiters no llegan aqui): un solo
+  // L2 read por discovery en isolate frio. Key = gw:disc:<origin>:<fingerprint>.
+  // Hit -> parse defensivo, hidratar la capa 1 y responder "l2" SIN fetch al
+  // origin ni re-verificacion criptografica (sha256/Ed25519). Miss o entrada
+  // malformada -> cae al descubrimiento completo (el L2 nunca tumbla un request).
+  const l2Key = "gw:disc:" + origin + ":" + await discFingerprint(attestCtx);
+  const l2Raw = await cacheGet(l2Key);
+  if (l2Raw !== null) {
+    const hydrated = parseDiscL2(l2Raw);
+    if (hydrated) {
+      isolateCachePut(origin, hydrated.skills, hydrated.rejected, hydrated.snapshotText, hydrated.verdicts);
+      return {
+        skills: hydrated.skills,
+        rejected: hydrated.rejected,
+        discovery: "l2",
+        snapshotText: hydrated.snapshotText,
+        verdicts: hydrated.verdicts,
+      };
+    }
+    // malformada -> tratar como miss (caer al descubrimiento completo abajo)
+  }
 
   const llmsKey = "gw:llms:" + origin;
   let llmsText = null;
@@ -586,6 +699,13 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx) {
   // Poblar capa 1 aunque algunas skills se hayan rechazado: las rechazadas no se
   // re-intentan en cada request caliente; el TTL refresca.
   isolateCachePut(origin, skills, rejected, snapshotText, verdicts);
+
+  // T40: escribir el RESULTADO post-verificacion en el L2 (cross-isolate). Un
+  // nuevo isolate (mismo deploy, misma config, mismo dia) hidrata la capa 1 desde
+  // aqui y responde "l2" sin fetchar ni re-verificar. TTL 60s (mismo que capa 1).
+  // El L2 nunca puede tumbar un request: cachePut ya traga errores (bypass).
+  await cachePut(l2Key, serializeDiscL2(skills, rejected, snapshotText, verdicts), DISC_L2_TTL_MS);
+
   return { skills, rejected, discovery: "miss", snapshotText, verdicts };
 }
 
@@ -659,8 +779,10 @@ class PerSkillHost {
 
 function json(obj, status = 200, discovery, attest, client, rl) {
   const headers = { "content-type": "application/json", "access-control-allow-origin": "*" };
-  // X-Gw-Discovery: "miss"|"hit"|"none" (antes de descubrimiento). Observabilidad,
-  // no filtra nada sensible (estado del cache del isolate para este origin).
+  // X-Gw-Discovery: "miss"|"hit"|"l2"|"none" (antes de descubrimiento). hit=capa
+  // 1 (isolate), l2=capa 2 del resultado (cross-isolate via caches.default), miss
+  // = fetch real, none = pre-descubrimiento. Observabilidad, no filtra nada
+  // sensible (estado del cache del isolate para este origin).
   if (discovery) headers["x-gw-discovery"] = discovery;
   // X-Gw-Attestations: conteos por veredicto, solo en modo != off.
   if (attest) headers["x-gw-attestations"] = attest;
@@ -1044,10 +1166,19 @@ export default {
     // fetch inyectado (binding para same-account, fetch global para el resto).
     const fetchImpl = makeFetchImpl(env);
 
-    // Modo de atestacion + registro de revisores (config del runtime).
+    // Modo de atestacion + registro de revisores (config del runtime). rawMode/
+    // rawReviewers son los strings crudos de env para el fingerprint del L2 (T40):
+    // un cambio de ATTESTATION_MODE o REVIEWERS => fingerprint distinto => key L2
+    // distinta (cero veredictos stale). El modo normalizado y el objeto parseado
+    // (mode, reviewers) se usan para la logica de atestacion como antes.
     const mode = attestationMode(env);
     const reviewers = parseReviewers(env);
-    const attestCtx = { mode, reviewers };
+    const attestCtx = {
+      mode,
+      reviewers,
+      rawMode: (env && env.ATTESTATION_MODE) || "off",
+      rawReviewers: (env && env.REVIEWERS) || "",
+    };
 
     let skills;
     let snapshotText = null;

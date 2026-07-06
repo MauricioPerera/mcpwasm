@@ -8,14 +8,14 @@ account_id = "091122c40cc6f8d0d421cbc90e2caca8"
 
 # Allowlist de origins permitidos (coma-separada). Inicial: el demo site.
 [vars]
-ALLOWED_ORIGINS = "https://llmstxt-demo-site.rckflr.workers.dev,https://llmstxt-bookstore.rckflr.workers.dev,https://llmstxt-docs.rckflr.workers.dev"
+ALLOWED_ORIGINS = "https://llmstxt-demo-site.rckflr.workers.dev,https://llmstxt-bookstore.rckflr.workers.dev,https://llmstxt-docs.rckflr.workers.dev,https://mauricioperera.github.io"
 
 # TAREA25: atestaciones (ext-skill-attestations v0.2). Registro de revisores
 # (trust anchor, config del runtime): {attester: {public_key base64 raw 32
 # bytes, registered_at}}. La publica firma las atestaciones que publica cada
 # origin en /.well-known/agent-skills/attestations.json. Literal string TOML
 # (comillas simples) para no escapar el JSON.
-REVIEWERS = '{"human:mauricio":{"public_key":"YghuJivYSVI458jIjwXEKDLmQaG6X4Itn1VzBXa/ikw=","registered_at":"2026-07-02"}}'
+REVIEWERS = '{"human:mauricio":{"public_key":"YghuJivYSVI458jIjwXEKDLmQaG6X4Itn1VzBXa/ikw=","registered_at":"2026-07-02"},"human:mauricio-2":{"public_key":"y2997bXW70CNI5keR2UfNhNJYuXc1VCw1sQ9LDazrGo=","registered_at":"2026-07-06"}}'
 
 # Modo de atestacion: "advisory" (expone veredicto, no excluye), "enforcing"
 # (excluye las no-attested como un hash mismatch), "off" (comportamiento previo).

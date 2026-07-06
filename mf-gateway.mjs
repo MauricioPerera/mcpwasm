@@ -141,7 +141,7 @@ const offlineFakes = OFFLINE ? buildOfflineFakes() : null;
 // instancias de T40 para simular cross-isolate (caches.default respaldado en
 // disco por Miniflare via un Durable Object CacheObject con storage localDisk).
 // Sin el, caches.default es volatile por instancia (byte-identico a hoy).
-function gwMiniflare({ bindings, serviceBindings, durableObjects, cachePersist }) {
+function gwMiniflare({ bindings, serviceBindings, durableObjects, cachePersist, stdio }) {
   const opts = {
     scriptPath: fileURLToPath(new URL("./dist-gateway/worker.js", import.meta.url)),
     modules: true,
@@ -156,6 +156,9 @@ function gwMiniflare({ bindings, serviceBindings, durableObjects, cachePersist }
   if (serviceBindings) opts.serviceBindings = { ...serviceBindings };
   if (durableObjects) opts.durableObjects = { ...durableObjects };
   if (cachePersist) opts.cachePersist = cachePersist;
+  // T42: captura opcional del stdio del worker (console.warn del gateway con las
+  // razones de rechazo por tamano). (stdout, stderr) Readables -> callback.
+  if (stdio) opts.handleRuntimeStdio = stdio;
   if (OFFLINE) {
     if (!opts.serviceBindings) opts.serviceBindings = {};
     if (!opts.serviceBindings.DEMO) opts.serviceBindings.DEMO = offlineFakes.demo;
@@ -1629,6 +1632,361 @@ try {
     } finally {
       await mfHerm.dispose();
     }
+  }
+
+  // --- (T42) CAPS DE TAMANO EN FETCHES DE DESCUBRIMIENTO ----------------------
+  // Todos los fetches de discovery (llms.txt, tool.js, attestations.json, snapshot)
+  // tienen un cap de tamano configurable por env (defaults que no afectan a los 3
+  // origins reales). Enforcement en dos niveles: (a) Content-Length precheck
+  // (rechaza sin leer si el header declara mas del cap) y (b) streaming defensivo
+  // (acumula hasta cap; si excede, cancela y rechaza — nunca confia solo en CL,
+  // que puede faltar o mentir). Semantica de rechazo por tipo (sin tumbar nada mas):
+  //   - llms.txt excedido  -> discovery falla (mismo error controlado que fetch fallido).
+  //   - tool.js excedido   -> ESA skill a rejected con razon de tamano (patron hash
+  //                          mismatch); las demas cargan.
+  //   - attestations exc.  -> null (ausente) -> unattested -> excluidas en enforcing
+  //                          (fail-safe; advisory las lista como unattested).
+  //   - snapshot excedido  -> memorySearch no se inyecta (patron sha mismatch).
+  // Hermetico: caps CHICOS via env (p.ej. MAX_TOOL_BYTES=1000) para no generar MB.
+  // El origin reutiliza DOCS_ORIGIN (en la allowlist) con un service binding DOCS
+  // propio por caso. Las razones de rechazo se capturan via handleRuntimeStdio.
+  console.log("\n[T42] caps de tamano en fetches de descubrimiento:");
+  const sha = (s) => createHash("sha256").update(s, "utf8").digest("hex");
+
+  // tool.js valido de EXACTAMENTE n bytes (head + comentario de relleno). Registra
+  // una tool que devuelve {ok:n} (para probar ejecucion). El sha se computa sobre
+  // los bytes exactos servidos => coherente con lo que el gateway verifica.
+  function makeToolJs(name, n) {
+    const head = "registerTool({ name: " + JSON.stringify(name) + ", description: \"t\", inputSchema: { type: \"object\" }, handler: function () { return { ok: " + n + " }; } });";
+    if (head.length + 4 > n) throw new Error("makeToolJs: n demasiado chico para " + name);
+    const fill = n - head.length - 4; // "/*" + fill + "*/" == 4+fill
+    return head + "/*" + "x".repeat(fill) + "*/";
+  }
+  // tool.js que LLAMA a host.memorySearch (para observar la no-inyeccion cuando el
+  // snapshot excede el cap). Si memorySearch es undefined -> throw -> isError:true.
+  function makeMemProbeJs(n) {
+    const head = "registerTool({ name: \"mem_probe\", description: \"m\", inputSchema: { type: \"object\", properties: { q: { type: \"string\" } }, required: [\"q\"] }, handler: async function (a) { return await host.memorySearch(a.q, 5); } });";
+    if (head.length + 4 > n) throw new Error("makeMemProbeJs: n demasiado chico");
+    const fill = n - head.length - 4;
+    return head + "/*" + "x".repeat(fill) + "*/";
+  }
+
+  // Fabrica un fake DOCS para T42. skills: [{name, bytes, src?}]; memory:
+  // {snapshotBytes} | null; attestations: string | null. tool.js por skill se sirve
+  // como string (workerd no setea Content-Length => streaming) salvo streamSkill
+  // (nombre): se sirve como ReadableStream (chunked, sin CL); clHugeSkill (nombre):
+  // body chico + header content-length enorme (para probar el precheck).
+  function makeT42Fake({ skills, memory, attestations, streamSkill, clHugeSkill }) {
+    const toolSrc = {}, toolSha = {};
+    for (const s of skills) {
+      const src = s.src || makeToolJs(s.name, s.bytes);
+      toolSrc[s.name] = src;
+      toolSha[s.name] = sha(src);
+    }
+    let snapBytes = 0, snapSha = "";
+    if (memory) {
+      snapBytes = memory.snapshotBytes;
+      const snap = "x".repeat(snapBytes);
+      snapSha = sha(snap);
+    }
+    let llms = "# t42\n\n> t42 origin\n\n";
+    if (memory) {
+      llms += '<!-- skills-memory: ' +
+        JSON.stringify({ snapshot: "/skills-index.snapshot", snapshot_sha256: snapSha, format: "minimemory-okf-v1" }) +
+        ' -->\n\n';
+    }
+    llms += "## Skills\n\n";
+    for (const s of skills) {
+      llms += "- [" + s.name + "](/skills/" + s.name + "/SKILL.md): " + s.name + " <!-- skill: " +
+        JSON.stringify({ version: "1.0.0", tool: "/skills/" + s.name + "/tool.js", tool_sha256: toolSha[s.name] }) + " -->\n";
+    }
+    return (request) => {
+      const u = new URL(request.url);
+      let body = "not found", status = 404, ct = "text/plain; charset=utf-8";
+      if (u.pathname === "/llms.txt") { body = llms; status = 200; ct = "text/plain; charset=utf-8"; }
+      else if (u.pathname.startsWith("/skills/") && u.pathname.endsWith("/tool.js")) {
+        const name = u.pathname.split("/")[2];
+        if (toolSrc[name]) {
+          status = 200; ct = "application/javascript; charset=utf-8";
+          if (streamSkill && name === streamSkill) {
+            // ReadableStream (chunked, sin Content-Length): el precheck no dispara.
+            const src = toolSrc[name];
+            body = new ReadableStream({
+              start(c) { c.enqueue(new TextEncoder().encode(src)); c.close(); }
+            });
+          } else if (clHugeSkill && name === clHugeSkill) {
+            // body chico + content-length enorme: el precheck rechaza sin leer.
+            return new Response(toolSrc[name], { status, headers: { "content-type": ct, "content-length": "999999999" } });
+          } else {
+            body = toolSrc[name];
+          }
+        }
+      } else if (memory && u.pathname === "/skills-index.snapshot") {
+        body = "x".repeat(snapBytes); status = 200; ct = "application/octet-stream";
+      } else if (attestations != null && u.pathname === "/.well-known/agent-skills/attestations.json") {
+        body = attestations; status = 200; ct = "application/json; charset=utf-8";
+      }
+      return new Response(body, { status, headers: { "content-type": ct } });
+    };
+  }
+
+  // rpc contra una mf T42 con captura de stderr (razones de rechazo por tamano).
+  async function rpcT42(mfX, p, payload) {
+    const res = await mfX.dispatchFetch("http://localhost" + p, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
+    });
+    let body = null; try { body = await res.json(); } catch { body = await res.text(); }
+    return { status: res.status, body, headers: Object.fromEntries(res.headers) };
+  }
+  // construye mf T42 con caps via env (bindings) + fake DOCS + captura de stdio.
+  function t42mf(caps, fake, extraBindings) {
+    let captured = "";
+    const mfX = gwMiniflare({
+      bindings: { ALLOWED_ORIGINS: DOCS_ORIGIN, ...caps, ...(extraBindings || {}) },
+      serviceBindings: { DOCS: fake },
+      stdio: (stdout, stderr) => { stderr.on("data", (d) => { captured += d.toString(); }); stdout.on("data", (d) => { captured += d.toString(); }); },
+    });
+    return { mf: mfX, getStd: () => captured, drain: (pred, ms) => new Promise((res) => {
+      const t0 = Date.now();
+      const iv = setInterval(() => {
+        if (pred() || Date.now() - t0 > (ms || 1500)) { clearInterval(iv); res(); }
+      }, 50);
+    }) };
+  }
+  const t42Base = "/mcp?origin=" + encodeURIComponent(DOCS_ORIGIN);
+
+  // (a) tool.js cap+1 -> skill rejected con razon de tamano; la otra carga y ejecuta.
+  {
+    const { mf: mfA, getStd, drain } = t42mf(
+      { MAX_TOOL_BYTES: 1000 },
+      makeT42Fake({ skills: [{ name: "small", bytes: 200 }, { name: "big", bytes: 1001 }] })
+    );
+    try {
+      const list = await rpcT42(mfA, t42Base, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+      await drain(() => /big.*tool\.js excede el limite de tamano/.test(getStd()));
+      const tools = list.body && list.body.result && list.body.result.tools;
+      const names = (tools || []).map((t) => t.name);
+      console.log("[T42.a] tools/list ->", JSON.stringify(names), "discovery=" + list.headers["x-gw-discovery"]);
+      check(list.status === 200, "T42.a: tools/list HTTP 200 (origin descubre pese a 1 skill rechazada)");
+      check(Array.isArray(tools) && names.includes("small") && !names.includes("big"),
+        "T42.a: small cargada, big rechazada por tamano (cap 1000, big=1001)");
+      const call = await rpcT42(mfA, t42Base, {
+        jsonrpc: "2.0", id: 2, method: "tools/call",
+        params: { name: "small", arguments: {} },
+      });
+      const sc = call.body && call.body.result && call.body.result.structuredContent;
+      console.log("[T42.a] tools/call small ->", JSON.stringify(call.body).slice(0, 160));
+      check(call.status === 200 && sc && sc.ok === 200, "T42.a: small ejecuta y devuelve {ok:200}");
+      check(/big.*tool\.js excede el limite de tamano/.test(getStd()),
+        "T42.a: el stderr del worker cita 'big -> tool.js excede el limite de tamano'");
+    } finally { await mfA.dispose(); }
+  }
+  // (a.control) mismo origin con cap grande -> ambas cargan (prueba que es el cap, no
+  // un sha invalido ni JS roto, lo que rechaza a big).
+  {
+    const { mf: mfA2 } = t42mf(
+      { MAX_TOOL_BYTES: 2000 },
+      makeT42Fake({ skills: [{ name: "small", bytes: 200 }, { name: "big", bytes: 1001 }] })
+    );
+    try {
+      const list = await rpcT42(mfA2, t42Base, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+      const names = ((list.body && list.body.result && list.body.result.tools) || []).map((t) => t.name);
+      console.log("[T42.a.control] cap 2000 -> tools/list =", JSON.stringify(names));
+      check(Array.isArray(names) && names.includes("small") && names.includes("big"),
+        "T42.a.control: con cap 2000 big (1001) carga -> el rechazo previo era por el cap, no por sha/JS");
+    } finally { await mfA2.dispose(); }
+  }
+
+  // (b) boundary: tool.js de EXACTAMENTE cap bytes -> pasa.
+  {
+    const { mf: mfB } = t42mf(
+      { MAX_TOOL_BYTES: 1000 },
+      makeT42Fake({ skills: [{ name: "exact", bytes: 1000 }] })
+    );
+    try {
+      const list = await rpcT42(mfB, t42Base, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+      const names = ((list.body && list.body.result && list.body.result.tools) || []).map((t) => t.name);
+      const call = await rpcT42(mfB, t42Base, {
+        jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "exact", arguments: {} },
+      });
+      const sc = call.body && call.body.result && call.body.result.structuredContent;
+      console.log("[T42.b] boundary cap=1000 bytes=1000 -> tools/list =", JSON.stringify(names), "call.ok=", sc && sc.ok);
+      check(list.status === 200 && Array.isArray(names) && names.includes("exact"),
+        "T42.b: tool.js de exactamente cap (1000) bytes carga (boundary: >cap rechaza, ==cap pasa)");
+      check(call.status === 200 && sc && sc.ok === 1000, "T42.b: la tool de cap bytes ejecuta");
+    } finally { await mfB.dispose(); }
+  }
+
+  // (c) llms.txt excedido -> discovery falla (mismo shape controlado que fetch fallido).
+  {
+    // llms.txt enorme (>512). El gateway lo fetchea, excede el cap -> throw ->
+    // "fetch llms.txt fallo: ..." -> 502 (mismo shape que un fetch fallido de llms.txt).
+    const bigLlms = "# t42\n\n" + "x".repeat(2000) + "\n";
+    const { mf: mfC } = t42mf(
+      { MAX_LLMS_BYTES: 512 },
+      (request) => {
+        const u = new URL(request.url);
+        if (u.pathname === "/llms.txt") return new Response(bigLlms, { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } });
+        return new Response("nf", { status: 404 });
+      }
+    );
+    try {
+      const r = await rpcT42(mfC, t42Base, { jsonrpc: "2.0", id: 1, method: "initialize" });
+      console.log("[T42.c] llms.txt excedido -> HTTP " + r.status, JSON.stringify(r.body).slice(0, 160));
+      check(r.status === 502, "T42.c: llms.txt excedido -> HTTP 502 (discovery falla, mismo shape que fetch fallido)");
+      check(r.body && r.body.error && r.body.error.code === -32603,
+        "T42.c: error JSON-RPC -32603 (mismo code que un fetch fallido de llms.txt)");
+      check(r.body && r.body.error && /llms\.txt/.test(r.body.error.message),
+        "T42.c: el mensaje cita llms.txt (mismo error controlado que fetch fallido, no crash)");
+    } finally { await mfC.dispose(); }
+  }
+
+  // (d) snapshot excedido -> memorySearch NO se inyecta; skills OK (patron sha mismatch).
+  {
+    // mem_probe llama host.memorySearch; snapshot de cap+1 bytes (>512) -> fetch
+    // excede -> snapshotText null -> capability ausente -> call isError:true.
+    const probeSrc = makeMemProbeJs(260);
+    const { mf: mfD } = t42mf(
+      { MAX_SNAPSHOT_BYTES: 512 },
+      makeT42Fake({
+        skills: [{ name: "mem_probe", bytes: 260, src: probeSrc }],
+        memory: { snapshotBytes: 513 },
+      })
+    );
+    try {
+      const list = await rpcT42(mfD, t42Base, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+      const names = ((list.body && list.body.result && list.body.result.tools) || []).map((t) => t.name);
+      const call = await rpcT42(mfD, t42Base, {
+        jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "mem_probe", arguments: { q: "x" } },
+      });
+      const isError = call.body && call.body.result && call.body.result.isError;
+      console.log("[T42.d] snapshot exc. -> list=", JSON.stringify(names), "call.isError=", isError);
+      check(list.status === 200 && Array.isArray(names) && names.includes("mem_probe"),
+        "T42.d: la skill se lista (tool.js verificado) pese al snapshot excedido");
+      check(call.status === 200 && isError === true,
+        "T42.d: memorySearch NO inyectada (snapshot excedido -> snapshotText null -> fail controlado, no crash)");
+    } finally { await mfD.dispose(); }
+  }
+
+  // (e) attestations excedido en enforcing -> skills excluidas como unattested (fail-safe).
+  // Contracontrol: con attestations BAJO el cap y firma valida -> attested -> cargan.
+  // Reusa la maquinaria Ed25519 del bloque T25 (attKey/signAtt/REVIEWERS/ATTC_CANON).
+  {
+    const skillNames = ["t42e_a", "t42e_b"];
+    const toolSrcs = {}, toolShas = {};
+    for (const n of skillNames) { toolSrcs[n] = makeToolJs(n, 200); toolShas[n] = sha(toolSrcs[n]); }
+    function signedAtt(skill, toolSha, signedOn, validUntil, pad) {
+      const payload = Buffer.from([ATTC_CANON, skill, toolSha, signedOn, validUntil].join("\n"), "utf8");
+      const sig = attCrypto.sign(null, payload, attKey.privateKey).toString("base64");
+      const obj = {
+        origin: ATTC_CANON, skill, tool_sha256: toolSha,
+        attester: "human:mauricio", signed_on: signedOn, valid_until: validUntil, signature: sig,
+      };
+      if (pad) obj.pad = "x".repeat(pad);
+      return obj;
+    }
+    const attOkArr = skillNames.map((n) => signedAtt(n, toolShas[n], "2026-07-02", "2027-07-02", 0));
+    const attBigArr = skillNames.map((n) => signedAtt(n, toolShas[n], "2026-07-02", "2027-07-02", 4000));
+    const attOkBody = JSON.stringify(attOkArr);   // ~ bajo cap (cap 1000)
+    const attBigBody = JSON.stringify(attBigArr);  // > cap (cap 1000)
+    function fakeE(big) {
+      return makeT42Fake({
+        skills: skillNames.map((n) => ({ name: n, bytes: 200, src: toolSrcs[n] })),
+        attestations: big ? attBigBody : attOkBody,
+      });
+    }
+    // enforcing, attestations BAJO cap y validas -> attested -> skills cargan
+    const { mf: mfEok } = t42mf(
+      { MAX_ATTESTATIONS_BYTES: 1000 },
+      fakeE(false),
+      { ATTESTATION_MODE: "enforcing", REVIEWERS }
+    );
+    try {
+      const list = await rpcT42(mfEok, t42Base, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+      const names = ((list.body && list.body.result && list.body.result.tools) || []).map((t) => t.name);
+      console.log("[T42.e.ok] enforcing + attestations validas bajo cap -> list=", JSON.stringify(names),
+        "hdr=", list.headers["x-gw-attestations"]);
+      check(list.status === 200 && Array.isArray(names) && names.length === 2,
+        "T42.e.ok: enforcing con attestations validas (bajo cap) -> 2 skills attested cargan");
+      check(list.headers["x-gw-attestations"] && list.headers["x-gw-attestations"].includes("2attested"),
+        "T42.e.ok: header X-Gw-Attestations = 2 attested (las firmas verifican bajo el cap)");
+    } finally { await mfEok.dispose(); }
+    // enforcing, attestations EXCEDEN cap -> null -> unattested -> excluidas -> 502
+    const { mf: mfEbig, getStd, drain } = t42mf(
+      { MAX_ATTESTATIONS_BYTES: 1000 },
+      fakeE(true),
+      { ATTESTATION_MODE: "enforcing", REVIEWERS }
+    );
+    try {
+      const list = await rpcT42(mfEbig, t42Base, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+      await drain(() => /attestations fetch fallo:.*excede el limite de tamano/.test(getStd()));
+      console.log("[T42.e.big] enforcing + attestations excedidas -> HTTP " + list.status,
+        JSON.stringify(list.body).slice(0, 140));
+      check(list.status === 502,
+        "T42.e.big: attestations exceden cap -> null -> unattested -> enforcing excluye TODAS -> 502 (fail-safe)");
+      check(/attestations fetch fallo:.*excede el limite de tamano/.test(getStd()),
+        "T42.e.big: el stderr cita 'attestations fetch fallo: ... excede el limite de tamano' (tratado como ausente, no crash)");
+    } finally { await mfEbig.dispose(); }
+  }
+
+  // (f) Content-Length no confiable: dos niveles de enforcement sin fiarse del header.
+  //   (f.clhuge) header content-length ENORME sobre un body chico -> el precheck
+  //     rechaza SIN leer el body (nivel a). En workerd el header sobrevive al receptor
+  //     y el gateway cancela antes de leer.
+  //   (f.chunked) tool.js servido como ReadableStream (sin Content-Length, chunked) de
+  //     cap+1 bytes -> el streaming corta (nivel b). Es el vector realista de un
+  //     "Content-Length mentiroso": un server que evita el framing por CL (chunked) y
+  //     entrega mas bytes del cap. NOTA: workerd enmarca el body por Content-Length
+  //     (trunca al declarado), por lo que un "CL chico + body gordo" literal NO es
+  //     construible; el equivalente fiel es chunked (CL ausente) + body gordo.
+  {
+    // (f.clhuge) body chico + content-length enorme -> precheck rechaza sin leer.
+    // Dos skills: small carga (CL normal); victim con CL enorme -> precheck la rechaza.
+    const { mf: mfF1, getStd, drain } = t42mf(
+      { MAX_TOOL_BYTES: 1000 },
+      makeT42Fake({ skills: [{ name: "small", bytes: 200 }, { name: "victim", bytes: 200 }], clHugeSkill: "victim" })
+    );
+    try {
+      const list = await rpcT42(mfF1, t42Base, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+      await drain(() => /victim.*tool\.js excede el limite de tamano/.test(getStd()));
+      const names = ((list.body && list.body.result && list.body.result.tools) || []).map((t) => t.name);
+      console.log("[T42.f.clhuge] CL=999999999 (victim) cap=1000 -> list=", JSON.stringify(names));
+      check(list.status === 200 && Array.isArray(names) && names.includes("small") && !names.includes("victim"),
+        "T42.f.clhuge: Content-Length enorme (>cap) -> precheck rechaza sin leer el body -> victim rechazada, small carga");
+      check(/victim.*tool\.js excede el limite de tamano/.test(getStd()),
+        "T42.f.clhuge: razon de tamano en stderr (precheck por Content-Length, no se leyo el body)");
+    } finally { await mfF1.dispose(); }
+  }
+  {
+    // (f.chunked) ReadableStream (sin CL) de cap+1 bytes -> streaming corta.
+    // Dos skills: small carga; big servido como stream de 1001 bytes -> streaming corta.
+    const { mf: mfF2, getStd, drain } = t42mf(
+      { MAX_TOOL_BYTES: 1000 },
+      makeT42Fake({ skills: [{ name: "small", bytes: 200 }, { name: "big", bytes: 1001 }], streamSkill: "big" })
+    );
+    try {
+      const list = await rpcT42(mfF2, t42Base, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+      await drain(() => /big.*tool\.js excede el limite de tamano/.test(getStd()));
+      const names = ((list.body && list.body.result && list.body.result.tools) || []).map((t) => t.name);
+      console.log("[T42.f.chunked] ReadableStream 1001 bytes (big, sin CL) cap=1000 -> list=", JSON.stringify(names));
+      check(list.status === 200 && Array.isArray(names) && names.includes("small") && !names.includes("big"),
+        "T42.f.chunked: tool.js chunked (sin CL) de cap+1 bytes -> streaming corta -> big rechazada, small carga");
+      check(/big.*tool\.js excede el limite de tamano/.test(getStd()),
+        "T42.f.chunked: razon de tamano en stderr (streaming defensivo, no confia en CL ausente)");
+    } finally { await mfF2.dispose(); }
+  }
+
+  // (g) checks existentes intactos: la suite verde hasta aqui (incluidos T22/T25/T35/
+  // T37/T38/T40) ya corrio antes de T42. Se afirma de forma implicita: si T42 rompia
+  // el comportamiento default, los checks previos habrian fallado. Ademas un smoke
+  // directo al demo offline con caps por DEFAULT (sin env) confirma no-regresion.
+  {
+    const { mf: mfG } = t42mf({}, offlineFakes ? offlineFakes.docs : makeT42Fake({ skills: [{ name: "s", bytes: 200 }] }));
+    try {
+      const list = await rpcT42(mfG, t42Base, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+      console.log("[T42.g] smoke default-caps docs -> HTTP " + list.status + " (no-regresion: caps default no rompen discovery)");
+      check(list.status === 200, "T42.g: con caps por DEFAULT (sin env) el discovery del docs real/fake sigue HTTP 200 (no-regresion)");
+    } finally { await mfG.dispose(); }
   }
 
   console.log("\n" + (failures === 0 ? "TODOS LOS CHECKS VERDE" : failures + " CHECK(S) ROJO(S)"));

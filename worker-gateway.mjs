@@ -155,6 +155,44 @@ function isolateCachePut(origin, skills, rejected, snapshotText, verdicts) {
 const LLMS_TTL_MS = 60_000;
 const FETCH_TIMEOUT_MS = 5000;
 
+// T42: caps de tamano para TODOS los fetches de descubrimiento (env con defaults
+// sensatos que NO afectan a los origins actuales — estan muy por debajo). Parse
+// defensivo: valor no-numero / <=0 / ausente -> default del campo.
+const DEFAULT_SIZE_CAPS = {
+  llms: 262144, // 256 KB
+  tool: 1048576, // 1 MB
+  attestations: 262144, // 256 KB
+  snapshot: 4194304, // 4 MB
+};
+function parseSizeCap(raw, def) {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return Math.floor(raw);
+  if (typeof raw === "string") {
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  }
+  return def;
+}
+function parseSizeCaps(env) {
+  const e = env || {};
+  return {
+    llms: parseSizeCap(e.MAX_LLMS_BYTES, DEFAULT_SIZE_CAPS.llms),
+    tool: parseSizeCap(e.MAX_TOOL_BYTES, DEFAULT_SIZE_CAPS.tool),
+    attestations: parseSizeCap(e.MAX_ATTESTATIONS_BYTES, DEFAULT_SIZE_CAPS.attestations),
+    snapshot: parseSizeCap(e.MAX_SNAPSHOT_BYTES, DEFAULT_SIZE_CAPS.snapshot),
+  };
+}
+
+// T42: error de limite de tamano. Distinto de un fetch fallido para que cada caller
+// decida la semantica de rechazo (llms -> discovery falla; tool -> skill rejected;
+// attestations/snapshot -> tratar como ausente). maxBytes queda para el mensaje.
+class SizeLimitError extends Error {
+  constructor(maxBytes) {
+    super("body excede el limite de tamano (" + maxBytes + " bytes)");
+    this.name = "SizeLimitError";
+    this.maxBytes = maxBytes;
+  }
+}
+
 // T40: cache L2 del RESULTADO de descubrimiento (no solo insumos), cross-isolate
 // via caches.default. Key `gw:disc:${origin}:${fingerprint}` donde fingerprint =
 // sha256 hex de JSON.stringify({mode, reviewers, date UTC}). Mismo TTL que la
@@ -223,7 +261,18 @@ function makeFetchImpl(env) {
   };
 }
 
-async function fetchText(url, timeoutMs, fetchImpl) {
+// T42: fetch de texto con cap de tamano en DOS niveles:
+//  (a) Content-Length precheck: si el header declara mas del cap, se cancela el body
+//      y se rechaza SIN leerlo (proteccion de memoria; el header puede mentir por
+//      exceso). workerd enmarca el body por Content-Length => un header grande sobre
+//      un body chico sobrevive al receptor y el precheck corta antes de leer.
+//  (b) Streaming defensivo: NUNCA confiar solo en Content-Length (puede faltar —
+//      chunked — o mentir). Se lee el body por reader acumulando hasta cap; si excede,
+//      se cancela el stream y se rechaza. Nunca se materializan mas de cap+chunk en
+//      memoria. TextDecoder con stream:true reconstruye el texto igual que resp.text()
+//      (manjeta bordes multi-byte UTF-8 entre chunks).
+// Lanza SizeLimitError si excede; el caller decide la semantica de rechazo por tipo.
+async function fetchText(url, timeoutMs, maxBytes, fetchImpl) {
   // Cache-bust ?_gw=<ts>: bypass del edge cache de CF para origins externos por workers.dev
   // (sin Cache-Control CF cachearia .txt/.js y serviria 404 stale). sha256 es sobre el body
   // => el bust no afecta la verificacion. Cache API keys usan la URL LIMPIA (sin bust).
@@ -231,7 +280,46 @@ async function fetchText(url, timeoutMs, fetchImpl) {
   const resp = await fetchImpl(url + sep + "_gw=" + Date.now(), {
     signal: AbortSignal.timeout(timeoutMs),
   });
-  return { status: resp.status, text: await resp.text() };
+  // (a) Content-Length precheck: rechazo inmediato sin leer el body.
+  const cl = resp.headers.get("content-length");
+  if (cl !== null) {
+    const cln = Number(cl);
+    if (Number.isFinite(cln) && cln > maxBytes) {
+      if (resp.body) {
+        try { await resp.body.cancel(); } catch { /* best-effort */ }
+      }
+      throw new SizeLimitError(maxBytes);
+    }
+  }
+  // (b) Streaming defensivo: acumula hasta cap; si excede, cancela y rechaza.
+  const body = resp.body;
+  if (!body) {
+    return { status: resp.status, text: "" };
+  }
+  const reader = body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let received = 0;
+  const parts = [];
+  let exceeded = false;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.length;
+      if (received > maxBytes) {
+        exceeded = true;
+        break;
+      }
+      parts.push(decoder.decode(value, { stream: true }));
+    }
+  } finally {
+    try { await reader.cancel(); } catch { /* best-effort: libera el stream */ }
+  }
+  if (exceeded) {
+    throw new SizeLimitError(maxBytes);
+  }
+  parts.push(decoder.decode()); // flush (borde multi-byte final)
+  return { status: resp.status, text: parts.join("") };
 }
 
 async function sha256Hex(text) {
@@ -321,12 +409,14 @@ async function verifyEd25519(pubB64, sigB64, data) {
 
 // Descarga attestations.json del origin. 404/no-200 -> null (sin atestaciones, NO es
 // error de descubrimiento: skills se listan, todo unattested). JSON no-array -> null.
-// Se cachea el TEXTO en el isolate; los veredictos se recomputan al poblar.
-async function fetchAttestations(origin, fetchImpl) {
+// T42: body que excede el cap -> null (mismo efecto que ausente: skills quedan
+// unattested/excluidas en enforcing, fail-safe). Se cachea el TEXTO en el isolate;
+// los veredictos se recomputan al poblar.
+async function fetchAttestations(origin, fetchImpl, maxBytes) {
   const url = origin + "/.well-known/agent-skills/attestations.json";
   let r;
   try {
-    r = await fetchText(url, FETCH_TIMEOUT_MS, fetchImpl);
+    r = await fetchText(url, FETCH_TIMEOUT_MS, maxBytes, fetchImpl);
   } catch (e) {
     console.warn(
       "[gateway] attestations fetch fallo: " + String((e && e.message) || e) + " -> sin atestaciones"
@@ -484,7 +574,7 @@ function parseDiscL2(raw) {
 //    revisores estable por deploy, fecha UTC estable por dia dentro del TTL 60s).
 //  - discovery: "hit" (capa 1) | "l2" (capa 2 del resultado, cross-isolate) |
 //    "miss" (este request hizo el fetch real).
-async function discoverSkills(origin, fetchImpl, attestCtx) {
+async function discoverSkills(origin, fetchImpl, attestCtx, caps) {
   const cached = isolateCacheGet(origin);
   if (cached) {
     return {
@@ -520,7 +610,7 @@ async function discoverSkills(origin, fetchImpl, attestCtx) {
 
   // En single-thread el check+set es atomico (no hay await entre medias) => un
   // solo iniciador por origin por estampida. finally borra la entrada al settle.
-  const p = discoverSkillsInner(origin, fetchImpl, attestCtx).finally(() => {
+  const p = discoverSkillsInner(origin, fetchImpl, attestCtx, caps).finally(() => {
     discoverInflight.delete(origin);
   });
   discoverInflight.set(origin, p);
@@ -529,7 +619,7 @@ async function discoverSkills(origin, fetchImpl, attestCtx) {
 
 // Cuerpo del descubrimiento (fetch llms.txt + tool.js + verify sha256). Puebla el
 // cache de isolate (capa 1). Devuelve { skills, rejected, discovery:"miss"|"l2", snapshotText, verdicts, counts }.
-async function discoverSkillsInner(origin, fetchImpl, attestCtx) {
+async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
   const rejected = [];
   const skills = [];
 
@@ -573,7 +663,7 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx) {
   if (llmsText === null) {
     let r;
     try {
-      r = await fetchText(origin + "/llms.txt", FETCH_TIMEOUT_MS, fetchImpl);
+      r = await fetchText(origin + "/llms.txt", FETCH_TIMEOUT_MS, caps.llms, fetchImpl);
     } catch (e) {
       throw new Error("fetch llms.txt fallo: " + String(e && e.message || e));
     }
@@ -600,9 +690,15 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx) {
     if (src === null) {
       let r;
       try {
-        r = await fetchText(toolUrl, FETCH_TIMEOUT_MS, fetchImpl);
+        r = await fetchText(toolUrl, FETCH_TIMEOUT_MS, caps.tool, fetchImpl);
       } catch (e) {
-        rejected.push({ name: s.name, reason: "fetch tool.js fallo: " + (e && e.message) });
+        // T42: body que excede el cap -> skill rejected (patron del hash mismatch);
+        // las demas skills del origin cargan. Otros errores -> razon de fetch.
+        if (e instanceof SizeLimitError) {
+          rejected.push({ name: s.name, reason: "tool.js excede el limite de tamano" });
+        } else {
+          rejected.push({ name: s.name, reason: "fetch tool.js fallo: " + (e && e.message) });
+        }
         continue;
       }
       if (r.status !== 200) {
@@ -656,7 +752,7 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx) {
     const snapUrl = new URL(memory.snapshot, origin).href;
     let snapResp = null;
     try {
-      snapResp = await fetchText(snapUrl, FETCH_TIMEOUT_MS, fetchImpl);
+      snapResp = await fetchText(snapUrl, FETCH_TIMEOUT_MS, caps.snapshot, fetchImpl);
     } catch (e) {
       console.warn("[gateway] snapshot fetch fallo: " + String((e && e.message) || e) + " -> memory NO inyectada");
       snapResp = null;
@@ -692,7 +788,7 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx) {
   let verdicts = null;
   const mode = attestCtx && attestCtx.mode;
   if (mode && mode !== "off") {
-    const attestations = await fetchAttestations(origin, fetchImpl);
+    const attestations = await fetchAttestations(origin, fetchImpl, caps.attestations);
     verdicts = await computeVerdicts(skills, origin, attestations, attestCtx.reviewers);
   }
 
@@ -1179,13 +1275,15 @@ export default {
       rawMode: (env && env.ATTESTATION_MODE) || "off",
       rawReviewers: (env && env.REVIEWERS) || "",
     };
+    // T42: caps de tamano para los fetches de descubrimiento (env con defaults).
+    const caps = parseSizeCaps(env);
 
     let skills;
     let snapshotText = null;
     let discovery = "none";
     let verdicts = null; // {verdicts, counts} o null (modo off)
     try {
-      const discovered = await discoverSkills(origin, fetchImpl, attestCtx);
+      const discovered = await discoverSkills(origin, fetchImpl, attestCtx, caps);
       skills = discovered.skills;
       snapshotText = discovered.snapshotText || null;
       discovery = discovered.discovery;

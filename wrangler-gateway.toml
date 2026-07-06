@@ -21,6 +21,20 @@ REVIEWERS = '{"human:mauricio":{"public_key":"YghuJivYSVI458jIjwXEKDLmQaG6X4Itn1
 # (excluye las no-attested como un hash mismatch), "off" (comportamiento previo).
 ATTESTATION_MODE = "enforcing"
 
+# TAREA37: identidad por cliente (opt-in, retrocompatible). CLIENTS se define como
+# SECRET (no como var aqui — nunca valores reales en texto plano):
+#   wrangler secret put CLIENTS
+# Valor: string JSON {sha256_hex_del_token: {"client_id": "nombre", "rpm": <numero_opcional>}}.
+# La clave es el sha256 hex (minusculas) de los bytes UTF-8 del token (los tokens
+# NUNCA aparecen en claro en config). Si CLIENTS esta definido y no vacio -> modo
+# por-cliente: POST /mcp exige Authorization: Bearer <token>, se hashea y se hace
+# lookup exacto en el registro; token conocido -> pasa + header X-Gw-Client:
+# <client_id> en todas las respuestas de /mcp; token desconocido/header
+# ausente/malformado -> 401. AUTH_TOKEN se IGNORA en este modo. Si CLIENTS esta
+# definido pero su JSON es invalido -> FAIL-CLOSED (todo POST /mcp da 401). Sin
+# CLIENTS -> comportamiento legado intacto (AUTH_TOKEN o modo dev). El campo rpm
+# queda accesible en el registro para T38 (rate limiting) pero no se aplica todavia.
+
 # Service binding al demo site. Un Worker no puede fetchear via workers.dev a
 # otro Worker de la MISMA cuenta (error 1042); el binding DEMO lo resuelve
 # (bypass de workers.dev). El gateway enruta el origin del demo por este

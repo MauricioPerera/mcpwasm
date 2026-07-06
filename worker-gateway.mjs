@@ -657,13 +657,15 @@ class PerSkillHost {
   }
 }
 
-function json(obj, status = 200, discovery, attest) {
+function json(obj, status = 200, discovery, attest, client) {
   const headers = { "content-type": "application/json", "access-control-allow-origin": "*" };
   // X-Gw-Discovery: "miss"|"hit"|"none" (antes de descubrimiento). Observabilidad,
   // no filtra nada sensible (estado del cache del isolate para este origin).
   if (discovery) headers["x-gw-discovery"] = discovery;
   // X-Gw-Attestations: conteos por veredicto, solo en modo != off.
   if (attest) headers["x-gw-attestations"] = attest;
+  // X-Gw-Client: identidad del cliente (T37), solo en modo por-cliente tras auth.
+  if (client) headers["x-gw-client"] = client;
   return new Response(JSON.stringify(obj), { status, headers });
 }
 
@@ -699,20 +701,72 @@ async function timingSafeEqualStr(a, b) {
   return acc === 0;
 }
 
+// T37: identidad por cliente (opt-in, retrocompatible). env.CLIENTS es un string
+// JSON (se despliega como secret): {sha256_hex_del_token: {client_id, rpm?}}. Los
+// tokens NUNCA aparecen en claro en config: la clave es el sha256 hex (minusculas)
+// de los bytes UTF-8 del token. Devuelve {mode, registry}:
+//  - mode "none": CLIENTS ausente/vacio -> comportamiento legado (AUTH_TOKEN o dev).
+//  - mode "clients": CLIENTS valido -> registro {hash: {client_id, rpm}}. Un JSON
+//    valido pero con objeto vacio {} -> mode "clients" con registro vacio (todo
+//    token -> 401, fail-closed por configuracion vacia, no por error).
+//  - mode "failclosed": CLIENTS definido pero JSON invalido -> FAIL-CLOSED.
+// El campo rpm se parsea y queda en el registro para T38 (rate limiting) pero NO
+// se aplica todavia (solo se conserva aqui).
+function parseClients(env) {
+  const raw = (env && env.CLIENTS) || "";
+  if (!raw || raw.trim().length === 0) return { mode: "none", registry: null };
+  let obj;
+  try {
+    obj = JSON.parse(raw);
+  } catch {
+    return { mode: "failclosed", registry: null };
+  }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+    return { mode: "failclosed", registry: null };
+  }
+  const registry = {};
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (!v || typeof v !== "object") continue;
+    if (typeof v.client_id !== "string" || v.client_id.length === 0) continue;
+    // rpm opcional: se conserva (lo usara T38) pero aqui no se aplica.
+    const rpm = typeof v.rpm === "number" && Number.isFinite(v.rpm) ? Math.floor(v.rpm) : null;
+    registry[String(k).toLowerCase()] = { client_id: v.client_id, rpm };
+  }
+  return { mode: "clients", registry };
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    // T37: modo de auth se computa una vez (lo usa GET / y POST /mcp).
+    const clientsCtx = parseClients(env);
+
     if (request.method === "GET") {
-      const authOn = !!(env && env.AUTH_TOKEN && env.AUTH_TOKEN.length > 0);
+      let authLine;
+      if (clientsCtx.mode === "failclosed") {
+        authLine =
+          "Auth FAIL-CLOSED: env.CLIENTS definido pero JSON invalido -> todo POST /mcp da 401. " +
+          "Corregir el secret CLIENTS (mapa {sha256_hex_del_token: {client_id, rpm?}}).\n";
+      } else if (clientsCtx.mode === "clients") {
+        const n = Object.keys(clientsCtx.registry).length;
+        authLine =
+          "Auth ACTIVADO (modo por-cliente): POST /mcp exige Authorization: Bearer <token>; identidad " +
+          "por sha256 del token (env.CLIENTS, " + n + " cliente(s) registrado(s)). Header X-Gw-Client en " +
+          "todas las respuestas. AUTH_TOKEN ignorado en este modo.\n";
+      } else {
+        const authOn = !!(env && env.AUTH_TOKEN && env.AUTH_TOKEN.length > 0);
+        authLine = authOn
+          ? "Auth ACTIVADO (token compartido legado): POST /mcp exige header Authorization: Bearer <AUTH_TOKEN>.\n"
+          : "Auth DESACTIVADO (modo dev): sin token. Definir env.CLIENTS (por-cliente) o env.AUTH_TOKEN (legado) para activarlo.\n";
+      }
       return new Response(
         "llmstxt-gateway\n" +
           "Gateway llms.txt -> MCP (Streamable HTTP, JSON-RPC 2.0 por POST).\n" +
           "Uso: POST " + url.origin + "/mcp?origin=<url-encoded-origin>\n" +
           "El origin debe estar en la allowlist (ALLOWED_ORIGINS).\n" +
-          (authOn
-            ? "Auth ACTIVADO: POST /mcp exige header Authorization: Bearer <AUTH_TOKEN>.\n"
-            : "Auth DESACTIVADO (modo dev): sin token. Definir env.AUTH_TOKEN para activarlo.\n") +
+          authLine +
           "Metodos MCP: initialize | tools/list | tools/call\n",
         { headers: { "content-type": "text/plain; charset=utf-8" } }
       );
@@ -722,11 +776,45 @@ export default {
       return new Response("Method Not Allowed", { status: 405 });
     }
 
-    // Si env.AUTH_TOKEN definido y no vacio -> POST /mcp exige Authorization:
-    // "Bearer <AUTH_TOKEN>" (comparacion tiempo-constante via timingSafeEqualStr).
-    // Falta o no coincide -> 401 JSON {"error":"unauthorized"} sin tocar el resto.
-    // Si no esta definido -> abierto (dev).
-    if (env && env.AUTH_TOKEN && env.AUTH_TOKEN.length > 0) {
+    // --- Auth (T37: identidad por cliente, opt-in y retrocompatible) -------------
+    // Precedencia: si env.CLIENTS definido y no vacio -> modo por-cliente (AUTH_TOKEN
+    // se IGNORA en este modo). Se extrae el Bearer, se computa sha256 hex de sus
+    // bytes UTF-8 y se hace lookup EXACTO en el registro {sha256_hex: {client_id,
+    // rpm}}. El lookup por hash ES el mecanismo timing-safe: nunca se compara el
+    // token en claro contra secretos (el hash es digest fijo). Token conocido ->
+    // pasa y client_id queda para el header X-Gw-Client en TODAS las respuestas de
+    // /mcp. Token desconocido / header ausente / malformado -> 401 identico al
+    // legado. CLIENTS definido con JSON invalido -> FAIL-CLOSED: todo POST /mcp da
+    // 401 (nunca abrir por error de config). Sin CLIENTS -> comportamiento legado
+    // intacto (AUTH_TOKEN comparacion tiempo-constante, o modo dev si ausente).
+    // rpm queda en el registro para T38 (rate limiting) pero NO se aplica todavia.
+    let clientId = null; // null = no exponer X-Gw-Client (legado/dev, o 401)
+    if (clientsCtx.mode === "failclosed") {
+      return new Response(JSON.stringify({ error: "unauthorized" }), {
+        status: 401,
+        headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+      });
+    }
+    if (clientsCtx.mode === "clients") {
+      const got = request.headers.get("authorization") || "";
+      const m = /^Bearer\s+(.+)$/.exec(got);
+      if (!m) {
+        return new Response(JSON.stringify({ error: "unauthorized" }), {
+          status: 401,
+          headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+        });
+      }
+      const tokenHash = await sha256Hex(m[1]);
+      const entry = clientsCtx.registry[tokenHash] || null;
+      if (!entry) {
+        return new Response(JSON.stringify({ error: "unauthorized" }), {
+          status: 401,
+          headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+        });
+      }
+      clientId = entry.client_id;
+    } else if (env && env.AUTH_TOKEN && env.AUTH_TOKEN.length > 0) {
+      // modo legado: AUTH_TOKEN compartido (comparacion tiempo-constante).
       const expected = "Bearer " + env.AUTH_TOKEN;
       const got = request.headers.get("authorization") || "";
       if (!(await timingSafeEqualStr(got, expected))) {
@@ -742,7 +830,9 @@ export default {
       return json(
         { jsonrpc: "2.0", id: null, error: { code: -32602, message: "falta parametro origin" } },
         403,
-        "none"
+        "none",
+        null,
+        clientId
       );
     }
     let origin;
@@ -752,7 +842,9 @@ export default {
       return json(
         { jsonrpc: "2.0", id: null, error: { code: -32602, message: "origin invalido: " + originParam } },
         403,
-        "none"
+        "none",
+        null,
+        clientId
       );
     }
     const allowed = allowedOrigins(env);
@@ -760,7 +852,9 @@ export default {
       return json(
         { jsonrpc: "2.0", id: null, error: { code: -32602, message: "origin no permitido: " + origin } },
         403,
-        "none"
+        "none",
+        null,
+        clientId
       );
     }
 
@@ -768,7 +862,7 @@ export default {
     try {
       msg = await request.json();
     } catch {
-      return json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400, "none");
+      return json({ jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } }, 400, "none", null, clientId);
     }
 
     // fetch inyectado (binding para same-account, fetch global para el resto).
@@ -796,7 +890,9 @@ export default {
       return json(
         { jsonrpc: "2.0", id: msg && msg.id !== undefined ? msg.id : null, error: { code: -32603, message: "descubrimiento fallo: " + String(e && e.message || e) } },
         502,
-        "miss"
+        "miss",
+        null,
+        clientId
       );
     }
 
@@ -824,7 +920,8 @@ export default {
         { jsonrpc: "2.0", id: msg && msg.id !== undefined ? msg.id : null, error: { code: -32603, message: "ninguna skill verificada para el origin" } },
         502,
         discovery,
-        aHeader
+        aHeader,
+        clientId
       );
     }
 
@@ -855,7 +952,8 @@ export default {
         { jsonrpc: "2.0", id: msg && msg.id !== undefined ? msg.id : null, error: { code: -32603, message: "host fallo: " + String(e && e.message || e) } },
         500,
         discovery,
-        aHeader
+        aHeader,
+        clientId
       );
     }
     // Exposicion advisory — tag " [attestation: <verdict>]" al final de la
@@ -872,8 +970,9 @@ export default {
     if (response === null) {
       const headers202 = { "x-gw-discovery": discovery };
       if (aHeader) headers202["x-gw-attestations"] = aHeader;
+      if (clientId) headers202["x-gw-client"] = clientId;
       return new Response(null, { status: 202, headers: headers202 });
     }
-    return json(response, 200, discovery, aHeader);
+    return json(response, 200, discovery, aHeader, clientId);
   },
 };

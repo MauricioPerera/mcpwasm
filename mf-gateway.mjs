@@ -892,6 +892,108 @@ try {
   // aqui se reafirma explicitamente como caso (f) del hardening.
   check(init.status === 200, "T28.f: sin env.AUTH_TOKEN -> pasa sin auth (200, modo dev)");
 
+  // --- (T37) IDENTIDAD POR CLIENTE (env.CLIENTS, opt-in retrocompatible) -------
+  // Instancia Miniflare propia que usa SIEMPRE los fakes de T35 (buildOfflineFakes)
+  // via service binding DEMO -> hermetica en AMBOS modos (online y offline): el
+  // origin DEMO se enruta al binding, sin fetch saliente. Patron de mfFake/attMf
+  // (gwMiniflare + serviceBindings). El gateway, con env.CLIENTS definido, entra en
+  // modo por-cliente: el Bearer se hashea (sha256 hex) y se hace lookup exacto en
+  // el registro {hash: {client_id, rpm}}; AUTH_TOKEN se ignora en este modo. Tokens
+  // de fantasia obvios (FAKE en el literal); nunca se loguean secretos reales.
+  console.log("\n[T37] identidad por cliente (env.CLIENTS, fakes T35, hermetica):");
+  const t37Fakes = buildOfflineFakes();
+  const shaT37 = (s) => createHash("sha256").update(s, "utf8").digest("hex");
+  const T37_TOKEN_A = "t37-client-alpha-secret-FAKE-AAAA";
+  const T37_TOKEN_B = "t37-client-beta-secret-FAKE-BBBB";
+  const T37_LEGACY = "t37-legacy-shared-token-FAKE-LLLL";
+  const CLIENTS_JSON = JSON.stringify({
+    [shaT37(T37_TOKEN_A)]: { client_id: "cliente-alfa", rpm: 60 },
+    [shaT37(T37_TOKEN_B)]: { client_id: "cliente-beta" }, // sin rpm (opcional)
+  });
+  const mfT37 = gwMiniflare({
+    bindings: {
+      ALLOWED_ORIGINS: DEMO_ORIGIN,
+      CLIENTS: CLIENTS_JSON,
+      // AUTH_TOKEN definido a la vez -> debe ser IGNORADO en modo por-cliente (T37.d).
+      AUTH_TOKEN: T37_LEGACY,
+    },
+    serviceBindings: { DEMO: t37Fakes.demo },
+  });
+  async function rpcT37(p, payload, headers) {
+    const res = await mfT37.dispatchFetch("http://localhost" + p, {
+      method: "POST",
+      headers: { "content-type": "application/json", ...(headers || {}) },
+      body: JSON.stringify(payload),
+    });
+    let body = null;
+    try { body = await res.json(); } catch { body = await res.text(); }
+    return { status: res.status, body, headers: Object.fromEntries(res.headers) };
+  }
+  const t37Base = "/mcp?origin=" + encodeURIComponent(DEMO_ORIGIN);
+  try {
+    // (T37.a) token valido -> 200 + X-Gw-Client correcto
+    const okA = await rpcT37(t37Base, { jsonrpc: "2.0", id: 1, method: "initialize" },
+      { authorization: "Bearer " + T37_TOKEN_A });
+    console.log("[T37.a] token alfa -> status=" + okA.status + " X-Gw-Client=" + okA.headers["x-gw-client"]);
+    check(okA.status === 200, "T37.a: token valido -> HTTP 200");
+    check(okA.headers["x-gw-client"] === "cliente-alfa", "T37.a: header X-Gw-Client === cliente-alfa");
+
+    // (T37.a2) tools/list tambien lleva X-Gw-Client (TODAS las respuestas de /mcp)
+    const okA2 = await rpcT37(t37Base, { jsonrpc: "2.0", id: 2, method: "tools/list" },
+      { authorization: "Bearer " + T37_TOKEN_A });
+    check(okA2.status === 200 && okA2.headers["x-gw-client"] === "cliente-alfa",
+      "T37.a2: tools/list tambien lleva X-Gw-Client (todas las respuestas de /mcp)");
+
+    // (T37.b) token desconocido -> 401 (sin X-Gw-Client, identico al legado)
+    const bad = await rpcT37(t37Base, { jsonrpc: "2.0", id: 3, method: "initialize" },
+      { authorization: "Bearer t37-unknown-token-FAKE-ZZZZ" });
+    console.log("[T37.b] token desconocido -> status=" + bad.status);
+    check(bad.status === 401, "T37.b: token desconocido -> 401");
+    check(!bad.headers["x-gw-client"], "T37.b: 401 sin X-Gw-Client (identico al legado)");
+
+    // (T37.c) sin header -> 401
+    const noHdr = await rpcT37(t37Base, { jsonrpc: "2.0", id: 4, method: "initialize" });
+    console.log("[T37.c] sin header -> status=" + noHdr.status);
+    check(noHdr.status === 401, "T37.c: sin Authorization -> 401");
+
+    // (T37.d) CLIENTS + AUTH_TOKEN definidos a la vez; presentar el token legado -> 401
+    // (precedencia: CLIENTS manda, AUTH_TOKEN se ignora -> el token legado no esta en el registro)
+    const legacy = await rpcT37(t37Base, { jsonrpc: "2.0", id: 5, method: "initialize" },
+      { authorization: "Bearer " + T37_LEGACY });
+    console.log("[T37.d] token legado con CLIENTS+AUTH_TOKEN -> status=" + legacy.status);
+    check(legacy.status === 401, "T37.d: CLIENTS manda sobre AUTH_TOKEN -> token legado da 401");
+
+    // (T37.e) CLIENTS con JSON invalido -> FAIL-CLOSED (instancia aparte)
+    const mfT37Bad = gwMiniflare({
+      bindings: { ALLOWED_ORIGINS: DEMO_ORIGIN, CLIENTS: "{not-valid-json" },
+      serviceBindings: { DEMO: t37Fakes.demo },
+    });
+    async function rpcT37Bad(p, payload, headers) {
+      const res = await mfT37Bad.dispatchFetch("http://localhost" + p, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...(headers || {}) },
+        body: JSON.stringify(payload),
+      });
+      let body = null; try { body = await res.json(); } catch { body = await res.text(); }
+      return { status: res.status, body, headers: Object.fromEntries(res.headers) };
+    }
+    try {
+      const fc = await rpcT37Bad(t37Base, { jsonrpc: "2.0", id: 6, method: "initialize" },
+        { authorization: "Bearer " + T37_TOKEN_A });
+      console.log("[T37.e] CLIENTS JSON invalido, token valido -> status=" + fc.status);
+      check(fc.status === 401, "T37.e: CLIENTS JSON invalido -> 401 fail-closed (token valido no abre)");
+      // GET / indica el fail-closed en su texto de estado
+      const getRes = await mfT37Bad.dispatchFetch("http://localhost/", { method: "GET" });
+      const getText = await getRes.text();
+      console.log("[T37.e] GET / fail-closed? " + /FAIL-CLOSED/.test(getText));
+      check(/FAIL-CLOSED/.test(getText), "T37.e: GET / indica FAIL-CLOSED en su texto de estado");
+    } finally {
+      await mfT37Bad.dispose();
+    }
+  } finally {
+    await mfT37.dispose();
+  }
+
   hostA.dispose();
   hostB.dispose();
   try { quickjs.dispose(); } catch { /* best-effort */ }

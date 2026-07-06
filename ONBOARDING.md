@@ -14,6 +14,10 @@ third-party publisher must do and what the maintainer does on their side.
 
 A publisher site is eligible when all of the following hold:
 
+- The site is served at a **root origin** (`https://host`, no path). The gateway
+  canonicalizes origins with `new URL(s).origin`, which strips any path — so a
+  GitHub Pages *project* site (`user.github.io/project`) cannot be a publisher,
+  while a *user/organization* root site (`user.github.io`) can.
 - A valid `/llms.txt` under a `## Skills` section, listing each executable skill
   with its `tool` path and a correct `tool_sha256` (hex SHA-256 of the `tool.js`
   bytes). A skill whose declared hash does not match the fetched bytes is
@@ -61,12 +65,20 @@ The maintainer:
 - signs an Ed25519 attestation per skill with `scripts/attest.mjs` and publishes
   the result in the publisher's `attestations.json`.
 
-**Current policy, stated explicitly:** only `human:mauricio` attests third-party
-skills today. The reviewer registry (`REVIEWERS` in `wrangler-gateway.toml`,
-`attester → { public_key, registered_at }`) is what the gateway checks signatures
-against, and it may grow to additional reviewers in the future. Until then, a
-third-party skill is `attested` only when signed by `human:mauricio` with a
-valid key inside its `[signed_on, valid_until]` window.
+Note the flow implies **two publications by the publisher**: first the content
+(`llms.txt`, `tool.js`, an empty or partial `attestations.json`) so the reviewer
+can sign against the *live* `llms.txt` (that is what `attest.mjs` reads), then a
+second publish adding the returned attestation. This is by design — an
+attestation binds origin, skill and the exact deployed hash.
+
+**Current policy, stated explicitly:** only the maintainer (Mauricio Perera)
+attests third-party skills today, under the registry entries `human:mauricio`
+and `human:mauricio-2` (two keys, same human). The reviewer registry
+(`REVIEWERS` in `wrangler-gateway.toml`, `attester → { public_key,
+registered_at }`) is what the gateway checks signatures against, and it may grow
+to additional reviewers in the future. Until then, a third-party skill is
+`attested` only when signed by one of the maintainer's registered keys inside
+its `[signed_on, valid_until]` window.
 
 ## Activation
 

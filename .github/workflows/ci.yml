@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  hermetic:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -21,7 +21,21 @@ jobs:
         run: npm test
       - name: Run spike suite
         run: npm run spike
-      - name: Run gateway suite
-        run: npm run gateway
       - name: Run memspike suite
         run: npm run memspike
+      - name: Run gateway suite (offline)
+        run: npm run gateway:offline
+
+  prod-integration:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Run gateway suite (online)
+        run: npm run gateway

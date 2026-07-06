@@ -427,18 +427,30 @@ What it does **not** guarantee:
 | `bookstore/` | Realistic publisher: D1-backed catalog (52 books), read skills + `create_order` write skill, plus permanent robustness fixtures (`corrupt_skill` hash-mismatch, `busy_loop` infinite loop). Deployed at `llmstxt-bookstore.rckflr.workers.dev`. |
 | `docs-site/` | Docs publisher: serves the llms-txt-skills spec documents + a `skills-index.snapshot` (BM25, `minimemory-okf-v1`), with `search_spec` (BM25 via `host.memorySearch`), `get_doc`, and `list_docs` skills. Deployed at `llmstxt-docs.rckflr.workers.dev`. |
 | `TAREA*-REPORT.md` (one per milestone) | Development reports (see below). |
-| `.github/workflows/ci.yml` | GitHub Actions CI: runs the four suites (test/spike/gateway/memspike) on push and pull_request to `main`. |
+| `.github/workflows/ci.yml` | GitHub Actions CI: two jobs (`hermetic` gate + `prod-integration` non-blocking) on push and pull_request to `main`. |
 
 ## CI
 
-The workflow in `.github/workflows/ci.yml` runs the four suites — `npm test`,
-`npm run spike`, `npm run gateway`, `npm run memspike` — each preceded by its
-own build, on every push and pull_request to `main`. It runs on
-`ubuntu-latest` with Node 22 and `npm ci` (with cache), and times out after
-15 minutes. The `gateway` and `memspike` suites reach the deployed
-production workers (`*.rckflr.workers.dev`) over the public internet, so CI
-depends on those workers being up: an outage on their side surfaces as a
-red run here, not a regression in this repo.
+The workflow in `.github/workflows/ci.yml` runs two jobs on every push and
+pull_request to `main`, both on `ubuntu-latest` with Node 22 and `npm ci`
+(with cache), timing out after 15 minutes.
+
+The `hermetic` job is the gate. It runs the four local suites — `npm test`,
+`npm run spike`, `npm run memspike`, `npm run gateway:offline` — each
+preceded by its own build. None of these touch the network beyond `npm`
+itself: `test`, `spike`, and `memspike` are fully local, and `gateway:offline`
+is the hermetic mode of the gateway suite (T35), where the production workers
+are replaced by in-process fakes served through the same URL-to-binding map
+the gateway uses. Hermeticity is enforced by an outbound fetch interceptor:
+if anything in the suite tries to leave the process for the network, the run
+fails. This job blocks the merge.
+
+The `prod-integration` job runs `npm run gateway`, the online gateway suite
+against the deployed production workers (`*.rckflr.workers.dev`) over the
+public internet. This is the only command in CI that reaches production, and
+its purpose is to detect drift between the fakes and the real workers. It is
+non-blocking (`continue-on-error`): an outage on their side surfaces as a
+warning, not a red gate, so a foreign incident cannot block work in this repo.
 
 ## Development notes
 

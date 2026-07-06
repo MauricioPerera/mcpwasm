@@ -59,10 +59,9 @@ service = "llmstxt-docs"
 # de ventana fija por client_id (DO id por nombre = client_id) en storage
 # SQLite-backed (new_sqlite_classes => funciona en todos los planes, no solo
 # Workers Paid). El gateway solo invoca el DO si se cumplen las 3: modo por-cliente
-# (env.CLIENTS) + cliente con rpm no-null + este binding presente. Sin binding el
-# limiter queda inactivo (flujo byte-identico al previo). NO desplegar todavia:
-# el binding no existe en produccion y el modo online no lo usa (los tests gateway
-# y gateway:offline no dependen de el).
+# (env.CLIENTS) + cliente con rpm no-null + este binding presente. El binding se
+# despliega con el worker; el limiter sigue inactivo hasta que exista un CLIENTS
+# con rpm (sin binding o sin rpm el flujo queda byte-identico al previo).
 [[durable_objects.bindings]]
 name = "RATE_LIMITER"
 class_name = "RateLimiter"

@@ -281,7 +281,10 @@ skill `create_order`), and the docs-site
 `origin` is URL-encoded as a query param. **The deployed gateway has auth
 enabled:** every request below needs `-H "Authorization: Bearer <AUTH_TOKEN>"`
 (the `AUTH_TOKEN` secret; 401 otherwise). The token is a secret — it is not in
-this repo.
+this repo. The deployed gateway can also run in **per-client mode** (the
+`CLIENTS` secret), in which case each client sends its own
+`Authorization: Bearer <client_token>` with the same curl syntax; the response
+then carries `X-Gw-Client: <client_id>`.
 
 List the skills the demo site publishes:
 
@@ -376,11 +379,40 @@ What it guarantees:
 
 What it does **not** guarantee:
 
-- **Auth is a single shared bearer token, optional by config.** If the
-  `AUTH_TOKEN` secret is set, the gateway requires
-  `Authorization: Bearer <token>` on `POST /mcp` (401 otherwise); the deployed
-  gateway has it enabled. Without the secret it runs open (dev mode). There is
-  still no per-client identity or rate limiting. The PoC worker remains open.
+- **Auth has three modes, selected by config.** Precedence is per-client
+  → legacy shared token → dev open.
+  - *Per-client (`CLIENTS` secret, opt-in).* `CLIENTS` is a JSON secret mapping
+    `sha256_hex_of_token → { client_id, rpm? }`. Tokens never appear in
+    cleartext in config — the key is the lowercase hex SHA-256 of the token's
+    UTF-8 bytes. On `POST /mcp` the gateway hashes the `Authorization: Bearer
+    <token>` value and does an exact lookup on that hash; the lookup *is* the
+    timing-safe mechanism (a fixed digest is compared, never the cleartext
+    token against a secret). A known token passes and the response carries
+    `X-Gw-Client: <client_id>`; an unknown token, missing header, or malformed
+    header yields `401`. `AUTH_TOKEN` is ignored in this mode. If `CLIENTS` is
+    set but its JSON is invalid, the gateway **fail-closes** — every `POST /mcp`
+    returns `401` rather than opening by config error (signalled on `GET /`).
+  - *Legacy shared token (`AUTH_TOKEN` secret).* If `CLIENTS` is unset, the
+    `AUTH_TOKEN` secret enables a single shared bearer token (constant-time
+    comparison); the deployed gateway has it enabled. Without it the gateway
+    runs open (dev mode). The PoC worker remains open.
+  - *Per-client rate limiting (opt-in, requires per-client mode).* When
+    per-client mode is active, the client's `rpm` is a non-null number, and the
+    `RATE_LIMITER` Durable Object binding is present, each `POST /mcp` is
+    counted against a **fixed window** of 60 s persisted in the DO's
+    SQLite-backed storage (one DO instance per `client_id`, keyed by name).
+    Within quota, responses carry `X-Gw-RateLimit-Limit` / `-Remaining` /
+    `-Reset`; `Remaining` counts **including the current request** (the
+    admitted sequence shows `rpm, rpm-1, … 1`). Over quota the gateway returns
+    `429` with `Retry-After` and `Remaining: 0`. Honest edges: a fixed window
+    allows a burst of up to `2 × rpm` straddling a window boundary (a client
+    can spend a full window's quota at its tail and the next window's at its
+    head), and the limiter is per-request, not per-cost — it caps call count,
+    not payload size, CPU, or complexity. If the DO itself fails while the
+    limiter is active, the gateway **fail-closes** with an observable
+    `500 rate_limiter_unavailable` rather than letting the request through
+    uncounted. Without the binding (or with no `rpm`), the limiter stays
+    inactive and the request path is byte-identical to the prior behavior.
 - **Per-skill isolation is context-level, not process-level.** Skills get
   separate QuickJS contexts but share the same wasm module instance and the
   same Worker request; the boundary is the QuickJS API surface, not an OS
@@ -418,7 +450,7 @@ What it does **not** guarantee:
 | `build-memspike.mjs` / `build-memsnapshot.mjs` | esbuild bundler for the memspike worker, and the snapshot builder for the docs-site BM25 snapshot. |
 | `mf-test.mjs` / `mf-spike.mjs` / `mf-gateway.mjs` / `mf-memspike.mjs` | e2e tests with Miniflare v4 against the built workers (PoC, spike, gateway, memspike). |
 | `wrangler.toml` | Wrangler config for the PoC (sync) worker. |
-| `wrangler-gateway.toml` | Wrangler config for the gateway. Vars: `ALLOWED_ORIGINS` (origin allowlist), `REVIEWERS` (attestation reviewer registry, JSON), `ATTESTATION_MODE` (`off`/`advisory`/`enforcing`). Service bindings `DEMO`, `BOOKSTORE`, `DOCS` (same-account worker-to-worker fetch, bypassing Cloudflare error 1042). `AUTH_TOKEN` is set as a secret, not in this file. |
+| `wrangler-gateway.toml` | Wrangler config for the gateway. Vars: `ALLOWED_ORIGINS` (origin allowlist), `REVIEWERS` (attestation reviewer registry, JSON), `ATTESTATION_MODE` (`off`/`advisory`/`enforcing`). Service bindings `DEMO`, `BOOKSTORE`, `DOCS` (same-account worker-to-worker fetch, bypassing Cloudflare error 1042). `AUTH_TOKEN` and `CLIENTS` are set as secrets, not in this file. Durable Object binding `RATE_LIMITER` (class `RateLimiter`, migration `v1` with `new_sqlite_classes`) deploys with the worker; the limiter stays inactive until a `CLIENTS` registry with `rpm` values exists. |
 | `scripts/attest.mjs` | Attestation tool: `keygen` (writes local `.attester-key.json`, prints public key) and `sign <origin> <skill> <valid_until>` (Ed25519 attestation JSON). |
 | `bench/` + `BENCHMARK.md` | `bench/run.mjs` (single-client latency harness against the deployed workers) and its raw results; `BENCHMARK.md` is the write-up. |
 | `quickjs.wasm` / `quickjs-asyncify.wasm` | Pre-compiled QuickJS binaries imported as static `CompiledWasm` modules. |

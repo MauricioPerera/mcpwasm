@@ -423,9 +423,16 @@ What it does **not** guarantee:
   requests. A tool that accumulates state loses it when the request ends.
 - **DoS is bounded, not impossible.** The limits above cap a single call's
   cost; a determined caller can still spend the limits' worth of CPU/memory
-  per request, and the gateway caches discovery per isolate for 60 s (observable
-  via the `X-Gw-Discovery: hit|miss` response header) plus `llms.txt` / verified
-  `tool.js` in the Cache API, so cold-path cost is amortized but not zero.
+  per request. Discovery is cached in two layers: layer 1 caches the parsed
+  result per isolate for 60 s, and layer 2 caches the full post-verification
+  result in the Cache API per colo for 60 s (observable via the
+  `X-Gw-Discovery: hit|l2|miss` response header — `hit` served from layer 1,
+  `l2` hydrated cross-isolate from layer 2, `miss` fetched from the origin).
+  The layer 2 key carries a config fingerprint (attestation mode + reviewer
+  registry + UTC date), so changing the config never serves stale verdicts.
+  What is cached is post-verification (the `tool.js` bytes were already
+  hash-checked when layer 2 was populated), inside the account's own trust
+  domain; the cold path is amortized more, but still not zero.
 - **The publisher is trusted for the skill list.** The gateway trusts the
   origin's `/llms.txt` to name skills; it verifies the `tool.js` bytes match
   the declared SHA-256, but it does not vet what the tool does.

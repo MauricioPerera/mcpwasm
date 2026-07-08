@@ -77,6 +77,17 @@ class_name = "RateLimiter"
 tag = "v1"
 new_sqlite_classes = ["RateLimiter"]
 
+# Precalentamiento del descubrimiento (handler scheduled en worker-gateway.mjs):
+# cada minuto corre discovery de todos los origins del allowlist (poblando L1
+# del isolate y L2 del colo del cron) e instancia un modulo wasm del pool.
+# Ataca el costo dominante medido en BENCHMARK.md (miss de descubrimiento
+# ~250-400ms). Limite honesto: la Cache API es por colo y el cron corre en un
+# solo punto de presencia; otros colos siguen pagando su primer miss. Costo:
+# ~1 invocacion/min + un punado de subrequests. Borrar este bloque desactiva
+# el preheat sin tocar codigo.
+[triggers]
+crons = ["* * * * *"]
+
 # Regla de modulo para que el import "./quickjs-asyncify.wasm" se trate como
 # WebAssembly.Module pre-compilado (CompiledWasm) en el build de wrangler.
 [[rules]]

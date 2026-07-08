@@ -138,6 +138,37 @@ mcpwasm removes the trust requirement for the *code*:
   cap, a deterministic gas budget (interrupt-handler invocation count), and a
   wall-clock fetch deadline per call.
 
+## Static MCP vs. a traditional MCP server
+
+In mcpwasm, *publishing* (static files + a hash) and *execution* (a runtime
+that discovers, verifies, and sandboxes on demand) are two separate things. In
+a traditional MCP server they are the same thing — the server you deploy *is*
+the execution, with no isolation layer in between.
+
+| | Static MCP — local (`npx @rckflr/mcpwasm`) | Static MCP — gateway | Traditional MCP server |
+|---|---|---|---|
+| What the publisher ships | Static files: `llms.txt` + `tool.js` (+ `SKILL.md`) | Same static files | A running server process (any language) |
+| Infrastructure the publisher operates | None — GitHub Pages, R2, any static host | None — same | The whole server: uptime, scaling, patching, secrets |
+| Where the tool code runs | Your own machine, in a QuickJS-wasm sandbox | The gateway Worker, in the same sandbox | The publisher's own process, natively, no isolation |
+| Integrity guarantee | SHA-256 verified before any byte executes | Same | None built in — you trust the deployed binary/image as-is |
+| Third trust ring (human review) | Not enforced (v1 limit — trust is your choice of origin) | Ed25519 attestations, `enforcing` mode in production | No standard mechanism |
+| Transport | stdio (JSON-RPC over stdin/stdout) | HTTP POST (JSON-RPC); needs the gateway URL + a token | Either — but fixed per implementation |
+| Network hops for the MCP call itself | Zero (local process); the tool can still call out via `fetchOrigin` | Two: client → gateway → publisher origin | Zero for local stdio, one for remote HTTP |
+| Measured overhead (this repo's own benchmarks) | Not separately benchmarked — same sandbox cost, no gateway hop | ~2 ms sandbox warm, ~6 ms for the full gateway vs. a direct API call ([BENCHMARK.md](./BENCHMARK.md)) | N/A — no sandbox tax, but no isolation either |
+| Discovery freshness | Once per process start (restart to refresh) | Cached 60 s (two layers + cron preheat) | Whatever the server implements |
+| Multi-client / shared access | No — one local process per user | Yes — one gateway serves any number of MCP clients | Yes, if built as a shared server |
+| Auth | None (you chose to run it) | Optional: shared token or per-client tokens + rate limiting | Whatever the publisher builds |
+| Best fit | Developing/testing your own skills locally; zero-trust execution of someone else's skills without running a server | Teams wanting one shared endpoint serving many static publishers, with signed review as policy | Stateful logic, database connections, capabilities that genuinely need no sandbox constraint |
+
+The takeaway that doesn't fit in a table: a traditional MCP server answers "how
+do I expose this logic as a tool?" Static MCP additionally answers "how do I
+run code from an origin I don't fully trust?" If you write and control the
+server yourself, traditional is simpler and none of this is necessary. Static
+MCP matters when the tool code comes from *someone else*, and you want a
+verifiable guarantee (hash + sandbox, optionally review) before running it —
+that is the problem this repo exists to solve, not a general-purpose
+alternative to MCP.
+
 ## Architecture
 
 ```

@@ -13,11 +13,17 @@
 //   4. tools/call sum_numbers {a:2,b:40} -> structuredContent.result 42.
 //   5. tools/call origin_time -> epoch numerico (fetchOrigin al origin local).
 //   6. tools/call a tool inexistente -> isError:true (error de tool, no crash).
+//
+// Segunda seccion (--serve): un directorio real en disco (mkdtemp) sirve de
+// "git clone" fake; verifica el flujo completo end-to-end sobre el file
+// server interno, ademas de la defensa contra directory traversal.
 
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 const sha = (s) => createHash("sha256").update(s, "utf8").digest("hex");
@@ -171,6 +177,100 @@ try {
   child.stdin.end();
   await new Promise((r) => child.on("exit", r));
   server.close();
+}
+
+// ---------------------------------------------------------------------------
+// [--serve] directorio real en disco (simula un git clone) + file server
+// interno del runtime + defensa contra directory traversal.
+console.log("\n[--serve] directorio local -> file server interno -> MCP:");
+
+const servedDir = mkdtempSync(path.join(tmpdir(), "mcpwasm-serve-test-"));
+const outsideSecretPath = path.join(tmpdir(), "mcpwasm-serve-test-secret.txt");
+writeFileSync(outsideSecretPath, "secreto que NO debe ser servible", "utf8");
+try {
+  mkdirSync(path.join(servedDir, "skills", "sum_numbers"), { recursive: true });
+  writeFileSync(path.join(servedDir, "skills", "sum_numbers", "tool.js"), SUM_TOOL, "utf8");
+  writeFileSync(
+    path.join(servedDir, "llms.txt"),
+    "# fake repo local (--serve)\n\n## Skills\n\n" +
+      `- [sum_numbers](/skills/sum_numbers/SKILL.md): Sum two numbers. <!-- skill: ${JSON.stringify({ version: "1.0.0", tool: "/skills/sum_numbers/tool.js", tool_sha256: sha(SUM_TOOL) })} -->\n`,
+    "utf8"
+  );
+
+  const servePort = 8956; // fijo: la prueba de traversal necesita conocer el puerto de antemano
+  const serveChild = spawn(process.execPath, [binPath, "--serve", servedDir, "--port", String(servePort)], {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const serveStderr = [];
+  serveChild.stderr.on("data", (d) => {
+    for (const l of String(d).split(/\r?\n/)) if (l.trim()) serveStderr.push(l);
+  });
+  const servePending = [];
+  const serveWaiting = [];
+  let serveBuf = "";
+  serveChild.stdout.on("data", (d) => {
+    serveBuf += String(d);
+    let i;
+    while ((i = serveBuf.indexOf("\n")) !== -1) {
+      const line = serveBuf.slice(0, i).trim();
+      serveBuf = serveBuf.slice(i + 1);
+      if (!line) continue;
+      const w = serveWaiting.shift();
+      if (w) w(line);
+      else servePending.push(line);
+    }
+  });
+  function serveNextLine(timeoutMs = 30000) {
+    if (servePending.length > 0) return Promise.resolve(servePending.shift());
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("timeout")), timeoutMs);
+      serveWaiting.push((l) => {
+        clearTimeout(t);
+        resolve(l);
+      });
+    });
+  }
+
+  try {
+    serveChild.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "sum_numbers", arguments: { a: 11, b: 31 } } }) + "\n");
+    const res = JSON.parse(await serveNextLine(60000));
+    console.log("[--serve] sum_numbers(11,31) ->", JSON.stringify(res).slice(0, 160));
+    check(res.result && res.result.structuredContent && res.result.structuredContent.result === 42,
+      "--serve: descubrimiento + sandbox end-to-end sobre el file server interno -> 42");
+    check(serveStderr.some((l) => /solo 127\.0\.0\.1, no expuesto a la red/.test(l)),
+      "--serve: stderr confirma bind solo a 127.0.0.1");
+
+    // Directory traversal: pedir directo por HTTP al file server interno un
+    // path que intenta escapar del directorio servido.
+    const traversalAttempts = [
+      "/../mcpwasm-serve-test-secret.txt",
+      "/skills/../../mcpwasm-serve-test-secret.txt",
+      "/..%2fmcpwasm-serve-test-secret.txt",
+    ];
+    let allBlocked = true;
+    for (const t of traversalAttempts) {
+      const r = await fetch("http://127.0.0.1:" + servePort + t);
+      if (r.status === 200) allBlocked = false;
+    }
+    check(allBlocked, "--serve: 3 intentos de directory traversal -> ninguno devuelve 200 (todos bloqueados)");
+
+    const legit = await fetch("http://127.0.0.1:" + servePort + "/llms.txt");
+    check(legit.status === 200, "--serve: /llms.txt legitimo sigue sirviendose (200) tras el hardening de traversal");
+  } finally {
+    serveChild.stdin.end();
+    await new Promise((r) => serveChild.on("exit", r));
+  }
+
+  // --serve con directorio inexistente: debe fallar rapido con exit != 0, sin colgar.
+  const badDirChild = spawn(process.execPath, [binPath, "--serve", path.join(servedDir, "no-existe")], {
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  badDirChild.stdin.end();
+  const badDirExit = await new Promise((r) => badDirChild.on("exit", (code) => r(code)));
+  check(badDirExit !== 0, "--serve con directorio inexistente: el proceso termina con exit code != 0");
+} finally {
+  rmSync(servedDir, { recursive: true, force: true });
+  rmSync(outsideSecretPath, { force: true });
 }
 
 console.log("\n" + (failures === 0 ? "TODOS LOS CHECKS VERDE" : failures + " CHECK(S) ROJO(S)"));

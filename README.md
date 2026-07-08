@@ -93,6 +93,28 @@ process (restart to refresh). Hash verification and the sandbox model
 same as the gateway's. Tested by `npm run local` (hermetic, localhost-only;
 part of the CI gate).
 
+#### Developing your own skills: `--serve <dir>`
+
+Pointing the runtime at a raw GitHub URL does **not** work: `new URL(...).origin`
+keeps only scheme+host+port, so `https://raw.githubusercontent.com/you/repo/main/`
+collapses to `https://raw.githubusercontent.com` — the `you/repo/main` part (and
+therefore `/llms.txt`) is gone. `--serve` is the practical alternative: it starts
+an internal static file server (bound to `127.0.0.1` only, never exposed to the
+network) over a local directory — e.g. your own `git clone` of a skills repo —
+and uses that as the origin, combining "serve this directory" and "connect to
+it" into one command:
+
+```bash
+npx -y @rckflr/mcpwasm --serve ./my-skills-repo
+# npx -y @rckflr/mcpwasm --serve ./my-skills-repo --port 4000   (fixed port, optional)
+```
+
+This is meant for developing and testing your own skills locally before
+publishing them (to GitHub Pages or any other static host) — not for browsing
+someone else's GitHub repo directly. Path-traversal requests against the
+internal file server are rejected (resolved and checked against the served
+directory's root); covered by `npm run local`.
+
 ## Why
 
 MCP clients (Claude, Cursor, others) can call arbitrary tools. Running a

@@ -141,7 +141,7 @@ const offlineFakes = OFFLINE ? buildOfflineFakes() : null;
 // instancias de T40 para simular cross-isolate (caches.default respaldado en
 // disco por Miniflare via un Durable Object CacheObject con storage localDisk).
 // Sin el, caches.default es volatile por instancia (byte-identico a hoy).
-function gwMiniflare({ bindings, serviceBindings, durableObjects, cachePersist, stdio }) {
+function gwMiniflare({ bindings, serviceBindings, durableObjects, cachePersist, stdio, triggerHandlers }) {
   const opts = {
     scriptPath: fileURLToPath(new URL("./dist-gateway/worker.js", import.meta.url)),
     modules: true,
@@ -159,6 +159,10 @@ function gwMiniflare({ bindings, serviceBindings, durableObjects, cachePersist, 
   // T42: captura opcional del stdio del worker (console.warn del gateway con las
   // razones de rechazo por tamano). (stdout, stderr) Readables -> callback.
   if (stdio) opts.handleRuntimeStdio = stdio;
+  // [preheat] habilita el endpoint especial /cdn-cgi/handler/scheduled de
+  // workerd para disparar el handler scheduled desde el test. Solo lo pide la
+  // instancia del test de preheat; sin el, opts byte-identicos a hoy.
+  if (triggerHandlers) opts.unsafeTriggerHandlers = true;
   if (OFFLINE) {
     if (!opts.serviceBindings) opts.serviceBindings = {};
     if (!opts.serviceBindings.DEMO) opts.serviceBindings.DEMO = offlineFakes.demo;
@@ -1987,6 +1991,54 @@ try {
       console.log("[T42.g] smoke default-caps docs -> HTTP " + list.status + " (no-regresion: caps default no rompen discovery)");
       check(list.status === 200, "T42.g: con caps por DEFAULT (sin env) el discovery del docs real/fake sigue HTTP 200 (no-regresion)");
     } finally { await mfG.dispose(); }
+  }
+
+  // ---------------------------------------------------------------------------
+  // [preheat] El handler scheduled precalienta el descubrimiento: tras disparar
+  // el evento (endpoint especial de workerd /cdn-cgi/handler/scheduled, opt-in
+  // unsafeTriggerHandlers), el PRIMER request MCP del isolate ya reporta
+  // X-Gw-Discovery=hit — la capa 1 la poblo el cron, no un request. Sin el
+  // preheat ese primer request seria siempre "miss" (asi lo asevera el check 1
+  // de esta suite). Isolate fresco (instancia Miniflare propia).
+  console.log("\n[preheat] scheduled() -> primer request MCP con discovery=hit:");
+  const mfPre = gwMiniflare({
+    bindings: { ALLOWED_ORIGINS: DEMO_ORIGIN },
+    triggerHandlers: true,
+  });
+  try {
+    const sched = await mfPre.dispatchFetch("http://localhost/cdn-cgi/handler/scheduled");
+    console.log("[preheat] trigger scheduled -> HTTP " + sched.status + " " + (await sched.text()).slice(0, 60));
+    check(sched.status === 200, "preheat: el trigger scheduled respondio 200");
+
+    async function rpcPre(payload) {
+      const res = await mfPre.dispatchFetch(
+        "http://localhost/mcp?origin=" + encodeURIComponent(DEMO_ORIGIN),
+        { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) }
+      );
+      let body = null;
+      try { body = await res.json(); } catch { body = null; }
+      return { status: res.status, body, headers: Object.fromEntries(res.headers) };
+    }
+
+    const preFirst = await rpcPre({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    console.log("[preheat] 1er tools/list -> discovery=" + preFirst.headers["x-gw-discovery"]);
+    check(preFirst.status === 200, "preheat: 1er tools/list HTTP 200");
+    check(
+      preFirst.headers["x-gw-discovery"] === "hit",
+      "preheat: 1er request MCP del isolate -> X-Gw-Discovery=hit (descubrimiento precalentado por el cron)"
+    );
+    const preNames = ((preFirst.body && preFirst.body.result && preFirst.body.result.tools) || []).map((t) => t.name);
+    check(preNames.includes("sum_numbers"), "preheat: tools/list precalentado contiene sum_numbers");
+
+    const preCall = await rpcPre({
+      jsonrpc: "2.0", id: 2, method: "tools/call",
+      params: { name: "sum_numbers", arguments: { a: 20, b: 22 } },
+    });
+    const preSc = preCall.body && preCall.body.result && preCall.body.result.structuredContent;
+    check(preCall.status === 200 && preSc && preSc.result === 42,
+      "preheat: tools/call sum_numbers sobre el cache precalentado -> 42");
+  } finally {
+    await mfPre.dispose();
   }
 
   console.log("\n" + (failures === 0 ? "TODOS LOS CHECKS VERDE" : failures + " CHECK(S) ROJO(S)"));

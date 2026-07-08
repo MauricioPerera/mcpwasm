@@ -25,6 +25,8 @@ jobs:
         run: npm run memspike
       - name: Run gateway suite (offline)
         run: npm run gateway:offline
+      - name: Run local runtime suite
+        run: npm run local
 
   prod-integration:
     runs-on: ubuntu-latest

@@ -54,9 +54,43 @@ Notes:
 - The sync `ToolHost` lazy-imports the optional peer `quickjs-emscripten`
   unless you pass a pre-built module; the async host's dependencies install
   with the package.
-- The package contains only the host/core/parser files; the workers, publisher
-  sites and test suites stay in this repo (they are the deployed reference,
-  not the library).
+- The package contains only the host/core/parser files plus the local runtime
+  binary; the workers, publisher sites and test suites stay in this repo (they
+  are the deployed reference, not the library).
+
+### Local MCP runtime — no gateway at all
+
+The package also ships a stdio MCP server that runs an origin's skills
+**locally**: it fetches `/llms.txt`, verifies every `tool_sha256`, loads each
+verified skill into its own QuickJS-wasm context, and speaks MCP over
+stdin/stdout — so a static site (e.g. a GitHub Pages *user* site) becomes an
+MCP server on your machine with zero deployed infrastructure on either side:
+
+```bash
+npx -y @rckflr/mcpwasm https://usuario.github.io
+```
+
+MCP client configuration (Claude Code, Cursor, …):
+
+```json
+{
+  "mcpServers": {
+    "misitio": {
+      "command": "npx",
+      "args": ["-y", "@rckflr/mcpwasm", "https://usuario.github.io"]
+    }
+  }
+}
+```
+
+Honest v1 limits (stated in `bin/mcpwasm-local.mjs`): no origin memory
+(`host.memorySearch` is absent; skills that call it fail controlled, which the
+spec allows), no attestation verification (locally, trust is your choice of
+origin — hash verification remains mandatory), and discovery runs once per
+process (restart to refresh). Hash verification and the sandbox model
+(per-skill contexts, origin-scoped `fetchOrigin`, resource limits) are the
+same as the gateway's. Tested by `npm run local` (hermetic, localhost-only;
+part of the CI gate).
 
 ## Why
 

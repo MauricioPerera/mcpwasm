@@ -551,7 +551,7 @@ What it does **not** guarantee:
 | `demo-site/` | Demo publisher site (`llms.txt` + `sum_numbers` / `server_time` skills). Deployed at `llmstxt-demo-site.rckflr.workers.dev`. |
 | `bookstore/` | Realistic publisher: D1-backed catalog (52 books), read skills + `create_order` write skill, plus permanent robustness fixtures (`corrupt_skill` hash-mismatch, `busy_loop` infinite loop). Deployed at `llmstxt-bookstore.rckflr.workers.dev`. |
 | `docs-site/` | Docs publisher: serves the llms-txt-skills spec documents + a `skills-index.snapshot` (BM25, `minimemory-okf-v1`), with `search_spec` (BM25 via `host.memorySearch`), `get_doc`, and `list_docs` skills. Deployed at `llmstxt-docs.rckflr.workers.dev`. |
-| `TAREA*-REPORT.md` (one per milestone) | Development reports (see below). |
+| `reports/` | Development reports, one `TAREA*-REPORT.md` per milestone (see below), plus the raw MCP-client outputs of T13-T15. |
 | `.github/workflows/ci.yml` | GitHub Actions CI: two jobs (`hermetic` gate + `prod-integration` non-blocking) on push and pull_request to `main`. |
 
 ## CI
@@ -579,37 +579,37 @@ warning, not a red gate, so a foreign incident cannot block work in this repo.
 
 ## Development notes
 
-Each milestone is documented in its `TAREA*-REPORT.md` (TAREA1 through TAREA45;
+Each milestone is documented in its `reports/TAREA*-REPORT.md` (TAREA1 through TAREA45;
 `TAREA2` and `TAREA30` were skipped in numbering and `TAREA12B` is a
 continuation of TAREA12).
 The non-obvious bits live there:
 
-- `TAREA4-REPORT.md` — deploying to Cloudflare Workers: the `CompiledWasm` rule
+- `reports/TAREA4-REPORT.md` — deploying to Cloudflare Workers: the `CompiledWasm` rule
   and why importing the `.wasm` as a static module avoids
   "Wasm code generation disallowed by embedder".
-- `TAREA5-REPORT.md` — the asyncify spike: why asyncify is needed for an
+- `reports/TAREA5-REPORT.md` — the asyncify spike: why asyncify is needed for an
   `await`-shaped capability, and the promise-pumping loop in
   `AsyncToolHost.callTool`.
-- `TAREA7-REPORT.md` — the gateway: sha256 verification, the Cache API use, and
+- `reports/TAREA7-REPORT.md` — the gateway: sha256 verification, the Cache API use, and
   the Cloudflare error 1042 (same-account worker-to-worker fetch via
   `workers.dev`) workaround via a service binding.
-- `TAREA12-REPORT.md` / `TAREA12B-REPORT.md` — `Date.now()` is frozen in
+- `reports/TAREA12-REPORT.md` / `reports/TAREA12B-REPORT.md` — `Date.now()` is frozen in
   Cloudflare Workers during synchronous execution, so a wall-clock deadline
   never cuts a `while(true){}`. Fix: a deterministic gas budget — the interrupt
   handler counts its own invocations and interrupts at 20 000, independent of
   the clock. Calibrated against the heaviest legitimate skill.
-- `TAREA14-REPORT.md` — `structuredContent` in an MCP result must be a JSON
+- `reports/TAREA14-REPORT.md` — `structuredContent` in an MCP result must be a JSON
   object (MCP-shaped), not a bare scalar/array; the gateway normalizes tool
   output accordingly.
-- `TAREA19-REPORT.md` — concurrency: a per-wasm-module mutex on instantiation
+- `reports/TAREA19-REPORT.md` — concurrency: a per-wasm-module mutex on instantiation
   plus single-flight discovery per origin, so parallel cold requests share one
   discovery pass and one module build.
-- `TAREA22-REPORT.md` — origin memory: the `skills-memory` line, sha256-verified
+- `reports/TAREA22-REPORT.md` — origin memory: the `skills-memory` line, sha256-verified
   BM25 snapshot, and the `host.memorySearch` capability injected via
   `extraCapabilities`.
-- `TAREA25-REPORT.md` — skill attestations (Ed25519, WebCrypto, `REVIEWERS`
+- `reports/TAREA25-REPORT.md` — skill attestations (Ed25519, WebCrypto, `REVIEWERS`
   registry, verdicts, advisory/enforcing modes, `scripts/attest.mjs`).
-- `TAREA26-REPORT.md` — code-review fixes: `extraCapabilities` now forwards all
+- `reports/TAREA26-REPORT.md` — code-review fixes: `extraCapabilities` now forwards all
   positional args (so `host.memorySearch(q, k)` keeps `k`), and the
   `fetchOrigin` timeout backstop timer is cleared on resolve (no leaked
   timers).

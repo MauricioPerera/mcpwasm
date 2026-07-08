@@ -1,6 +1,7 @@
 # mcpwasm — Static MCP
 
 [![CI](https://github.com/MauricioPerera/mcpwasm/actions/workflows/ci.yml/badge.svg)](https://github.com/MauricioPerera/mcpwasm/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/%40rckflr%2Fmcpwasm)](https://www.npmjs.com/package/@rckflr/mcpwasm)
 
 **Static MCP: your tools are files, not servers.** Tools are published as
 static, hash-verified content and executed sandboxed on demand. What static

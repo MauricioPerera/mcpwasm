@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mcpwasm — Static MCP: your tools are files, not servers</title>
+<meta name="description" content="A sandboxed runtime for third-party MCP tools: publish a static llms.txt + tool.js, run it hash-verified inside QuickJS-wasm. Gateway, local stdio runtime, or embeddable library.">
+<meta property="og:title" content="mcpwasm — Static MCP">
+<meta property="og:description" content="Your MCP tools are files, not servers. Hash-verified, sandboxed, zero infrastructure.">
+<meta property="og:type" content="website">
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<main>
+
+  <!-- ============ HERO ============ -->
+  <section id="hero" class="section hero">
+    <div class="wrap">
+      <div class="badges">
+        <a href="https://github.com/MauricioPerera/mcpwasm/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/MauricioPerera/mcpwasm/actions/workflows/ci.yml/badge.svg"></a>
+        <a href="https://www.npmjs.com/package/@rckflr/mcpwasm"><img alt="npm" src="https://img.shields.io/npm/v/%40rckflr%2Fmcpwasm"></a>
+      </div>
+      <h1>Static MCP: your tools are files,<br>not servers.</h1>
+      <p class="lede">
+        Publish an MCP tool as a static, hash-verified file. Run it sandboxed,
+        on demand, with zero infrastructure — the way static site hosting did
+        to web servers: don't run Apache, publish HTML.
+      </p>
+      <div class="code-block hero-cta">
+        <div class="code-head">
+          <span>terminal</span>
+          <button class="copy-btn" type="button">Copy</button>
+        </div>
+        <pre><code>npx -y @rckflr/mcpwasm https://usuario.github.io</code></pre>
+      </div>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="#quickstart">Try it now</a>
+        <a class="btn" href="https://github.com/MauricioPerera/mcpwasm">View on GitHub</a>
+        <a class="btn" href="https://www.npmjs.com/package/@rckflr/mcpwasm">@rckflr/mcpwasm on npm</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ THE PROBLEM ============ -->
+  <section id="problem" class="section reveal">
+    <div class="wrap">
+      <h2>Running someone else's tool code is a trust decision</h2>
+      <p class="section-lede">
+        MCP clients like Claude or Cursor can call arbitrary third-party
+        tools. Executing that code directly in your backend means it can
+        read your secrets, hit your database, phone home, or loop forever.
+        You either trust the author fully, or you don't run the tool.
+      </p>
+      <div class="contrast">
+        <div class="contrast-col">
+          <h3>Typical MCP server</h3>
+          <ul>
+            <li>Someone has to run a process, 24/7</li>
+            <li>Third-party code shares your runtime</li>
+            <li>Trust the author, or don't install</li>
+          </ul>
+        </div>
+        <div class="contrast-col contrast-col--accent">
+          <h3>mcpwasm</h3>
+          <ul>
+            <li>The tool is a file. No process to run.</li>
+            <li>Code executes isolated in QuickJS-wasm</li>
+            <li>SHA-256 pinned; a flipped byte excludes it</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ HOW IT WORKS ============ -->
+  <section id="how-it-works" class="section reveal">
+    <div class="wrap">
+      <h2>How it works</h2>
+      <p class="section-lede">Five steps, all sandboxed, no state kept between requests.</p>
+
+      <div class="diagram-wrap">
+        <svg id="arch-svg" viewBox="0 0 820 400" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="arch-title">
+          <title id="arch-title">A publisher site ships llms.txt and tool.js; the gateway fetches and verifies them by SHA-256, loads the tool into a QuickJS-wasm sandbox, the sandbox calls host.fetchOrigin back to the publisher, and the MCP client gets a JSON-RPC response.</title>
+
+          <!-- static frame: three boxes -->
+          <g class="node">
+            <rect x="20" y="24" width="230" height="92" rx="12" class="box"/>
+            <text x="135" y="60" class="box-title" text-anchor="middle">Publisher site</text>
+            <text x="135" y="84" class="box-sub" text-anchor="middle">static: R2 / Pages / any host</text>
+            <text x="135" y="101" class="box-sub" text-anchor="middle">serves /llms.txt + tool.js</text>
+          </g>
+
+          <g class="node">
+            <rect x="295" y="150" width="230" height="110" rx="12" class="box box--accent"/>
+            <text x="410" y="182" class="box-title" text-anchor="middle">Gateway</text>
+            <text x="410" y="205" class="box-sub" text-anchor="middle">discover → verify sha256</text>
+            <text x="410" y="222" class="box-sub" text-anchor="middle">load into sandbox</text>
+          </g>
+
+          <g class="node">
+            <rect x="570" y="24" width="230" height="92" rx="12" class="box"/>
+            <text x="685" y="60" class="box-title" text-anchor="middle">MCP client</text>
+            <text x="685" y="84" class="box-sub" text-anchor="middle">Claude, Cursor, ...</text>
+            <text x="685" y="101" class="box-sub" text-anchor="middle">POST /mcp (JSON-RPC 2.0)</text>
+          </g>
+
+          <g class="node" id="sandbox-node">
+            <rect x="335" y="300" width="150" height="64" rx="10" class="box box--sandbox"/>
+            <text x="410" y="327" class="box-title box-title--sm" text-anchor="middle">Sandbox</text>
+            <text x="410" y="345" class="box-sub box-sub--sm" text-anchor="middle">QuickJS-wasm, per skill</text>
+          </g>
+
+          <!-- step 1: publisher -> gateway (publish) -->
+          <g class="step" data-step="1">
+            <path d="M 195 116 C 220 128, 260 130, 313 152" class="arrow" marker-end="url(#arrowhead)"/>
+            <circle cx="250" cy="134" r="11" class="step-badge"/>
+            <text x="250" y="138" class="step-num" text-anchor="middle">1</text>
+            <text x="250" y="158" class="step-caption" text-anchor="middle">publish</text>
+          </g>
+
+          <!-- step 2: gateway -> publisher (verify sha256) -->
+          <g class="step" data-step="2">
+            <path d="M 313 172 C 260 185, 220 188, 192 130" class="arrow arrow--dashed" marker-end="url(#arrowhead)"/>
+            <circle cx="233" cy="196" r="11" class="step-badge step-badge--dashed"/>
+            <text x="233" y="200" class="step-num" text-anchor="middle">2</text>
+            <text x="233" y="220" class="step-caption" text-anchor="middle">verify sha256</text>
+          </g>
+
+          <!-- step 3: gateway -> sandbox (load) -->
+          <g class="step" data-step="3">
+            <path d="M 410 260 L 410 296" class="arrow" marker-end="url(#arrowhead)"/>
+            <circle cx="410" cy="277" r="11" class="step-badge"/>
+            <text x="410" y="281" class="step-num" text-anchor="middle">3</text>
+            <text x="446" y="281" class="step-caption" text-anchor="start">load</text>
+          </g>
+
+          <!-- step 4: sandbox -> publisher (host.fetchOrigin) -->
+          <g class="step" data-step="4">
+            <path d="M 340 322 C 200 300, 95 250, 150 122" class="arrow arrow--dashed" marker-end="url(#arrowhead)"/>
+            <circle cx="93" cy="228" r="11" class="step-badge step-badge--dashed"/>
+            <text x="93" y="232" class="step-num" text-anchor="middle">4</text>
+            <text x="93" y="252" class="step-caption" text-anchor="middle">fetchOrigin</text>
+          </g>
+
+          <!-- step 5: client <-> gateway (JSON-RPC) -->
+          <g class="step" data-step="5">
+            <path d="M 610 116 C 580 132, 555 140, 528 158" class="arrow" marker-end="url(#arrowhead)"/>
+            <path d="M 528 178 C 555 180, 588 175, 617 128" class="arrow arrow--dashed" marker-end="url(#arrowhead)"/>
+            <circle cx="662" cy="146" r="11" class="step-badge"/>
+            <text x="662" y="150" class="step-num" text-anchor="middle">5</text>
+            <text x="662" y="170" class="step-caption" text-anchor="middle">JSON-RPC</text>
+          </g>
+
+          <defs>
+            <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" class="arrowhead-fill"/>
+            </marker>
+          </defs>
+        </svg>
+
+        <ol class="diagram-steps-text">
+          <li>A publisher site ships <code>/llms.txt</code> plus per-skill <code>tool.js</code> and <code>SKILL.md</code>.</li>
+          <li>The gateway downloads <code>llms.txt</code>, fetches each <code>tool.js</code>, and verifies its SHA-256.</li>
+          <li>Verified tools load into a fresh QuickJS-wasm context, one per skill.</li>
+          <li>Tool code calls <code>host.fetchOrigin</code> — scoped to the publishing origin only; anything else throws inside the sandbox.</li>
+          <li>The gateway maps MCP <code>tools/list</code> / <code>tools/call</code> over JSON-RPC 2.0 back to the client.</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ THREE WAYS TO USE IT ============ -->
+  <section id="ways-to-use" class="section reveal">
+    <div class="wrap">
+      <h2>Three ways to use it today</h2>
+      <p class="section-lede">All three are real, deployed, and tested — not roadmap.</p>
+
+      <div class="cards cards-3">
+        <article class="card">
+          <h3>Gateway <span class="tag">turnkey MCP server</span></h3>
+          <p>Point any MCP client at the deployed gateway. It discovers, verifies, and sandboxes a publisher's skills on every request.</p>
+          <div class="code-block">
+            <div class="code-head"><span>bash</span><button class="copy-btn" type="button">Copy</button></div>
+            <pre><code><span class="tok-kw">curl</span> -s -X POST \
+  <span class="tok-str">"https://llmstxt-gateway.rckflr.workers.dev/mcp?origin=&lt;url-encoded-origin&gt;"</span> \
+  -H <span class="tok-str">"Authorization: Bearer &lt;AUTH_TOKEN&gt;"</span> \
+  -H <span class="tok-str">"content-type: application/json"</span> \
+  -d <span class="tok-str">'{"jsonrpc":"2.0","id":1,"method":"tools/list"}'</span></code></pre>
+          </div>
+        </article>
+
+        <article class="card card--accent">
+          <h3>Local runtime <span class="tag">zero infra, both sides</span></h3>
+          <p>Run any origin's skills locally over stdio. No gateway, no server, on either end.</p>
+          <div class="code-block">
+            <div class="code-head"><span>bash</span><button class="copy-btn" type="button">Copy</button></div>
+            <pre><code><span class="tok-kw">npx</span> -y @rckflr/mcpwasm https://usuario.github.io</code></pre>
+          </div>
+        </article>
+
+        <article class="card">
+          <h3>Library <span class="tag">embed the sandbox</span></h3>
+          <p>Build your own platform host with the exact isolation the gateway uses.</p>
+          <div class="code-block">
+            <div class="code-head"><span>js</span><button class="copy-btn" type="button">Copy</button></div>
+            <pre><code><span class="tok-kw">import</span> { AsyncToolHost } <span class="tok-kw">from</span> <span class="tok-str">"@rckflr/mcpwasm"</span>;
+
+<span class="tok-kw">const</span> host = <span class="tok-kw">new</span> AsyncToolHost({ allowedOrigin: <span class="tok-str">"https://example.com"</span> });
+<span class="tok-kw">await</span> host.init();
+host.loadToolSource(toolJsSource);
+<span class="tok-kw">const</span> result = <span class="tok-kw">await</span> host.callTool(<span class="tok-str">"sum_numbers"</span>, { a: 2, b: 40 });
+host.dispose();</code></pre>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ TRUST MODEL ============ -->
+  <section id="trust" class="section reveal">
+    <div class="wrap">
+      <h2>Three rings of trust</h2>
+      <p class="section-lede">None of them alone is enough. Together, they bound what a third-party tool can do — and who vouches for it.</p>
+
+      <div class="cards cards-3">
+        <article class="card">
+          <div class="ring-num">01</div>
+          <h3>Content integrity</h3>
+          <p>Every <code>tool.js</code> is pinned by SHA-256 in <code>llms.txt</code>. A single flipped byte and the skill is excluded — not degraded, not executed.</p>
+        </article>
+        <article class="card">
+          <div class="ring-num">02</div>
+          <h3>Sandbox isolation</h3>
+          <p>Each skill runs in its own QuickJS-wasm context: no <code>fetch</code>, no <code>process</code>, no disk. The only bridge out is an explicit, origin-scoped <code>host.fetchOrigin</code>.</p>
+        </article>
+        <article class="card">
+          <div class="ring-num">03</div>
+          <h3>Signed attestations</h3>
+          <p>Ed25519-signed human review with an expiry window. <strong>Honest today:</strong> one registered reviewer. The mechanism scales; the reviewer network hasn't yet.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ BENCHMARK ============ -->
+  <section id="benchmark" class="section reveal">
+    <div class="wrap">
+      <h2>What it costs</h2>
+      <p class="section-lede">Real numbers from the deployed gateway, not synthetic estimates.</p>
+
+      <div class="cards cards-4 stat-cards">
+        <div class="stat-card">
+          <div class="stat-value" data-count-to="2" data-suffix="ms">0ms</div>
+          <div class="stat-label">sandbox overhead, warm</div>
+          <div class="stat-sub">55ms sandboxed vs 53ms raw ping</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" data-count-to="6" data-suffix="ms">0ms</div>
+          <div class="stat-label">full gateway overhead</div>
+          <div class="stat-sub">96ms via gateway vs 90ms direct API</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value stat-value--transition" data-from="618" data-count-to="380" data-suffix="ms">0ms</div>
+          <div class="stat-label">p95, 10 concurrent requests</div>
+          <div class="stat-sub">before → after the instance pool + preheat</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" data-count-to="400" data-suffix="ms">0ms</div>
+          <div class="stat-label">cold discovery miss</div>
+          <div class="stat-sub">~210–400ms range, compile + sha256 + fetch</div>
+        </div>
+      </div>
+      <p class="disclaimer">
+        Single-client benchmark from México to the Cloudflare Workers edge — this
+        is latency of one observer, <strong>not a load test</strong>. Full matrix,
+        methodology, and raw data are in
+        <a href="https://github.com/MauricioPerera/mcpwasm/blob/main/BENCHMARK.md">BENCHMARK.md</a>.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ QUICK START ============ -->
+  <section id="quickstart" class="section reveal">
+    <div class="wrap">
+      <h2>Try it now</h2>
+
+      <h3 class="qs-sub">Run any origin's skills locally, no gateway</h3>
+      <div class="code-block">
+        <div class="code-head"><span>bash</span><button class="copy-btn" type="button">Copy</button></div>
+        <pre><code><span class="tok-kw">npx</span> -y @rckflr/mcpwasm https://usuario.github.io</code></pre>
+      </div>
+
+      <h3 class="qs-sub">MCP client configuration</h3>
+      <div class="code-block">
+        <div class="code-head"><span>json</span><button class="copy-btn" type="button">Copy</button></div>
+        <pre><code>{
+  <span class="tok-str">"mcpServers"</span>: {
+    <span class="tok-str">"misitio"</span>: {
+      <span class="tok-str">"command"</span>: <span class="tok-str">"npx"</span>,
+      <span class="tok-str">"args"</span>: [<span class="tok-str">"-y"</span>, <span class="tok-str">"@rckflr/mcpwasm"</span>, <span class="tok-str">"https://usuario.github.io"</span>]
+    }
+  }
+}</code></pre>
+      </div>
+
+      <h3 class="qs-sub">Or call the live demo gateway directly</h3>
+      <div class="code-block">
+        <div class="code-head"><span>bash</span><button class="copy-btn" type="button">Copy</button></div>
+        <pre><code><span class="tok-kw">curl</span> -s -X POST \
+  <span class="tok-str">"https://llmstxt-gateway.rckflr.workers.dev/mcp?origin=https%3A%2F%2Fllmstxt-demo-site.rckflr.workers.dev"</span> \
+  -H <span class="tok-str">"Authorization: Bearer &lt;AUTH_TOKEN&gt;"</span> \
+  -H <span class="tok-str">"content-type: application/json"</span> \
+  -d <span class="tok-str">'{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"sum_numbers","arguments":{"a":2,"b":40}}}'</span></code></pre>
+      </div>
+      <p class="disclaimer">
+        The deployed gateway requires a bearer token (not published here). Full
+        curl walkthrough — including the open demo, bookstore, and docs
+        publishers — is in the
+        <a href="https://github.com/MauricioPerera/mcpwasm#readme">README</a>.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ ECOSYSTEM ============ -->
+  <section id="ecosystem" class="section reveal">
+    <div class="wrap">
+      <h2>Part of a spec, not just a repo</h2>
+      <p class="section-lede">
+        mcpwasm is the reference implementation of two provisional extensions
+        to the
+        <a href="https://github.com/MauricioPerera/llms-txt-skills">llms-txt-skills</a>
+        standard: <strong>Executable Skills</strong> (v0.4, with origin memory)
+        and <strong>Skill Attestations</strong> (v0.2). Every MUST in those
+        specs is field-tested in this code — spec and implementation are kept
+        in sync.
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-inner">
+    <div class="footer-links">
+      <a href="https://github.com/MauricioPerera/mcpwasm">GitHub</a>
+      <a href="https://www.npmjs.com/package/@rckflr/mcpwasm">npm</a>
+      <a href="https://github.com/MauricioPerera/mcpwasm/blob/main/ONBOARDING.md">Onboard a publisher</a>
+      <a href="https://github.com/MauricioPerera/mcpwasm/blob/main/LICENSE">MIT License</a>
+    </div>
+    <a href="https://github.com/MauricioPerera/mcpwasm/actions/workflows/ci.yml">
+      <img alt="CI" src="https://github.com/MauricioPerera/mcpwasm/actions/workflows/ci.yml/badge.svg">
+    </a>
+  </div>
+</footer>
+
+<script src="js/main.js"></script>
+</body>
+</html>

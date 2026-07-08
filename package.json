@@ -1,8 +1,54 @@
 {
-  "name": "toolhost-mcp",
+  "name": "@rckflr/mcpwasm",
   "version": "0.1.0",
+  "description": "Static MCP host: run untrusted MCP tool.js files sandboxed in QuickJS-wasm (Cloudflare Workers or Node), with explicit host capabilities (fetchOrigin, callInternal, extraCapabilities) and llms.txt executable-skills parsing.",
   "type": "module",
-  "private": true,
+  "license": "MIT",
+  "author": "Mauricio Perera <mauricio.perera@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MauricioPerera/mcpwasm.git"
+  },
+  "homepage": "https://github.com/MauricioPerera/mcpwasm#readme",
+  "bugs": {
+    "url": "https://github.com/MauricioPerera/mcpwasm/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "quickjs",
+    "wasm",
+    "sandbox",
+    "cloudflare-workers",
+    "llms.txt",
+    "skills",
+    "static-mcp"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./host": "./host.mjs",
+    "./host-async": "./host-async.mjs",
+    "./mcp-core": "./mcp-core.mjs",
+    "./mcp-core-async": "./mcp-core-async.mjs",
+    "./llmstxt-parse": "./llmstxt-parse.mjs",
+    "./shim": "./shim.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "host.mjs",
+    "host-async.mjs",
+    "mcp-core.mjs",
+    "mcp-core-async.mjs",
+    "llmstxt-parse.mjs",
+    "shim.mjs"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "node build.mjs",
     "test": "node build.mjs && node mf-test.mjs",
@@ -12,14 +58,24 @@
     "memspike": "node build-memsnapshot.mjs && node build-memspike.mjs && node mf-memspike.mjs",
     "validate-publisher": "node scripts/validate-publisher.mjs"
   },
-  "devDependencies": {
+  "dependencies": {
     "@jitl/quickjs-wasmfile-release-asyncify": "^0.32.0",
+    "quickjs-emscripten-core": "^0.32.0"
+  },
+  "peerDependencies": {
+    "quickjs-emscripten": "^0.32.0"
+  },
+  "peerDependenciesMeta": {
+    "quickjs-emscripten": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
     "@jitl/quickjs-wasmfile-release-sync": "^0.32.0",
     "@rckflr/minimemory": "^3.2.0",
     "esbuild": "^0.25.0",
     "miniflare": "^4.20260630.0",
     "quickjs-emscripten": "^0.32.0",
-    "quickjs-emscripten-core": "^0.32.0",
     "wrangler": "^4.106.0"
   }
 }

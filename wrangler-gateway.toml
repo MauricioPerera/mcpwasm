@@ -21,6 +21,13 @@ REVIEWERS = '{"human:mauricio":{"public_key":"YghuJivYSVI458jIjwXEKDLmQaG6X4Itn1
 # (excluye las no-attested como un hash mismatch), "off" (comportamiento previo).
 ATTESTATION_MODE = "enforcing"
 
+# Tamano del pool de instancias del modulo asyncify por isolate (opcional).
+# Cada request adquiere una instancia en exclusiva => hasta N requests en
+# paralelo por isolate; el (N+1)-esimo espera FIFO. Default 4, clamp [1,8];
+# con 1 se recupera la serializacion total previa (mutex de TAREA19). Subirlo
+# aumenta paralelismo y memoria potencial (limite QuickJS 64MB por contexto).
+# WASM_POOL_SIZE = "4"
+
 # TAREA37: identidad por cliente (opt-in, retrocompatible). CLIENTS se define como
 # SECRET (no como var aqui — nunca valores reales en texto plano):
 #   wrangler secret put CLIENTS

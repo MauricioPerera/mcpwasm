@@ -20,15 +20,97 @@ import MEM_WASM from "./minimemory_bg.wasm";
 
 import QUICKJS_WASM from "./quickjs-asyncify.wasm"; // .wasm ASYNCIFY (CompiledWasm en el build)
 
-const variant = newVariant(baseAsyncifyVariant, { wasmModule: QUICKJS_WASM });
-
-// Modulo asyncify perezoso y cacheado a nivel isolate; solo newContext() es por skill por request.
-let _quickjsPromise = null;
-function getQuickjs() {
-  if (!_quickjsPromise) {
-    _quickjsPromise = newQuickJSAsyncWASMModuleFromVariant(variant);
+// Pool de instancias del modulo asyncify (reemplaza el mutex withModuleLock de
+// T19). Un modulo QuickJS ASYNCIFY solo soporta UNA suspension async a la vez;
+// con un modulo unico por isolate, TODA ejecucion wasm se serializaba. El pool
+// mantiene hasta N instancias independientes del MISMO WebAssembly.Module
+// pre-compilado (compilar una vez, instanciar N veces): cada request adquiere
+// una instancia en exclusiva, asi las suspensiones concurrentes caen en
+// instancias DISTINTAS => hasta N requests verdaderamente paralelos por
+// isolate; el (N+1)-esimo espera por POLLING en su propio contexto. N via
+// env.WASM_POOL_SIZE (default 4, clamp [1,8]); con N=1 el comportamiento
+// equivale al mutex previo. Memoria: cada instancia crece bajo demanda
+// (el limite QuickJS es 64MB por contexto, no reserva previa); el clamp evita
+// que N alto + tools hostiles concurrentes se acerquen al limite del Worker.
+//
+// Por que polling y no un handoff de promesa (cola FIFO de waiters): workerd
+// CANCELA continuaciones de una promesa resuelta desde otro request context
+// ("promise was resolved from a different request context ... continuations
+// canceled", field-tested aqui: el request en cola recibia el slot y moria).
+// setTimeout si es local al contexto del request que espera, asi que cada
+// waiter reintenta en SU contexto. Costo: hasta ~POLL_MS extra de latencia
+// bajo contencion (>N concurrentes en el mismo isolate), cero en el resto.
+const DEFAULT_WASM_POOL_SIZE = 4;
+function parsePoolSize(env) {
+  const raw = env && env.WASM_POOL_SIZE;
+  let n = null;
+  if (typeof raw === "number" && Number.isFinite(raw)) n = Math.floor(raw);
+  else if (typeof raw === "string" && raw.trim() !== "") {
+    const p = Number(raw);
+    if (Number.isFinite(p)) n = Math.floor(p);
   }
-  return _quickjsPromise;
+  if (n === null) return DEFAULT_WASM_POOL_SIZE;
+  return Math.min(8, Math.max(1, n));
+}
+
+const POOL_POLL_MS = 5; // intervalo de reintento bajo contencion
+const POOL_MAX_WAIT_MS = 30000; // corte observable si el pool nunca se libera
+
+class ModulePool {
+  constructor(size) {
+    this._size = size;
+    this._slots = []; // {busy, modP} — modP: Promise del modulo instanciado
+  }
+
+  // Devuelve un slot en exclusiva. Si la creacion del modulo falla, el error
+  // surge al hacer `await slot.modP` en el caller (que debe llamar discard(slot)
+  // en ese caso, no release). Bajo contencion reintenta por polling en el
+  // contexto del PROPIO request (ver nota de cabecera: nada cross-request);
+  // tras POOL_MAX_WAIT_MS lanza (500 observable, no cuelgue infinito).
+  async acquire() {
+    const t0 = Date.now();
+    for (;;) {
+      for (const s of this._slots) {
+        if (!s.busy) {
+          s.busy = true;
+          return s;
+        }
+      }
+      if (this._slots.length < this._size) {
+        // Variante fresca por instancia: el WebAssembly.Module compilado se
+        // comparte (barato), la instanciacion (memoria propia) es por slot.
+        const variant = newVariant(baseAsyncifyVariant, { wasmModule: QUICKJS_WASM });
+        const slot = { busy: true, modP: newQuickJSAsyncWASMModuleFromVariant(variant) };
+        this._slots.push(slot);
+        return slot;
+      }
+      if (Date.now() - t0 > POOL_MAX_WAIT_MS) {
+        throw new Error("wasm pool exhausted (espera > " + POOL_MAX_WAIT_MS + "ms)");
+      }
+      await new Promise((r) => setTimeout(r, POOL_POLL_MS));
+    }
+  }
+
+  release(slot) {
+    slot.busy = false; // el proximo poll de cualquier waiter lo toma
+  }
+
+  // Creacion del modulo fallida: sacar el slot muerto para que el proximo
+  // acquire (o el proximo poll de un waiter) reintente instanciar.
+  discard(slot) {
+    const i = this._slots.indexOf(slot);
+    if (i !== -1) this._slots.splice(i, 1);
+  }
+}
+
+// Pool a nivel isolate; el tamano se fija con el env del primer request (el env
+// es constante por deploy, asi que no hay ambiguedad real).
+let _modulePool = null;
+function getPool(env) {
+  if (!_modulePool) {
+    _modulePool = new ModulePool(parsePoolSize(env));
+  }
+  return _modulePool;
 }
 
 // initMem cacheado a nivel isolate. Instancias WasmOkfIndex POR REQUEST desde el
@@ -99,18 +181,6 @@ function makeMemorySearch(snapshotText) {
       return JSON.stringify({ error: "memorySearch: " + ((e && e.message) ? e.message : String(e)) });
     }
   };
-}
-
-// El modulo QuickJS ASYNCIFY solo soporta UNA suspension async a la vez (cacheado a
-// nivel isolate). withModuleLock serializa TODA ejecucion que toque/suspenda el wasm
-// (cola FIFO). El lock se suelta SIEMPRE (cola siempre fulfilled: fallo no envenena).
-// Las esperas en cola ocurren ANTES de correr fn => NO cuentan contra el
-// fetchTimeoutMs de otro request (se arma dentro de la ejecucion propia, bajo lock).
-let _moduleLock = Promise.resolve();
-function withModuleLock(fn) {
-  const result = _moduleLock.then(fn, fn); // corre fn pase lo que pase del previo
-  _moduleLock = result.then(() => undefined, () => undefined); // cola siempre fulfilled
-  return result;
 }
 
 // Map origin -> {skills, rejected, snapshotText, verdicts, expiresAt}. TTL 60s,
@@ -1333,27 +1403,40 @@ export default {
     }
 
     // Un contexto QuickJS por skill. TODA la ejecucion que toca/suspende el wasm
-    // (init, handleMcp, dispose) va bajo withModuleLock para no intercalar
-    // suspensiones asyncify entre requests concurrentes del mismo isolate. La cola
-    // espera antes de correr fn => no cuenta contra el fetchTimeoutMs de otros
-    // requests (se arma dentro de la ejecucion propia, bajo el lock).
+    // (init, handleMcp, dispose) ocurre sobre una instancia del pool adquirida en
+    // EXCLUSIVA para este request: dentro del request las llamadas son
+    // secuenciales (una suspension asyncify a la vez sobre SU instancia) y los
+    // requests concurrentes usan instancias distintas (hasta N en paralelo). La
+    // espera en acquire ocurre ANTES de correr nada => no cuenta contra el
+    // fetchTimeoutMs de este request (se arma dentro de la ejecucion propia).
     let response;
+    const pool = getPool(env);
+    const slot = await pool.acquire();
+    let slotDiscarded = false;
     try {
-      response = await withModuleLock(async () => {
-        const quickjs = await getQuickjs();
-        const host = new PerSkillHost({ quickjs, allowedOrigin: origin, fetchImpl, skills, snapshotText });
+      let quickjs;
+      try {
+        quickjs = await slot.modP;
+      } catch (e) {
+        // Instanciacion del modulo fallida: descartar el slot (no envenenar el
+        // pool; el proximo acquire reintenta) y responder 500.
+        slotDiscarded = true;
+        pool.discard(slot);
+        throw e;
+      }
+      const host = new PerSkillHost({ quickjs, allowedOrigin: origin, fetchImpl, skills, snapshotText });
+      try {
+        await host.init();
+        response = await handleMcpMessageAsync(host, msg);
+      } finally {
+        // Dispose de TODOS los contextos (uno por skill) ANTES de liberar el
+        // slot: los contextos pertenecen a esta instancia del modulo.
         try {
-          await host.init();
-          return await handleMcpMessageAsync(host, msg);
-        } finally {
-          // Dispose de TODOS los contextos (uno por skill), bajo el lock.
-          try {
-            host.dispose();
-          } catch {
-            // best-effort: no bloquear el release del lock.
-          }
+          host.dispose();
+        } catch {
+          // best-effort: no bloquear el release del slot.
         }
-      });
+      }
     } catch (e) {
       return json(
         { jsonrpc: "2.0", id: msg && msg.id !== undefined ? msg.id : null, error: { code: -32603, message: "host fallo: " + String(e && e.message || e) } },
@@ -1363,6 +1446,8 @@ export default {
         clientId,
         rl
       );
+    } finally {
+      if (!slotDiscarded) pool.release(slot);
     }
     // Exposicion advisory — tag " [attestation: <verdict>]" al final de la
     // description de cada tool en tools/list (modo != off). En enforcing las tools

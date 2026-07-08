@@ -20,6 +20,11 @@ import MEM_WASM from "./minimemory_bg.wasm";
 
 import QUICKJS_WASM from "./quickjs-asyncify.wasm"; // .wasm ASYNCIFY (CompiledWasm en el build)
 
+// package.json (esbuild/wrangler lo resuelven con su json loader): unica fuente
+// de la version para el serverInfo del gateway (sin duplicar el numero aca).
+import PKG from "./package.json";
+const GATEWAY_SERVER_INFO = { name: "llmstxt-gateway", version: PKG.version };
+
 // Pool de instancias del modulo asyncify (reemplaza el mutex withModuleLock de
 // T19). Un modulo QuickJS ASYNCIFY solo soporta UNA suspension async a la vez;
 // con un modulo unico por isolate, TODA ejecucion wasm se serializaba. El pool
@@ -511,6 +516,12 @@ async function fetchAttestations(origin, fetchImpl, maxBytes) {
 // skill + tool_sha256. attester no registrado -> ignorado; registrado + firma falla
 // -> INVALID (domina). firma valida en ventana -> attested; hoy>valid_until -> expired.
 // Precedencia: invalid > attested > expired > unattested.
+// signed_on/valid_until deben ser fechas ISO estrictas (YYYY-MM-DD): la ventana se
+// compara como string y solo ese formato ordena lexicograficamente igual que
+// cronologicamente. Entrada con fecha malformada -> ignorada (ni una firma valida
+// sobre fechas basura debe producir un veredicto con comparaciones sin sentido).
+const ATTEST_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
 async function verdictForSkill(skill, origin, attestations, reviewers, today) {
   if (!attestations || attestations.length === 0) return "unattested";
   const canon = canonicalOrigin(origin);
@@ -525,6 +536,10 @@ async function verdictForSkill(skill, origin, attestations, reviewers, today) {
     const aCanon = canonicalOrigin(a.origin);
     if (!aCanon || aCanon !== canon) continue; // otra origin: no replayable
     if (typeof a.attester !== "string" || typeof a.signature !== "string") continue;
+    if (typeof a.signed_on !== "string" || !ATTEST_DATE_RE.test(a.signed_on) ||
+        typeof a.valid_until !== "string" || !ATTEST_DATE_RE.test(a.valid_until)) {
+      continue; // fecha malformada: la entrada no puede evaluarse -> ignorada
+    }
     const reg = reviewers[a.attester];
     if (!reg || typeof reg.public_key !== "string") continue; // desconocido: ignorado
     const payload = new TextEncoder().encode(
@@ -1448,6 +1463,12 @@ export default {
       );
     } finally {
       if (!slotDiscarded) pool.release(slot);
+    }
+    // serverInfo propio del gateway: el core generico (mcp-core-async) trae el
+    // nombre del spike (toolhost-mcp-spike-async); el runtime local ya pisaba el
+    // suyo y el gateway no — todo cliente MCP veia el nombre del spike.
+    if (msg && msg.method === "initialize" && response && response.result) {
+      response.result.serverInfo = GATEWAY_SERVER_INFO;
     }
     // Exposicion advisory — tag " [attestation: <verdict>]" al final de la
     // description de cada tool en tools/list (modo != off). En enforcing las tools

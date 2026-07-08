@@ -69,7 +69,9 @@ async function fetchText(url, maxBytes) {
     redirect: "follow",
   });
   const text = await res.text();
-  if (text.length > maxBytes) {
+  // Cap en BYTES reales (UTF-8), no en unidades UTF-16: text.length subcuenta
+  // los multi-byte y dejaba pasar bodies por encima del cap nominal.
+  if (Buffer.byteLength(text, "utf8") > maxBytes) {
     throw new Error("body excede el cap (" + maxBytes + " bytes): " + url);
   }
   return { status: res.status, text };

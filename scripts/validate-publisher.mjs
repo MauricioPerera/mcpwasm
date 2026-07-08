@@ -151,6 +151,12 @@ async function verdictForSkill(skill, canon, attestations, reviewers, today) {
     const aCanon = canonicalOrigin(a.origin);
     if (!aCanon || aCanon !== canon) continue; // otra origin: no replayable
     if (typeof a.attester !== "string" || typeof a.signature !== "string") continue;
+    // Fechas ISO estrictas (YYYY-MM-DD): la ventana se compara como string y solo
+    // ese formato ordena bien. Malformada -> entrada ignorada (espejo del gateway).
+    if (typeof a.signed_on !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(a.signed_on) ||
+        typeof a.valid_until !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(a.valid_until)) {
+      continue;
+    }
     matched++;
     const reg = reviewers[a.attester];
     if (!reg || typeof reg.public_key !== "string") continue; // desconocido: ignorado

@@ -208,6 +208,10 @@ try {
   console.log("\n[1] initialize ->", JSON.stringify(init.body));
   check(init.status === 200, "initialize: HTTP 200");
   check(init.body && init.body.result && typeof init.body.result === "object", "initialize: viene result");
+  check(
+    init.body.result.serverInfo && init.body.result.serverInfo.name === "llmstxt-gateway",
+    "initialize: serverInfo.name = llmstxt-gateway (no el nombre del spike)"
+  );
   check(init.headers["x-gw-discovery"] === "miss", "cache: 1er request (initialize) X-Gw-Discovery=miss");
 
   // 2) tools/list (segundo request al demo -> cache hit, no refetchea)

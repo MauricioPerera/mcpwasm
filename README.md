@@ -616,11 +616,12 @@ The non-obvious bits live there:
 
 Benchmark headline numbers (full matrix and methodology in
 [`BENCHMARK.md`](./BENCHMARK.md), single-client from México to the Workers
-edge, not a load test): the sandbox adds ~5–10 ms over a direct call (PoC
-sandbox `tools/call` p50 ≈ 63 ms vs. direct API p50 ≈ 101 ms; gateway warm
-pure-sandbox `sum_numbers` p50 ≈ 65 ms), and a warm gateway read with
-`fetchOrigin` + D1 sits around p50 ≈ 110 ms (`stock_report` p50 = 113 ms).
-A cold discovery miss costs ~250–400 ms (compile + sha256 + fetch).
+edge, not a load test): the sandbox itself costs **~8 ms warm** (gateway
+pure-sandbox `sum_numbers` p50 ≈ 65 ms vs. the same worker's raw ping
+p50 ≈ 57 ms), and the full gateway adds **~12 ms** over calling the
+publisher's API directly for the same read (`stock_report` through the
+gateway p50 = 113 ms vs. direct API p50 = 101 ms). A cold discovery miss
+costs ~250–400 ms (compile + sha256 + fetch).
 
 Run the e2e tests with `npm test` (sync) / `npm run spike` (async) /
 `npm run gateway` (gateway against the live demo site) / `npm run memspike`

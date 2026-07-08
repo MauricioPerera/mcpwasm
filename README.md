@@ -376,9 +376,16 @@ What it guarantees:
 - **Per-skill contexts in the gateway.** Each skill is loaded into its own
   QuickJS context; a skill cannot see or overwrite another skill's
   registration or globals, even within the same origin.
-- **Concurrency safety.** The wasm module is instantiated once per isolate and
-  guarded by a per-module mutex; discovery is single-flighted per origin so
-  concurrent cold requests share one discovery pass (see TAREA19).
+- **Concurrency safety.** The gateway keeps a pool of up to N independent
+  instances of the asyncify wasm module per isolate (`WASM_POOL_SIZE`, default
+  4, clamped to [1, 8]; the compiled `WebAssembly.Module` is shared, each
+  instance has its own memory). Each request acquires one instance exclusively,
+  so up to N requests run truly in parallel per isolate and the (N+1)-th waits
+  by polling in its own request context (workerd cancels continuations of
+  promises resolved from another request context, so a FIFO handoff is not
+  viable) — with N=1 this degenerates to the previous per-module mutex (TAREA19).
+  Discovery is single-flighted per origin so concurrent cold requests share one
+  discovery pass.
 
 What it does **not** guarantee:
 
@@ -420,8 +427,11 @@ What it does **not** guarantee:
   separate QuickJS contexts but share the same wasm module instance and the
   same Worker request; the boundary is the QuickJS API surface, not an OS
   process.
-- **One asyncify suspension at a time.** QuickJS asyncify suspends/resumes a
-  single stack; concurrent overlapping async capabilities are not supported.
+- **One asyncify suspension at a time — per module instance.** QuickJS asyncify
+  suspends/resumes a single stack per wasm instance; within one request all
+  execution is sequential on its instance. Cross-request parallelism comes from
+  the instance pool (up to `WASM_POOL_SIZE` concurrent requests per isolate),
+  not from overlapping suspensions on one instance.
 - **State is in-memory and per-request.** No persistence, no warm state between
   requests. A tool that accumulates state loses it when the request ends.
 - **DoS is bounded, not impossible.** The limits above cap a single call's

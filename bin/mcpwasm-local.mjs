@@ -8,7 +8,19 @@
 // transporte que consumen Claude Code / Cursor / etc. sin cambios.
 //
 // Uso:            mcpwasm <origin>
+//                 mcpwasm --serve <dir> [--port N]
 //   p.ej.:        npx @rckflr/mcpwasm https://usuario.github.io
+//                 npx @rckflr/mcpwasm --serve ./mi-repo-clonado
+//
+// --serve <dir> levanta un file server estatico interno (solo 127.0.0.1, sin
+// exponer a la red) sobre <dir> y usa ese origin para el descubrimiento —
+// combina "clonar un repo de skills + servirlo + conectar" en un solo paso.
+// Pensado para el loop de desarrollo local de un publisher (tu propio repo de
+// llms.txt + tool.js) antes de publicarlo en GitHub Pages o donde sea. NO
+// sirve para apuntar directo a una URL raw de GitHub: origin ahi colapsa a
+// https://raw.githubusercontent.com (el path usuario/repo/rama se pierde al
+// tomar solo el origin), asi que no hay forma de que ese origin sirva
+// /llms.txt correctamente — hay que clonar y usar --serve.
 //
 // Config de cliente MCP tipica:
 //   {"mcpServers":{"misitio":{"command":"npx","args":["-y","@rckflr/mcpwasm","https://usuario.github.io"]}}}
@@ -30,7 +42,9 @@
 
 import { createInterface } from "node:readline";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
+import { readFileSync, existsSync, statSync } from "node:fs";
+import path from "node:path";
 import { newQuickJSAsyncWASMModuleFromVariant, newVariant } from "quickjs-emscripten-core";
 import baseAsyncifyVariant from "@jitl/quickjs-wasmfile-release-asyncify";
 import { AsyncToolHost } from "../host-async.mjs";
@@ -50,18 +64,109 @@ function out(obj) {
   process.stdout.write(JSON.stringify(obj) + "\n");
 }
 
-const originArg = process.argv[2];
-if (!originArg) {
-  err("uso: mcpwasm <origin>   (ej: npx @rckflr/mcpwasm https://usuario.github.io)");
+const USAGE =
+  "uso: mcpwasm <origin>                 (ej: npx @rckflr/mcpwasm https://usuario.github.io)\n" +
+  "     mcpwasm --serve <dir> [--port N] (sirve un directorio local, ej. un git clone, y conecta ahi)";
+
+const argv = process.argv.slice(2);
+let originArg = null;
+let serveDir = null;
+let fixedPort = null;
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (a === "--serve") {
+    serveDir = argv[++i];
+  } else if (a === "--port") {
+    const p = Number(argv[++i]);
+    if (!Number.isInteger(p) || p < 0 || p > 65535) {
+      err("--port invalido");
+      process.exit(2);
+    }
+    fixedPort = p;
+  } else if (originArg === null && serveDir === null) {
+    originArg = a;
+  }
+}
+if (!originArg && !serveDir) {
+  err(USAGE);
   process.exit(2);
 }
-let origin;
-try {
-  origin = new URL(originArg).origin;
-} catch {
-  err("origin invalido: " + originArg);
-  process.exit(2);
+
+// origin se resuelve en start(): sincrono desde originArg, o asincrono desde
+// el file server interno cuando --serve levanta primero. LocalPerSkillHost
+// cierra sobre esta misma variable de modulo; el closure ve el valor final
+// porque host.init() corre DESPUES de que start() la termine de asignar.
+let origin = null;
+if (originArg) {
+  try {
+    origin = new URL(originArg).origin;
+  } catch {
+    err("origin invalido: " + originArg);
+    process.exit(2);
+  }
 }
+
+// MIME minimo para el file server interno de --serve. Cosmetico: discover()
+// no valida content-type, solo status + body — esto es prolijidad, no
+// seguridad (la seguridad real sigue siendo el sha256 sobre los bytes).
+const MIME_TYPES = {
+  ".txt": "text/plain; charset=utf-8",
+  ".md": "text/markdown; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".wasm": "application/wasm",
+};
+
+// Resuelve un pathname de request contra rootDir sin permitir escapar via
+// "../" (traversal). Devuelve null si el resultado cae fuera de rootDir.
+function safeJoin(rootDir, pathname) {
+  const decoded = decodeURIComponent(pathname.split("?")[0]);
+  const normalized = path.normalize(decoded).replace(/^([.]{2}[/\\])+/, "");
+  const resolved = path.resolve(rootDir, "." + path.sep + normalized);
+  const rootResolved = path.resolve(rootDir);
+  if (resolved !== rootResolved && !resolved.startsWith(rootResolved + path.sep)) {
+    return null;
+  }
+  return resolved;
+}
+
+// File server estatico interno para --serve. Solo 127.0.0.1 (nunca 0.0.0.0):
+// esto es un atajo de desarrollo local, no un publisher real — no debe
+// quedar alcanzable desde la red mientras el proceso corre.
+function serveDirectory(dir, port) {
+  const rootDir = path.resolve(dir);
+  if (!existsSync(rootDir) || !statSync(rootDir).isDirectory()) {
+    throw new Error("--serve: no es un directorio: " + dir);
+  }
+  return new Promise((resolve, reject) => {
+    const server = createServer((req, res) => {
+      const filePath = safeJoin(rootDir, req.url || "/");
+      if (!filePath || !existsSync(filePath) || !statSync(filePath).isFile()) {
+        res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
+        res.end("not found");
+        return;
+      }
+      let body;
+      try {
+        body = readFileSync(filePath);
+      } catch (e) {
+        res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+        res.end("read error: " + (e && e.message));
+        return;
+      }
+      const ct = MIME_TYPES[path.extname(filePath).toLowerCase()] || "application/octet-stream";
+      res.writeHead(200, { "content-type": ct });
+      res.end(body);
+    });
+    server.once("error", reject);
+    server.listen(port || 0, "127.0.0.1", () => {
+      const addr = server.address();
+      resolve({ server, origin: "http://127.0.0.1:" + addr.port });
+    });
+  });
+}
+
+let internalServer = null;
 
 async function fetchText(url, maxBytes) {
   const res = await fetch(url, {
@@ -175,6 +280,12 @@ class LocalPerSkillHost {
 let host = null;
 
 async function start() {
+  if (serveDir) {
+    const served = await serveDirectory(serveDir, fixedPort);
+    internalServer = served.server;
+    origin = served.origin;
+    err("sirviendo " + path.resolve(serveDir) + " en " + origin + " (solo 127.0.0.1, no expuesto a la red)");
+  }
   err("descubriendo skills de " + origin + " …");
   const skills = await discover();
   const quickjs = await newQuickJSAsyncWASMModuleFromVariant(newVariant(baseAsyncifyVariant, {}));
@@ -229,6 +340,7 @@ rl.on("line", (line) => {
 rl.on("close", () => {
   chain.finally(() => {
     if (host) host.dispose();
+    if (internalServer) internalServer.close();
     process.exit(0);
   });
 });

@@ -409,12 +409,15 @@ code {
 .code-block pre {
   margin: 0;
   padding: 14px 16px;
-  overflow-x: auto;
 }
 .code-block code {
   color: var(--text);
   font-size: 0.85rem;
-  white-space: pre;
+  /* wrap instead of requiring horizontal scroll — long unbroken tokens
+     (e.g. the gateway URL in the curl examples) can still break mid-string */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .tok-kw { color: var(--accent-text); }
 .tok-str { color: #e3c07a; }

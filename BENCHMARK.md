@@ -216,3 +216,66 @@ El mutex en camino secuencial es un no-op práctico (sin contención, la cola re
 ### Verificación independiente post-fix (PM, cuarta corrida)
 
 Mismo cliente que midió el pre-fix (donde j dio 4 err / p95 10181 ms): post-fix **j = 0 errores, p50 228 ms, p95 557 ms**. Secuenciales consistentes (d-warm 109, e 92, f 94, i 73). El mutex + single-flight resuelven la cola de ~10 s bajo fan-out frío; el peor caso concurrente ahora es espera en cola sub-segundo.
+
+---
+
+## Post-deploy — pool de instancias asyncify + precalentamiento por cron (run=4)
+
+Corrida completa `node bench/run.mjs --run=4` (2026-07-08 06:21–06:28 UTC) tras deploy de la version `dcee3964-7487-440d-8e85-0703260d852a`, que suma dos cambios sobre el gateway de run=3:
+
+1. **Pool de instancias del modulo asyncify** (reemplaza el mutex `withModuleLock` de TAREA19): hasta N instancias independientes del mismo `WebAssembly.Module` por isolate (`WASM_POOL_SIZE`, default 4); cada request adquiere una instancia en exclusiva => hasta N requests en paralelo real por isolate. Bajo contencion el waiter espera por polling en su propio request context (workerd cancela continuaciones de promesas resueltas desde otro request context, asi que el handoff FIFO clasico no es viable).
+2. **Precalentamiento por cron** (`[triggers] crons = ["* * * * *"]` + handler `scheduled`): cada minuto corre el descubrimiento de todos los origins del allowlist (puebla L1 del isolate del cron y L2 del colo) e instancia un modulo wasm del pool.
+
+Contexto de config que CAMBIA la semantica de un escenario: el gateway corre en `ATTESTATION_MODE=enforcing` desde T45 (run=3 se midio en advisory). Ver la nota de `h` abajo.
+
+Datos crudos: `bench/results-run4-postpool.json` (+ `bench/results.json`, ultima corrida), stdout completo en `bench/run4-stdout.txt`. Misma metodologia y advertencias que arriba (single-client desde Mexico, no load test).
+
+### Resultados — run=4
+
+| key | n | min | p50 | p95 | p99 | max | errs | notas |
+|---|---|---|---|---|---|---|---|---|
+| a baseline-direct | 30 | 84 | 90 | 155 | 451 | 451 | 0 | API directa bookstore + D1 |
+| b poc-sandbox | 30 | 56 | 90 | 119 | 120 | 120 | 0 | PoC sync (worker sin cambios; varianza) |
+| c-cold | 1 | 290 | 290 | 290 | 290 | 290 | 0 | miss forzado (sleep 65s) |
+| d-cold | 1 | 213 | 213 | 213 | 213 | 213 | 0 | miss forzado bookstore |
+| c gw-pure (warm) | 30 | 51 | 55 | 59 | 64 | 64 | 0 | sandbox warm, sin fetchOrigin |
+| d gw-read (warm) | 30 | 87 | 96 | 105 | 199 | 199 | 0 | +fetchOrigin GET + D1 |
+| e gw-search | 30 | 68 | 79 | 146 | 654 | 654 | 0 | cola p99 puntual (varianza D1) |
+| f gw-write-409 | 30 | 73 | 79 | 89 | 90 | 90 | 0 | 409 controlado |
+| g gw-write-real | 3 | 127 | 131 | 138 | 138 | 138 | 0 | **ordenes creadas: [22,23,24]** |
+| h gw-interrupt | 3 | 56 | 60 | 61 | 61 | 61 | 0 | **YA NO MIDE EL GAS — ver nota** |
+| i gw-tools-list (warm) | 20 | 58 | 61 | 65 | 71 | 71 | 0 | |
+| i-cold | 1 | 400 | 400 | 400 | 400 | 400 | 0 | n=1, dentro del rango historico |
+| **j gw-concurrent** | 30 | 117 | **182** | **380** | 495 | 495 | **0** | ver desglose |
+| x-gw-ping | 30 | 49 | 53 | 57 | 63 | 63 | 0 | |
+| x-book-ping | 30 | 46 | 52 | 69 | 149 | 149 | 0 | |
+
+### j gw-concurrent — desglose por ronda (run=4)
+
+| ronda | wall (ms) | miss/10 | err/10 | observacion |
+|---|---|---|---|---|
+| 1 (fan-out "frio") | **496** | **0** | 0 | el preheat ya habia calentado el descubrimiento: CERO miss en la ronda fria |
+| 2 | 182 | 0 | 0 | pool en paralelo real |
+| 3 | 189 | 0 | 0 | idem |
+
+### j — evolucion completa
+
+| metrica | run=1 (pre-T19) | run=3 (mutex) | **run=4 (pool+preheat)** |
+|---|---|---|---|
+| errs | 6 | 0 | **0** |
+| p50 (ms) | — | 237 | **182** |
+| p95 (ms) | 10187 | 618 | **380** |
+| max (ms) | — | 639 | **495** |
+| ronda 1 wall (ms) | 10279 | 639 | **496** |
+| ronda 1 miss/10 | 6-9 | 5 | **0** |
+| rondas warm wall (ms) | — | 266-281 | **182-189** |
+
+Lectura:
+
+- **El preheat elimina el fan-out frio en la practica**: la ronda 1 — historicamente el punto debil (10 s con 500s pre-T19, 639 ms con el mutex) — salio con 0 miss de 10: el cron habia poblado L1/L2 antes de que llegara la rafaga. Vale el caveat documentado: la Cache API es por colo y el cron corre en un punto de presencia; un cliente servido desde otro colo puede seguir viendo su primer miss.
+- **El pool paraleliza de verdad**: las rondas warm bajan de ~270 ms (mutex: 10 requests serializados dentro del isolate) a ~185 ms de wall con p50 por-request de 182 ms — wall ≈ p50 significa que los 10 corren esencialmente en paralelo (entre pool intra-isolate y reparto entre isolates).
+- **Sin regresion secuencial**: todos los escenarios secuenciales igualan o mejoran run=3 (c warm 60→55, d 108→96, e 89→79, f 86→79, g 150→131, i 70→61).
+
+### Nota h gw-interrupt — cambio de semantica por `enforcing`, no por el pool
+
+`h` dio p50=60 ms con `isError=true` inmediato porque **`busy_loop` ya no carga**: el gateway corre en `ATTESTATION_MODE=enforcing` (desde T45) y `busy_loop` quedo sin atestar A PROPOSITO (T29). La skill se excluye en descubrimiento y `tools/call busy_loop` responde "tool no encontrada" al instante. El escenario ya no ejercita el corte del gas en produccion; para volver a medirlo hay que atestar `busy_loop` (discutible: es un fixture hostil) o benchear contra un despliegue en `advisory`. El gas sigue cubierto por las suites locales.

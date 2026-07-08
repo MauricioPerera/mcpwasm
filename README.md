@@ -445,7 +445,12 @@ What it does **not** guarantee:
   registry + UTC date), so changing the config never serves stale verdicts.
   What is cached is post-verification (the `tool.js` bytes were already
   hash-checked when layer 2 was populated), inside the account's own trust
-  domain; the cold path is amortized more, but still not zero.
+  domain; the cold path is amortized more, but still not zero. A scheduled
+  preheat (cron every minute, `[triggers]` in `wrangler-gateway.toml`) runs
+  discovery for every allowlisted origin and instantiates a wasm module, so
+  the cron's isolate/colo rarely serves a cold miss — honest caveat: the
+  Cache API is per-colo and the cron runs in one location, so other colos
+  still pay their first miss.
 - **The publisher is trusted for the skill list.** The gateway trusts the
   origin's `/llms.txt` to name skills; it verifies the `tool.js` bytes match
   the declared SHA-256, but it does not vet what the tool does.

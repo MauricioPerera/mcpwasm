@@ -1473,4 +1473,65 @@ export default {
     }
     return json(response, 200, discovery, aHeader, clientId, rl);
   },
+
+  // Precalentamiento por cron (trigger en wrangler-gateway.toml): corre el
+  // descubrimiento de TODOS los origins del allowlist para poblar la capa 1
+  // (este isolate) y la capa 2 (Cache API del colo), y deja instanciado al
+  // menos un modulo wasm del pool. Ataca el costo dominante medido en
+  // BENCHMARK.md: el miss de descubrimiento (~250-400ms) + la instanciacion
+  // del modulo que paga el primer request de cada isolate/TTL.
+  //
+  // Honesto: la Cache API es POR COLO y el evento scheduled corre en UN punto
+  // de presencia, no en todos — el precalentamiento garantiza L2 caliente en
+  // el colo del cron y L1 en este isolate; trafico servido desde otros colos
+  // sigue pagando su primer miss. Con el cron cada minuto y TTL 60s puede
+  // haber huecos breves entre expiracion y el siguiente tick.
+  //
+  // Fallos por-origin no tumban el resto (allSettled + warn); un fallo del
+  // preheat nunca afecta requests reales (solo deja el cache frio, como hoy).
+  async scheduled(event, env, ctx) {
+    const fetchImpl = makeFetchImpl(env);
+    const attestCtx = {
+      mode: attestationMode(env),
+      reviewers: parseReviewers(env),
+      rawMode: (env && env.ATTESTATION_MODE) || "off",
+      rawReviewers: (env && env.REVIEWERS) || "",
+    };
+    const caps = parseSizeCaps(env);
+    const origins = allowedOrigins(env);
+
+    // Precalienta una instancia del modulo wasm (compile/instancia es parte
+    // del costo cold). acquire/release del pool: si la instanciacion falla se
+    // descarta el slot (no envenenar), igual que en el camino de request.
+    let slot = null;
+    try {
+      const pool = getPool(env);
+      slot = await pool.acquire();
+      await slot.modP;
+      pool.release(slot);
+      slot = null;
+    } catch (e) {
+      if (slot) getPool(env).discard(slot);
+      slot = null;
+      console.warn("[gateway] preheat wasm fallo: " + String((e && e.message) || e));
+    }
+
+    const results = await Promise.allSettled(
+      origins.map((o) => discoverSkills(o, fetchImpl, attestCtx, caps))
+    );
+    for (let i = 0; i < origins.length; i++) {
+      const r = results[i];
+      if (r.status === "fulfilled") {
+        console.log(
+          "[gateway] preheat " + origins[i] + ": " + r.value.skills.length +
+            " skills (discovery=" + r.value.discovery + ")"
+        );
+      } else {
+        console.warn(
+          "[gateway] preheat " + origins[i] + " fallo: " +
+            String((r.reason && r.reason.message) || r.reason)
+        );
+      }
+    }
+  },
 };

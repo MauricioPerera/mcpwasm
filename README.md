@@ -496,8 +496,9 @@ warning, not a red gate, so a foreign incident cannot block work in this repo.
 
 ## Development notes
 
-Each milestone is documented in its `TAREA*-REPORT.md` (TAREA1 through TAREA27;
-`TAREA2` was skipped in numbering and `TAREA12B` is a continuation of TAREA12).
+Each milestone is documented in its `TAREA*-REPORT.md` (TAREA1 through TAREA45;
+`TAREA2` and `TAREA30` were skipped in numbering and `TAREA12B` is a
+continuation of TAREA12).
 The non-obvious bits live there:
 
 - `TAREA4-REPORT.md` — deploying to Cloudflare Workers: the `CompiledWasm` rule

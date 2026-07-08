@@ -67,8 +67,9 @@ export class AsyncToolHost {
   // Opciones: quickjs (modulo asyncify ya construido; recomendado en Workers para
   // evitar top-level await), quickjsModule (WebAssembly.Module pre-compilado),
   // allowedOrigin (obligatorio; unico origin permitido para fetchOrigin),
-  // memoryLimitBytes/maxStackSizeBytes/interruptDeadlineMs (<=0 desactiva el
-  // handler), interruptMaxInvocations (gas determinista; salva contra while(true){}
+  // memoryLimitBytes/maxStackSizeBytes/interruptDeadlineMs (<=0 desactiva solo el
+  // deadline wall-clock; el gas determinista sigue activo),
+  // interruptMaxInvocations (gas determinista; salva contra while(true){}
   // en Workers), fetchImpl (default global fetch; el gateway inyecta uno que enruta
   // origins same-account via service binding, bypass del error 1042 worker-to-worker),
   // fetchTimeoutMs (el gas acota CPU pero no esperas de red), extraCapabilities
@@ -131,22 +132,25 @@ export class AsyncToolHost {
     } catch (e) {
       console.warn("[AsyncToolHost] setMaxStackSize no aplicado:", e && e.message);
     }
-    if (this._interruptDeadlineMs > 0) {
-      try {
-        // Handler true => interrumpe. Dos mecanismos: (1) contador determinista,
-        // independiente del reloj, salva contra while(true){} en Workers (reloj
-        // congelado); (2) deadline wall-clock, backstop barato donde el reloj avanza.
-        const host = this;
-        vm.runtime.setInterruptHandler(() => {
-          if (!host._interruptActive) return false;
-          host._interruptCount = (host._interruptCount + 1) >>> 0;
-          if (host._interruptCount > host._interruptMaxInvocations) return true;
-          if (Date.now() > host._deadline) return true;
-          return false;
-        });
-      } catch (e) {
-        console.warn("[AsyncToolHost] setInterruptHandler no aplicado:", e && e.message);
-      }
+    // El handler se instala SIEMPRE: el gas determinista no depende del reloj y
+    // debe sobrevivir a interruptDeadlineMs <= 0. Antes ese valor desinstalaba el
+    // handler completo y apagaba tambien el gas (acoplamiento accidental de los
+    // dos mecanismos); ahora <=0 desactiva SOLO el deadline wall-clock.
+    try {
+      // Handler true => interrumpe. Dos mecanismos: (1) contador determinista,
+      // independiente del reloj, salva contra while(true){} en Workers (reloj
+      // congelado); (2) deadline wall-clock (si interruptDeadlineMs > 0), backstop
+      // barato donde el reloj avanza.
+      const host = this;
+      vm.runtime.setInterruptHandler(() => {
+        if (!host._interruptActive) return false;
+        host._interruptCount = (host._interruptCount + 1) >>> 0;
+        if (host._interruptCount > host._interruptMaxInvocations) return true;
+        if (host._interruptDeadlineMs > 0 && Date.now() > host._deadline) return true;
+        return false;
+      });
+    } catch (e) {
+      console.warn("[AsyncToolHost] setInterruptHandler no aplicado:", e && e.message);
     }
 
     // Capability asyncified host.fetchOrigin(path, optsJson) -> string JSON
@@ -229,8 +233,37 @@ export class AsyncToolHost {
       } finally {
         clearTimeout(timerId);
       }
-      const text = await resp.text();
-      const respBody = text.length > 4096 ? text.slice(0, 4096) : text;
+      // Lectura por streaming con cap: resp.text() materializaba el body ENTERO
+      // en memoria y recien despues se truncaba a 4KB — un origin sirviendo un
+      // body gigante inflaba la memoria del host. Ahora se acumula por chunks y
+      // se corta el stream al alcanzar el cap; nunca se materializa mas de
+      // cap+chunk. La superficie hacia la tool no cambia (body <=4096 chars).
+      const MAX_RESP_BYTES = 4096;
+      let respBody = "";
+      if (resp.body && typeof resp.body.getReader === "function") {
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        const parts = [];
+        let received = 0;
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            received += value.length;
+            parts.push(decoder.decode(value, { stream: true }));
+            if (received >= MAX_RESP_BYTES) break; // suficiente para el truncado
+          }
+        } finally {
+          try { await reader.cancel(); } catch { /* best-effort: libera el stream */ }
+        }
+        parts.push(decoder.decode()); // flush (borde multi-byte final)
+        respBody = parts.join("");
+        if (respBody.length > 4096) respBody = respBody.slice(0, 4096);
+      } else {
+        // Sin ReadableStream (impl de fetch exotica): fallback al camino previo.
+        const text = await resp.text();
+        respBody = text.length > 4096 ? text.slice(0, 4096) : text;
+      }
       return vm.newString(JSON.stringify({ status: resp.status, body: respBody }));
     });
     vm.setProp(vm.global, "__fetchOriginRaw", cap);

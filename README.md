@@ -169,6 +169,38 @@ verifiable guarantee (hash + sandbox, optionally review) before running it —
 that is the problem this repo exists to solve, not a general-purpose
 alternative to MCP.
 
+### If you already have an API
+
+You do not need to build or maintain an MCP protocol server — that is the
+whole point. The runtime (local or gateway) already handles JSON-RPC,
+`tools/list`, `tools/call`, and the transport; none of that is your code.
+
+What you still have to write is **not** prose. A `tool.js` per action is real,
+small glue code: it validates `args` against the schema you declared, calls
+your existing API through `host.fetchOrigin`, and shapes the response — see
+`bookstore/content/create_order.tool.js` in this repo for a concrete example
+(validates `qty` and `book_id`, handles a 409 for insufficient stock as a
+distinct case, never lets a malformed call reach your backend). This is a
+different, stronger mechanism than a `SKILL.md` with no `tool.js`: prose-only
+skills are the core RFC's basic mode — an agent reads them and *improvises*
+the HTTP call with whatever generic request tool it has, with no schema
+validation, no sandbox, and no hash pinning. That is the "execution gap" that
+executable skills (this repo's reference feature) close. Handing an agent a
+raw "make any HTTP request" capability against your API reintroduces the
+problem this project exists to avoid — your backend ends up validating
+against an arbitrary caller either way; a `tool.js` does that validation
+before your API is ever hit, and the agent only ever gets the specific,
+parameterized actions you defined.
+
+"Zero infrastructure" is literal for internal use — your own team pointing
+`npx @rckflr/mcpwasm` (or `--serve`) at your published skills needs no server
+on either side. For external clients to reach you without installing
+anything, you need one endpoint answering MCP over HTTP; that means either
+your origin gets added to an existing deployed gateway's `ALLOWED_ORIGINS`,
+or you `wrangler deploy` your own instance of the same generic gateway code in
+this repo, configured for your origin. Either way it is a one-time,
+tool-agnostic deploy — not a bespoke MCP server built per API.
+
 ## Architecture
 
 ```

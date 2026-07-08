@@ -302,11 +302,12 @@ with `origin` canonical (lowercase, no trailing slash, no default port) and
 
 Three modes via `ATTESTATION_MODE`:
 
-- `off` — attestations are not fetched; behavior is the pre-T25 gateway.
-- `advisory` (default, deployed) — everything loads; verdicts are visible but
-  do not exclude.
-- `enforcing` — only `attested` skills load; non-`attested` skills are excluded
-  exactly like a `tool_sha256` mismatch (logged, not registered).
+- `off` (default when `ATTESTATION_MODE` is unset) — attestations are not
+  fetched; behavior is the pre-T25 gateway.
+- `advisory` — everything loads; verdicts are visible but do not exclude.
+- `enforcing` (deployed since T45) — only `attested` skills load;
+  non-`attested` skills are excluded exactly like a `tool_sha256` mismatch
+  (logged, not registered).
 
 `scripts/attest.mjs` is the signing tool (Node `node:crypto` Ed25519, no deps):
 
@@ -417,9 +418,10 @@ What it guarantees:
   the gateway verifies them via WebCrypto against the runtime-side `REVIEWERS`
   registry and exposes per-skill verdicts (`attested`/`expired`/`invalid`/
   `unattested`, `invalid` dominates) in each tool description and the
-  `X-Gw-Attestations` header. Modes: `off` / `advisory` (default: everything
-  loads, verdicts visible) / `enforcing` (only `attested` skills load).
-  `scripts/attest.mjs` is the signing tool (keygen + sign).
+  `X-Gw-Attestations` header. Modes: `off` (default when unset) / `advisory`
+  (everything loads, verdicts visible) / `enforcing` (only `attested` skills
+  load; deployed mode since T45). `scripts/attest.mjs` is the signing tool
+  (keygen + sign).
 - **Origin-scoped fetch.** `host.fetchOrigin` only fetches the single allowed
   origin for the request. Any other origin throws *inside the sandbox* and is
   surfaced as `isError: true`, not a JSON-RPC error.
@@ -560,14 +562,16 @@ The workflow in `.github/workflows/ci.yml` runs two jobs on every push and
 pull_request to `main`, both on `ubuntu-latest` with Node 22 and `npm ci`
 (with cache), timing out after 15 minutes.
 
-The `hermetic` job is the gate. It runs the four local suites — `npm test`,
-`npm run spike`, `npm run memspike`, `npm run gateway:offline` — each
-preceded by its own build. None of these touch the network beyond `npm`
-itself: `test`, `spike`, and `memspike` are fully local, and `gateway:offline`
-is the hermetic mode of the gateway suite (T35), where the production workers
-are replaced by in-process fakes served through the same URL-to-binding map
-the gateway uses. Hermeticity is enforced by an outbound fetch interceptor:
-if anything in the suite tries to leave the process for the network, the run
+The `hermetic` job is the gate. It runs five local suites — `npm test`,
+`npm run spike`, `npm run memspike`, `npm run gateway:offline`, `npm run
+local` — each preceded by its own build. None of these touch the network
+beyond `npm` itself: `test`, `spike`, `memspike`, and `local` are fully local
+(the last spawns the stdio runtime against an in-process fake publisher on
+`127.0.0.1`), and `gateway:offline` is the hermetic mode of the gateway suite
+(T35), where the production workers are replaced by in-process fakes served
+through the same URL-to-binding map the gateway uses. Hermeticity is enforced
+by an outbound fetch interceptor: if anything in the suite tries to leave the
+process for the network, the run
 fails. This job blocks the merge.
 
 The `prod-integration` job runs `npm run gateway`, the online gateway suite
@@ -616,12 +620,14 @@ The non-obvious bits live there:
 
 Benchmark headline numbers (full matrix and methodology in
 [`BENCHMARK.md`](./BENCHMARK.md), single-client from México to the Workers
-edge, not a load test): the sandbox itself costs **~8 ms warm** (gateway
-pure-sandbox `sum_numbers` p50 ≈ 65 ms vs. the same worker's raw ping
-p50 ≈ 57 ms), and the full gateway adds **~12 ms** over calling the
-publisher's API directly for the same read (`stock_report` through the
-gateway p50 = 113 ms vs. direct API p50 = 101 ms). A cold discovery miss
-costs ~250–400 ms (compile + sha256 + fetch).
+edge, not a load test; latest figures from the post-pool+preheat run):
+the sandbox itself costs **~2 ms warm** (gateway pure-sandbox `sum_numbers`
+p50 ≈ 55 ms vs. the same worker's raw ping p50 ≈ 53 ms), and the full gateway
+adds **~6 ms** over calling the publisher's API directly for the same read
+(`stock_report` through the gateway p50 = 96 ms vs. direct API p50 = 90 ms).
+A cold discovery miss costs ~210–400 ms (compile + sha256 + fetch); the
+scheduled preheat (see "Security model" above) keeps the cron's own
+isolate/colo mostly out of this cold path.
 
 Run the e2e tests with `npm test` (sync) / `npm run spike` (async) /
 `npm run gateway` (gateway against the live demo site) / `npm run memspike`

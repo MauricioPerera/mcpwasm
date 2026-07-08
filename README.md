@@ -24,6 +24,74 @@ standard via two provisional extensions adopted in the spec: **executable
 skills** (v0.4, with *origin memory*) and **skill attestations** (v0.2). See
 the dedicated sections below.
 
+## Use as a library (npm)
+
+The embeddable host — what the gateway itself builds on — ships as
+[`@rckflr/mcpwasm`](https://www.npmjs.com/package/@rckflr/mcpwasm):
+
+```bash
+npm install @rckflr/mcpwasm
+```
+
+```js
+import { AsyncToolHost } from "@rckflr/mcpwasm";
+
+const host = new AsyncToolHost({ allowedOrigin: "https://example.com" });
+await host.init();
+host.loadToolSource(toolJsSource); // a tool.js that calls registerTool({...})
+const tools = host.listTools();
+const result = await host.callTool("sum_numbers", { a: 2, b: 40 });
+host.dispose();
+```
+
+Notes:
+
+- In Cloudflare Workers, pass a pre-built asyncify module via the `quickjs`
+  option (see `worker-gateway.mjs` for the `CompiledWasm` import pattern and
+  import `@rckflr/mcpwasm/shim` first).
+- Subpath exports: `/host` (sync `ToolHost`), `/host-async`, `/mcp-core`,
+  `/mcp-core-async`, `/llmstxt-parse`, `/shim`.
+- The sync `ToolHost` lazy-imports the optional peer `quickjs-emscripten`
+  unless you pass a pre-built module; the async host's dependencies install
+  with the package.
+- The package contains only the host/core/parser files plus the local runtime
+  binary; the workers, publisher sites and test suites stay in this repo (they
+  are the deployed reference, not the library).
+
+### Local MCP runtime — no gateway at all
+
+The package also ships a stdio MCP server that runs an origin's skills
+**locally**: it fetches `/llms.txt`, verifies every `tool_sha256`, loads each
+verified skill into its own QuickJS-wasm context, and speaks MCP over
+stdin/stdout — so a static site (e.g. a GitHub Pages *user* site) becomes an
+MCP server on your machine with zero deployed infrastructure on either side:
+
+```bash
+npx -y @rckflr/mcpwasm https://usuario.github.io
+```
+
+MCP client configuration (Claude Code, Cursor, …):
+
+```json
+{
+  "mcpServers": {
+    "misitio": {
+      "command": "npx",
+      "args": ["-y", "@rckflr/mcpwasm", "https://usuario.github.io"]
+    }
+  }
+}
+```
+
+Honest v1 limits (stated in `bin/mcpwasm-local.mjs`): no origin memory
+(`host.memorySearch` is absent; skills that call it fail controlled, which the
+spec allows), no attestation verification (locally, trust is your choice of
+origin — hash verification remains mandatory), and discovery runs once per
+process (restart to refresh). Hash verification and the sandbox model
+(per-skill contexts, origin-scoped `fetchOrigin`, resource limits) are the
+same as the gateway's. Tested by `npm run local` (hermetic, localhost-only;
+part of the CI gate).
+
 ## Why
 
 MCP clients (Claude, Cursor, others) can call arbitrary tools. Running a

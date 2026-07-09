@@ -182,7 +182,7 @@ es byte-idéntico al previo (las 3 suites lo confirman).
 | wrapper `minimemory.js` (incluido en el bundle) | 47 287 | 46 KB |
 
 Suma no comprimida cargada por el Worker (2 wasm + bundle + snapshot):
-~1.77 MB. Límite de Workers: 3 MB (free) / 10 MB (paid) sobre el bundle comprimido;
+~1.77 MB. Límite de Workers: 1 MiB (free) / 10 MiB (paid) sobre el bundle comprimido;
 gzip de ~1.77 MB → ~600 KB. **Holgado en ambos planes.** Dos módulos `CompiledWasm`
 coexistentes (QuickJS + minimemory) — demostrado funcionando en workerd.
 

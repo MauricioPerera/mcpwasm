@@ -338,9 +338,19 @@ rl.on("line", (line) => {
   chain = chain.then(() => handleLine(line));
 });
 rl.on("close", () => {
-  chain.finally(() => {
+  chain.finally(async () => {
     if (host) host.dispose();
     if (internalServer) internalServer.close();
-    process.exit(0);
+    // Deliberadamente SIN process.exit(): con stdin cerrado, el host
+    // disposeado y el server interno (si habia) cerrado, no queda ningun
+    // handle activo y Node termina solo, con exit code 0. Un process.exit()
+    // forzado aca corria en paralelo con el teardown async de esos handles
+    // (server.close() es async; QuickJS-wasm/asyncify tiene su propio estado
+    // interno) y en Windows eso disparaba "Assertion failed:
+    // !(handle->flags & UV_HANDLE_CLOSING)" en libuv (src/win/async.c) --
+    // el proceso ya habia respondido bien por stdout, pero terminaba con
+    // exit code 127 en vez de 0. Confirmado con --serve real: exit 127 con
+    // process.exit(), exit 0 limpio sin el, en ambos modos (con y sin
+    // --serve).
   });
 });

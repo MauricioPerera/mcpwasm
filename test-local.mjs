@@ -175,7 +175,8 @@ try {
   failures++;
 } finally {
   child.stdin.end();
-  await new Promise((r) => child.on("exit", r));
+  const exitCode = await new Promise((r) => child.on("exit", (code) => r(code)));
+  check(exitCode === 0, "el proceso termina con exit code 0 (sin --serve)");
   server.close();
 }
 
@@ -258,7 +259,15 @@ try {
     check(legit.status === 200, "--serve: /llms.txt legitimo sigue sirviendose (200) tras el hardening de traversal");
   } finally {
     serveChild.stdin.end();
-    await new Promise((r) => serveChild.on("exit", r));
+    const serveExitCode = await new Promise((r) => serveChild.on("exit", (code) => r(code)));
+    // Regresion real: process.exit() forzado justo despues de server.close()
+    // (ambos async) disparaba una condicion de carrera de doble-cierre de
+    // handle que en Windows terminaba el proceso con exit code 127 (via
+    // "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)" de libuv),
+    // aun cuando la respuesta por stdout ya habia sido correcta. No
+    // reproduce en Linux/CI, pero el exit code 0 es la asercion correcta
+    // en cualquier plataforma.
+    check(serveExitCode === 0, "--serve: el proceso termina con exit code 0 (sin el crash de libuv en Windows)");
   }
 
   // --serve con directorio inexistente: debe fallar rapido con exit != 0, sin colgar.

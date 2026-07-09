@@ -763,8 +763,23 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
   const parsed = parseLlmsTxt(llmsText);
   const parsedSkills = parsed.skills;
   const memory = parsed.memory;
+
+  // Skills de prosa (core llms-txt-skills spec, sin tool/tool_sha256): este
+  // gateway no las ejecuta, pero reportarlas evita que un origin con SOLO
+  // skills de prosa se lea como "no publica nada" -- antes parseLlmsTxt las
+  // descartaba en silencio. No afecta el flujo (no se cargan, no se sirven).
+  for (const ne of parsed.nonExecutable) {
+    console.warn(
+      "[gateway] skill de prosa (no ejecutable por este runtime): " + ne.name +
+        " -> " + ne.reason + " (ver el consumer skill llms-txt-aware / el MCP server del core spec)"
+    );
+  }
+
   if (parsedSkills.length === 0) {
-    throw new Error("llms.txt: sin skills ejecutables (estado=" + llmsStatus + ")");
+    const proseNote = parsed.nonExecutable.length > 0
+      ? " (" + parsed.nonExecutable.length + " skill(s) de prosa encontradas, no ejecutables por este runtime)"
+      : "";
+    throw new Error("llms.txt: sin skills ejecutables (estado=" + llmsStatus + ")" + proseNote);
   }
 
   for (const s of parsedSkills) {

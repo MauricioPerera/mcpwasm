@@ -206,9 +206,20 @@ async function discover() {
   if (r.status !== 200) {
     throw new Error("llms.txt: HTTP " + r.status);
   }
-  const { skills: parsed, memory } = parseLlmsTxt(r.text);
+  const { skills: parsed, nonExecutable, memory } = parseLlmsTxt(r.text);
+
+  // Skills de prosa (core llms-txt-skills spec, sin tool/tool_sha256): este
+  // runtime no las ejecuta, pero reportarlas evita que un origin con SOLO
+  // skills de prosa se lea como "no publica nada".
+  for (const ne of nonExecutable) {
+    err("skill de prosa (no ejecutable por este runtime): " + ne.name + " -> " + ne.reason);
+  }
+
   if (parsed.length === 0) {
-    throw new Error("llms.txt sin skills ejecutables (lineas <!-- skill: {...} -->)");
+    const proseNote = nonExecutable.length > 0
+      ? " (" + nonExecutable.length + " skill(s) de prosa encontradas, no ejecutables por este runtime)"
+      : "";
+    throw new Error("llms.txt sin skills ejecutables (lineas <!-- skill: {...} -->)" + proseNote);
   }
   if (memory) {
     err("origin declara skills-memory: NO soportada en el runtime local v1 -> host.memorySearch ausente (las skills que la usen fallan controlado)");

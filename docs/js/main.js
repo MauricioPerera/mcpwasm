@@ -4,6 +4,12 @@
 (() => {
   "use strict";
 
+  // i18n runs first (js/i18n.js loads before this script): applies the
+  // detected/saved language and injects the language switcher. Guarded so
+  // this file still works standalone if i18n.js ever fails to load — the
+  // page just stays in its hardcoded English default.
+  if (window.MCPWASM_I18N) window.MCPWASM_I18N.init();
+
   const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   // ---- copy-to-clipboard: independent of motion preference ----
@@ -20,7 +26,10 @@
         // and the text is already selectable/visible for a manual copy.
       }
       const original = btn.textContent;
-      btn.textContent = "Copied";
+      const copiedLabel = window.MCPWASM_I18N
+        ? window.MCPWASM_I18N.t(document.documentElement.lang, "common.copied")
+        : "Copied";
+      btn.textContent = copiedLabel;
       btn.classList.add("copied");
       setTimeout(() => {
         btn.textContent = original;

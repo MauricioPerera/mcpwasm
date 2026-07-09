@@ -452,6 +452,41 @@ code {
 .footer-links a:hover { color: var(--accent-text); }
 .footer img { height: 20px; display: block; }
 
+/* ---------- language switcher ----------
+   Injected entirely by js/i18n.js — never present in the no-JS baseline, so
+   there is no dead/non-functional control when the script fails to load. */
+.lang-switch {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 20;
+  display: flex;
+  gap: 2px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 3px;
+}
+.lang-switch button {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  padding: 4px 9px;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.lang-switch button:hover {
+  color: var(--text);
+}
+.lang-switch button.is-active {
+  color: var(--bg);
+  background: var(--accent);
+}
+
 /* ---------- responsive ---------- */
 @media (max-width: 900px) {
   .cards-3 { grid-template-columns: 1fr 1fr; }

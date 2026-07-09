@@ -115,7 +115,8 @@ a `tool_sha256` mismatch against the fetched `tool.js` itself. Absence of
 > public API. Cloudflare Workers has no filesystem, so Sigstore verification
 > **only runs in the local Node runtime** (`bin/mcpwasm-local.mjs`) — the
 > gateway's attestation model remains the pre-registered-key Ed25519 scheme
-> above, unaffected.
+> above, unaffected. This is the mirror image of origin memory, which is
+> gateway-only; see [Capability support by runtime](#capability-support-by-runtime).
 
 The Ed25519 model (above) requires pre-registering every reviewer's public
 key — a real bottleneck (today, only the maintainer is registered). Sigstore
@@ -380,6 +381,14 @@ registerTool({
 > Spec: *origin memory* in
 > [Executable Skills v0.4](https://github.com/MauricioPerera/llms-txt-skills/blob/master/docs/ext-executable-skills.md).
 
+> **Gateway only.** Origin memory runs in the **gateway** (`worker-gateway.mjs`).
+> The **local runtime** (`bin/mcpwasm-local.mjs`) does not implement it: if an
+> origin declares a `skills-memory` line, the local runtime logs that it is
+> unsupported and leaves `host.memorySearch` **absent** — spec-conformant, a
+> skill that calls it fails closed inside the sandbox (`isError: true`), it is
+> not a crash. This mirrors the Sigstore limitation in the opposite direction
+> (Sigstore is local-only); see [Capability support by runtime](#capability-support-by-runtime).
+
 A publisher that wants its skills to search over its own static content (docs,
 catalog text, any corpus) declares a memory snapshot with a single HTML comment
 **before** the `## Skills` section (this ordering is required by the reference
@@ -414,6 +423,25 @@ The reference publisher is the docs-site (see "Repository layout"): it serves
 the spec snapshot and a `search_spec` skill that runs
 `host.memorySearch(args.q, k)` to do BM25 search over the four llms-txt-skills
 documents, plus `get_doc` and `list_docs`.
+
+### Capability support by runtime
+
+Discovery, `tool_sha256` content-addressing, sandboxed `tool.js` execution, and
+Ed25519 attestations work on **both** runtimes. Two capabilities are asymmetric
+— each supported on exactly one runtime, and each for a declared platform reason,
+not a bug. They are mirror images of each other:
+
+| Capability | Gateway (`worker-gateway.mjs`, Workers) | Local runtime (`bin/mcpwasm-local.mjs`, Node) |
+| :--- | :---: | :---: |
+| Origin memory — `host.memorySearch` | ✅ full | ❌ not in v1 — capability absent, skills that call it fail closed in-sandbox (spec-conformant) |
+| Sigstore (keyless) attestations | ❌ Workers has no `node:fs` for `@sigstore/tuf`'s trust-root cache | ✅ `--require-attestation` |
+
+Consequence: no single runtime provides **both** origin memory and Sigstore
+verification today. The gateway gives you memory but its attestation model is
+Ed25519-only; the local runtime gives you Sigstore but no memory. Closing either
+gap is known work, not a deep incompatibility. The reasons are documented where
+each feature is: [Sigstore](#sigstore-attestations---require-attestation-local-runtime-only)
+above, origin memory in this section.
 
 ## Skill attestations (advisory)
 

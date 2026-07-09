@@ -340,9 +340,23 @@ async function handleLine(line) {
 // inmediatamente). La cola tambien serializa los mensajes entre si (asyncify:
 // una suspension a la vez sobre el modulo compartido). Un mensaje que falle no
 // envenena la cola (handleLine captura y responde error JSON-RPC).
-const startP = start().catch((e) => {
+const startP = start().catch(async (e) => {
   err("descubrimiento fallo: " + String((e && e.message) || e));
-  process.exit(1);
+  // NO process.exit() aca: la misma condicion de carrera documentada en
+  // rl.on("close") mas abajo (forzar la salida mientras el server interno de
+  // --serve y/o el readline de stdin todavia estan liberando sus handles
+  // dispara "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)" en
+  // libuv/Windows). Confirmado: --serve sobre un directorio existente cuyas
+  // skills fallan verificacion (0 verificadas) reproducia exit code 127 en
+  // vez de 1 incluso esperando el cierre del server antes de exit().
+  // process.exitCode fija el codigo de salida SIN terminar el proceso: una
+  // vez cerrado el server (si lo hay) y con stdin/readline liberados por su
+  // propio rl.on("close"), Node termina solo con ese exit code.
+  process.exitCode = 1;
+  if (internalServer) {
+    await new Promise((resolve) => internalServer.close(() => resolve()));
+  }
+  rl.close();
 });
 let chain = startP;
 

@@ -124,4 +124,27 @@
     );
     diagramObserver.observe(diagram);
   }
+
+  // The spec⇄runtime #bridge-svg diagram animates its numbered steps the same
+  // way, independently (no sandbox-node); reveal them as it scrolls into view.
+  const bridgeDiagram = document.getElementById("bridge-svg");
+  if (bridgeDiagram) {
+    const bridgeSteps = Array.from(bridgeDiagram.querySelectorAll(".step"));
+    const BRIDGE_STEP_DELAY_MS = 260;
+
+    const bridgeObserver = new IntersectionObserver(
+      (entries, obs) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+          bridgeSteps.forEach((stepEl, i) => {
+            const order = Number(stepEl.dataset.step) || i + 1;
+            setTimeout(() => stepEl.classList.add("is-visible"), order * BRIDGE_STEP_DELAY_MS);
+          });
+          obs.unobserve(entry.target);
+        });
+      },
+      { threshold: 0.2 }
+    );
+    bridgeObserver.observe(bridgeDiagram);
+  }
 })();

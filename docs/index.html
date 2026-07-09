@@ -324,6 +324,89 @@ host.dispose();</code></pre>
   </section>
 
   <!-- ============ ECOSYSTEM ============ -->
+  <!-- ============ HOW THEY LINK: spec ⇄ runtime ============ -->
+  <section id="bridge" class="section reveal">
+    <div class="wrap">
+      <h2 data-i18n="bridge.h2">From a static site to a live MCP server</h2>
+      <p class="section-lede" data-i18n="bridge.lede__html"><a href="https://github.com/MauricioPerera/llms-txt-skills">llms-txt-skills</a> is the <strong>format</strong>; <a href="https://github.com/MauricioPerera/mcpwasm">mcpwasm</a> is a <strong>runtime</strong> for it. A publisher serves hash-pinned, attested skills once, the standard way — the runtime discovers, verifies, and runs each as an MCP tool. The whole contract between them is one <code>tool_sha256</code> and its attestation.</p>
+
+      <div class="diagram-wrap">
+        <svg id="bridge-svg" viewBox="0 0 820 400" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="bridge-title">
+          <title id="bridge-title" data-i18n="bridge.svgTitle">A static publisher site serves llms.txt skills and tool.js; mcpwasm fetches and verifies them, then exposes each as an MCP tool that a client can call, running the tool.js sandboxed.</title>
+
+          <!-- three boxes -->
+          <g class="node">
+            <rect x="20" y="154" width="220" height="92" rx="12" class="box"/>
+            <text x="130" y="184" class="box-title" text-anchor="middle" data-i18n="bridge.boxSiteTitle">Static site</text>
+            <text x="130" y="206" class="box-sub" text-anchor="middle" data-i18n="bridge.boxSiteSub1">llms.txt · ## Skills · tool.js</text>
+            <text x="130" y="223" class="box-sub" text-anchor="middle" data-i18n="bridge.boxSiteSub2">index.json · attestations.json</text>
+          </g>
+
+          <g class="node">
+            <rect x="300" y="154" width="220" height="92" rx="12" class="box box--accent"/>
+            <text x="410" y="184" class="box-title" text-anchor="middle" data-i18n="bridge.boxRuntimeTitle">mcpwasm runtime</text>
+            <text x="410" y="206" class="box-sub" text-anchor="middle" data-i18n="bridge.boxRuntimeSub1">gateway (Workers) or npx local</text>
+            <text x="410" y="223" class="box-sub" text-anchor="middle" data-i18n="bridge.boxRuntimeSub2">verify + QuickJS sandbox</text>
+          </g>
+
+          <g class="node">
+            <rect x="580" y="154" width="220" height="92" rx="12" class="box"/>
+            <text x="690" y="184" class="box-title" text-anchor="middle" data-i18n="bridge.boxClientTitle">MCP client</text>
+            <text x="690" y="206" class="box-sub" text-anchor="middle" data-i18n="bridge.boxClientSub1">Claude, Cursor, any MCP host</text>
+            <text x="690" y="223" class="box-sub" text-anchor="middle" data-i18n="bridge.boxClientSub2">lists and calls the tools</text>
+          </g>
+
+          <!-- step 1: site -> runtime (fetch + verify) -->
+          <g class="step" data-step="1">
+            <path d="M 200 160 C 250 110, 290 110, 340 160" class="arrow" marker-end="url(#bridgehead)"/>
+            <circle cx="270" cy="128" r="11" class="step-badge"/>
+            <text x="270" y="132" class="step-num" text-anchor="middle">1</text>
+            <text x="270" y="104" class="step-caption" text-anchor="middle" data-i18n="bridge.step1">fetch + verify</text>
+          </g>
+
+          <!-- step 2: runtime -> client (serve as MCP tools) -->
+          <g class="step" data-step="2">
+            <path d="M 480 160 C 530 110, 570 110, 620 160" class="arrow" marker-end="url(#bridgehead)"/>
+            <circle cx="550" cy="128" r="11" class="step-badge"/>
+            <text x="550" y="132" class="step-num" text-anchor="middle">2</text>
+            <text x="550" y="104" class="step-caption" text-anchor="middle" data-i18n="bridge.step2">serve as MCP tools</text>
+          </g>
+
+          <!-- step 3: client -> runtime (call tool, dashed = request in) -->
+          <g class="step" data-step="3">
+            <path d="M 620 240 C 570 290, 530 290, 480 240" class="arrow arrow--dashed" marker-end="url(#bridgehead)"/>
+            <circle cx="550" cy="272" r="11" class="step-badge step-badge--dashed"/>
+            <text x="550" y="276" class="step-num" text-anchor="middle">3</text>
+            <text x="550" y="300" class="step-caption" text-anchor="middle" data-i18n="bridge.step3">call tool(args)</text>
+          </g>
+
+          <!-- step 4: runtime -> site (sandboxed tool.js may fetchOrigin, dashed) -->
+          <g class="step" data-step="4">
+            <path d="M 340 240 C 290 290, 250 290, 200 240" class="arrow arrow--dashed" marker-end="url(#bridgehead)"/>
+            <circle cx="270" cy="272" r="11" class="step-badge step-badge--dashed"/>
+            <text x="270" y="276" class="step-num" text-anchor="middle">4</text>
+            <text x="270" y="300" class="step-caption" text-anchor="middle" data-i18n="bridge.step4">sandboxed tool.js</text>
+          </g>
+
+          <defs>
+            <marker id="bridgehead" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+              <path d="M0,0 L8,4 L0,8 Z" class="arrowhead-fill"/>
+            </marker>
+          </defs>
+        </svg>
+
+        <ol class="diagram-steps-text">
+          <li data-i18n="bridge.list1__html">A publisher serves an <code>llms.txt</code> whose <code>## Skills</code> section lists each executable skill with its <code>tool.js</code> and <code>tool_sha256</code> — mirrored in <code>/.well-known/agent-skills/index.json</code> and signed in <code>attestations.json</code>. This is exactly what the llms-txt-skills spec defines.</li>
+          <li data-i18n="bridge.list2__html">mcpwasm points at that origin, fetches the <code>llms.txt</code>, and verifies every <code>tool.js</code> against its <code>tool_sha256</code> and its attestation — rejecting any mismatch <em>before</em> loading it.</li>
+          <li data-i18n="bridge.list3__html">Each verified skill becomes an <strong>MCP tool</strong>. Your MCP client — Claude, Cursor, any host — lists and calls it like any other tool.</li>
+          <li data-i18n="bridge.list4__html">On a call, mcpwasm executes that <code>tool.js</code> <strong>verbatim</strong> inside a QuickJS-wasm sandbox — no network or filesystem except the host capabilities it grants (a scoped <code>fetchOrigin</code> back to the site, and search over the site's own content). The result returns to the client.</li>
+        </ol>
+      </div>
+
+      <p class="section-lede" data-i18n="bridge.takeaway__html">Neither side has to trust the other's prose: mcpwasm re-derives the hash and checks the signature itself. Static hosting + a verifying runtime = an MCP server with <strong>no server to run</strong>.</p>
+    </div>
+  </section>
+
   <section id="ecosystem" class="section reveal">
     <div class="wrap">
       <h2 data-i18n="ecosystem.h2">Part of a spec, not just a repo</h2>

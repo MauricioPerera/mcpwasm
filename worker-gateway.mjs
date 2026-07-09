@@ -238,6 +238,7 @@ const DEFAULT_SIZE_CAPS = {
   tool: 1048576, // 1 MB
   attestations: 262144, // 256 KB
   snapshot: 4194304, // 4 MB
+  index: 262144, // 256 KB
 };
 function parseSizeCap(raw, def) {
   if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return Math.floor(raw);
@@ -254,6 +255,7 @@ function parseSizeCaps(env) {
     tool: parseSizeCap(e.MAX_TOOL_BYTES, DEFAULT_SIZE_CAPS.tool),
     attestations: parseSizeCap(e.MAX_ATTESTATIONS_BYTES, DEFAULT_SIZE_CAPS.attestations),
     snapshot: parseSizeCap(e.MAX_SNAPSHOT_BYTES, DEFAULT_SIZE_CAPS.snapshot),
+    index: parseSizeCap(e.MAX_INDEX_BYTES, DEFAULT_SIZE_CAPS.index),
   };
 }
 
@@ -508,6 +510,42 @@ async function fetchAttestations(origin, fetchImpl, maxBytes) {
     return Array.isArray(arr) ? arr : null;
   } catch {
     console.warn("[gateway] attestations JSON invalido -> sin atestaciones");
+    return null;
+  }
+}
+
+// Descarga /.well-known/agent-skills/index.json del origin: la capa de metadata
+// CANONICA que define el core RFC (§8 Open Question 5) -- llms.txt es el puntero
+// de descubrimiento ("## Skills", zero fetch extra), index.json es la fuente de
+// verdad de metadata/verificacion. Este gateway hasta ahora solo leia llms.txt
+// directo, ignorando index.json por completo; se usa aqui SOLO para cruzar
+// tool_sha256 contra lo declarado en llms.txt (ver discoverSkillsInner), no
+// reemplaza el llms.txt como fuente primaria de descubrimiento.
+// 404/no-200/JSON invalido -> null: el origin puede no publicar index.json (no
+// es parte obligatoria de este spec para el publisher), asi que ausencia NO es
+// error de descubrimiento -- el gateway simplemente no cruza nada y confia solo
+// en llms.txt, como hacia antes de este cambio.
+async function fetchAgentSkillsIndex(origin, fetchImpl, maxBytes) {
+  const url = origin + "/.well-known/agent-skills/index.json";
+  let r;
+  try {
+    r = await fetchText(url, FETCH_TIMEOUT_MS, maxBytes, fetchImpl);
+  } catch (e) {
+    console.warn(
+      "[gateway] agent-skills index.json fetch fallo: " + String((e && e.message) || e) + " -> sin cruce de metadata"
+    );
+    return null;
+  }
+  if (r.status === 404) return null; // esperado: el origin no publica index.json
+  if (r.status !== 200) {
+    console.warn("[gateway] agent-skills index.json HTTP " + r.status + " -> sin cruce de metadata");
+    return null;
+  }
+  try {
+    const obj = JSON.parse(r.text);
+    return obj && typeof obj === "object" ? obj : null;
+  } catch {
+    console.warn("[gateway] agent-skills index.json invalido -> sin cruce de metadata");
     return null;
   }
 }
@@ -782,7 +820,34 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
     throw new Error("llms.txt: sin skills ejecutables (estado=" + llmsStatus + ")" + proseNote);
   }
 
+  // Cruce contra la capa de metadata canonica (.well-known/agent-skills/index.json,
+  // ver fetchAgentSkillsIndex arriba). Ausente/invalido -> indexByName vacio, sin
+  // cruce (comportamiento identico al de antes de este cambio).
+  const agentIndex = await fetchAgentSkillsIndex(origin, fetchImpl, caps.index);
+  const indexByName = new Map();
+  if (agentIndex && Array.isArray(agentIndex.skills)) {
+    for (const it of agentIndex.skills) {
+      if (it && typeof it.name === "string") indexByName.set(it.name, it);
+    }
+  }
+
   for (const s of parsedSkills) {
+    // Si index.json declara tool_sha256 para esta skill, DEBE coincidir con lo
+    // declarado en llms.txt: son dos fuentes que se presentan como autoritativas
+    // (RFC §8 OQ5) y un desacuerdo entre ellas es exactamente la senal de drift/
+    // tampering parcial que el cruce busca detectar -- ninguna de las dos gana
+    // por default, se rechaza la skill entera (mismo trato que un sha256 mismatch).
+    const idxEntry = indexByName.get(s.name);
+    if (idxEntry && typeof idxEntry.tool_sha256 === "string" && idxEntry.tool_sha256 !== s.sha256) {
+      rejected.push({
+        name: s.name,
+        reason:
+          "tool_sha256 no coincide entre llms.txt (" + s.sha256.slice(0, 12) +
+          "…) e index.json (" + idxEntry.tool_sha256.slice(0, 12) + "…) -- posible drift/tampering parcial",
+      });
+      continue;
+    }
+
     const toolUrl = new URL(s.toolPath, origin).href;
     const toolKey = "gw:tool:" + toolUrl + "#" + s.sha256;
 

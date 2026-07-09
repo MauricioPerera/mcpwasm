@@ -54,6 +54,7 @@ import { parseLlmsTxt } from "../llmstxt-parse.mjs";
 const PKG = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const MAX_LLMS_BYTES = 262144; // 256 KB (mismos defaults que el gateway)
 const MAX_TOOL_BYTES = 1048576; // 1 MB
+const MAX_INDEX_BYTES = 262144; // 256 KB (mismo default que el gateway)
 const FETCH_TIMEOUT_MS = 10000;
 
 function err(msg) {
@@ -199,6 +200,30 @@ function sha256Hex(text) {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
 
+// Descarga /.well-known/agent-skills/index.json: la capa de metadata CANONICA
+// (RFC §8 OQ5) -- llms.txt es el puntero de descubrimiento, index.json es la
+// fuente de verdad de metadata/verificacion. Se usa SOLO para cruzar tool_sha256
+// contra lo declarado en llms.txt (ver discover() abajo); no reemplaza llms.txt
+// como fuente primaria. Ausente/HTTP no-200/JSON invalido -> null (el origin
+// puede no publicarlo; no es un error, simplemente no hay nada que cruzar).
+async function fetchAgentSkillsIndex() {
+  let r;
+  try {
+    r = await fetchText(origin + "/.well-known/agent-skills/index.json", MAX_INDEX_BYTES);
+  } catch (e) {
+    err("agent-skills index.json fetch fallo: " + (e && e.message) + " -> sin cruce de metadata");
+    return null;
+  }
+  if (r.status !== 200) return null; // 404 u otro estado: origin no lo publica
+  try {
+    const obj = JSON.parse(r.text);
+    return obj && typeof obj === "object" ? obj : null;
+  } catch {
+    err("agent-skills index.json invalido -> sin cruce de metadata");
+    return null;
+  }
+}
+
 // Descubrimiento: llms.txt -> skills ejecutables -> fetch + verify sha256.
 // Mismatch/HTTP != 200/cap excedido => skill rechazada (stderr), las demas cargan.
 async function discover() {
@@ -224,8 +249,29 @@ async function discover() {
   if (memory) {
     err("origin declara skills-memory: NO soportada en el runtime local v1 -> host.memorySearch ausente (las skills que la usen fallan controlado)");
   }
+
+  const agentIndex = await fetchAgentSkillsIndex();
+  const indexByName = new Map();
+  if (agentIndex && Array.isArray(agentIndex.skills)) {
+    for (const it of agentIndex.skills) {
+      if (it && typeof it.name === "string") indexByName.set(it.name, it);
+    }
+  }
+
   const verified = [];
   for (const s of parsed) {
+    // Si index.json declara tool_sha256 para esta skill, debe coincidir con lo
+    // declarado en llms.txt -- un desacuerdo entre las dos fuentes autoritativas
+    // es la senal de drift/tampering parcial que el cruce busca detectar.
+    const idxEntry = indexByName.get(s.name);
+    if (idxEntry && typeof idxEntry.tool_sha256 === "string" && idxEntry.tool_sha256 !== s.sha256) {
+      err(
+        "skill rechazada: " + s.name + " -> tool_sha256 no coincide entre llms.txt (" +
+          s.sha256.slice(0, 12) + "…) e index.json (" + idxEntry.tool_sha256.slice(0, 12) +
+          "…) -- posible drift/tampering parcial"
+      );
+      continue;
+    }
     const toolUrl = new URL(s.toolPath, origin).href;
     let tr;
     try {

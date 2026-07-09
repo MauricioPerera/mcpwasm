@@ -140,7 +140,20 @@ function serveDirectory(dir, port) {
   }
   return new Promise((resolve, reject) => {
     const server = createServer((req, res) => {
-      const filePath = safeJoin(rootDir, req.url || "/");
+      // safeJoin decodifica el pathname (decodeURIComponent): un percent-encoding
+      // malformado (p.ej. "/%c0%af") lanza URIError. Sin este try/catch esa
+      // excepcion no se captura dentro del handler de 'request' y tumba TODO el
+      // proceso (confirmado: crash real, no solo un 500) — este mismo proceso
+      // sirve tambien el runtime MCP por stdio, asi que una sola request mal
+      // formada mataria la sesion del agente conectado.
+      let filePath;
+      try {
+        filePath = safeJoin(rootDir, req.url || "/");
+      } catch (e) {
+        res.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
+        res.end("bad request: " + (e && e.message));
+        return;
+      }
       if (!filePath || !existsSync(filePath) || !statSync(filePath).isFile()) {
         res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });
         res.end("not found");

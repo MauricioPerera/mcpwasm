@@ -22,7 +22,7 @@ capability the host injects. No capability, no access.
 
 This repo integrates with the [llms-txt-skills](https://github.com/MauricioPerera/llms-txt-skills)
 standard via two provisional extensions adopted in the spec: **executable
-skills** (v0.4, with *origin memory*) and **skill attestations** (v0.2). See
+skills** (v0.4, with *origin memory*) and **skill attestations** (v0.3). See
 the dedicated sections below.
 
 ## Use as a library (npm)
@@ -86,12 +86,84 @@ MCP client configuration (Claude Code, Cursor, …):
 
 Honest v1 limits (stated in `bin/mcpwasm-local.mjs`): no origin memory
 (`host.memorySearch` is absent; skills that call it fail controlled, which the
-spec allows), no attestation verification (locally, trust is your choice of
-origin — hash verification remains mandatory), and discovery runs once per
-process (restart to refresh). Hash verification and the sandbox model
-(per-skill contexts, origin-scoped `fetchOrigin`, resource limits) are the
-same as the gateway's. Tested by `npm run local` (hermetic, localhost-only;
-part of the CI gate).
+spec allows), and discovery runs once per process (restart to refresh). Hash
+verification and the sandbox model (per-skill contexts, origin-scoped
+`fetchOrigin`, resource limits) are the same as the gateway's. Trust is your
+choice of origin by default (no attestation required); Sigstore attestation
+verification is available opt-in via `--require-attestation` (below). Also
+cross-checks `tool_sha256` against `.well-known/agent-skills/index.json` when
+the origin publishes one (see "Cross-checking against index.json"). Tested by
+`npm run local` (hermetic, localhost-only; part of the CI gate).
+
+#### Cross-checking against `index.json`
+
+Both the local runtime and the gateway now also fetch
+`/.well-known/agent-skills/index.json` — the canonical metadata layer the core
+llms-txt-skills RFC defines (§8 Open Question 5: `llms.txt` is the zero-fetch
+discovery pointer, `index.json` is the metadata/verification source of truth).
+When a skill's name appears in both `llms.txt` and `index.json`, and the
+latter declares a `tool_sha256`, it **must** match the one declared in
+`llms.txt`; a mismatch rejects the skill (drift/tampering signal) exactly like
+a `tool_sha256` mismatch against the fetched `tool.js` itself. Absence of
+`index.json` (most origins today) changes nothing.
+
+#### Sigstore attestations: `--require-attestation` (local runtime only)
+
+> **Platform limitation, discovered during implementation:** the `sigstore`
+> npm package depends on `@sigstore/tuf` to cache Fulcio/Rekor's trusted root
+> via TUF, and that cache uses `node:fs` with no way to bypass it through the
+> public API. Cloudflare Workers has no filesystem, so Sigstore verification
+> **only runs in the local Node runtime** (`bin/mcpwasm-local.mjs`) — the
+> gateway's attestation model remains the pre-registered-key Ed25519 scheme
+> above, unaffected.
+
+The Ed25519 model (above) requires pre-registering every reviewer's public
+key — a real bottleneck (today, only the maintainer is registered). Sigstore
+verifies **any** OIDC identity (a GitHub Actions workflow, a Google/GitHub
+login) without pre-coordination; the runtime's trust decision is which
+*identity* to require, not which *key* to whitelist — closer to what core RFC
+§4.6 recommends for identity-bound provenance.
+
+```bash
+npx -y @rckflr/mcpwasm https://usuario.github.io \
+  --require-attestation "https://token.actions.githubusercontent.com|https://github.com/OWNER/REPO/.github/workflows/release.yml@refs/heads/main"
+```
+
+When set, discovery additionally fetches
+`/.well-known/agent-skills/attestations.json` and, for **every** skill,
+requires a matching entry (`origin` + `skill` + `tool_sha256`) whose
+`sigstore_bundle` verifies against exactly that `issuer|identity` pair, within
+its `[signed_on, valid_until]` window. A skill without one — absent
+attestations.json, no matching entry, expired, or an invalid/mismatched bundle
+— is excluded, same treatment as a `tool_sha256` mismatch. This flag is
+fail-closed by design: it is opt-in, but once set, absence of a valid
+attestation is *not* tolerated (unlike the gateway's `advisory` mode).
+
+The attestation object's signed payload is an
+[in-toto Statement v1](https://in-toto.io/Statement/v1) inside a DSSE
+envelope, whose `predicate` must carry the same 5 fields as the Ed25519 model
+(`origin`, `skill`, `tool_sha256`, `signed_on`, `valid_until`) — verified to
+match the attestation's own top-level fields, so a validly-signed bundle for
+skill A cannot be relabeled as skill B's attestation without re-signing.
+`sigstore-attest.mjs` exports `verifySigstoreAttestation` (the verifier) and
+`buildSigstoreStatement` (the canonical payload shape a publisher signs with
+`sigstore attest` or an equivalent SDK call — this repo does not ship a
+signing tool for it, since producing a real Sigstore signature needs a live
+OIDC flow, out of scope for a script run here).
+
+Verified against a **real, live, publicly fetched** Sigstore bundle (the SLSA
+provenance attestation for the `sigstore@5.0.0` npm package's own publish,
+`https://registry.npmjs.org/-/npm/v1/attestations/sigstore@5.0.0`) — proving
+the underlying Fulcio cert-chain + Rekor transparency-log verification
+genuinely runs and succeeds, and that a schema-mismatched or wrong-identity
+bundle is correctly rejected. All 6 `--require-attestation` rejection paths
+(no attestations.json, empty array, no matching skill, malformed date,
+expired, invalid/empty bundle) verified end-to-end against
+`bin/mcpwasm-local.mjs`. **Honest gap:** producing a *positive* fixture (a
+real Sigstore signature over this repo's own canonical payload, verifying as
+`attested`) needs a live OIDC signing flow this environment cannot complete
+headlessly — untested is the happy path specifically, not the security-critical
+rejection paths.
 
 #### Developing your own skills: `--serve <dir>`
 
@@ -345,7 +417,14 @@ documents, plus `get_doc` and `list_docs`.
 
 ## Skill attestations (advisory)
 
-> Spec: [Skill Attestations v0.2](https://github.com/MauricioPerera/llms-txt-skills/blob/master/docs/ext-skill-attestations.md).
+> Spec: [Skill Attestations v0.3](https://github.com/MauricioPerera/llms-txt-skills/blob/master/docs/ext-skill-attestations.md).
+
+This section describes the **gateway's** model: Ed25519 signatures from a
+runtime-side pre-registered `REVIEWERS` key registry. The **local runtime**
+additionally supports **Sigstore (keyless)** attestations via
+`--require-attestation` — no pre-registered key, any OIDC identity the runtime
+explicitly trusts — see "Sigstore attestations" above; that section closes
+the "only one registered reviewer scales" bottleneck this one has.
 
 A publisher may serve a third trust ring — signed reviewer attestations — at
 `/.well-known/agent-skills/attestations.json`. Each entry is an Ed25519
@@ -499,7 +578,7 @@ What it guarantees:
   it against the `tool_sha256` declared in `llms.txt` before loading. Mismatched or
   corrupt content is rejected and not cached. The same rule applies to the
   origin-memory snapshot (`snapshot_sha256`): unverified → capability not injected.
-- **Skill attestations (third trust ring, spec `ext-skill-attestations` v0.2).**
+- **Skill attestations (third trust ring, spec `ext-skill-attestations` v0.3).**
   See the dedicated section. Publishers may serve signed reviewer attestations;
   the gateway verifies them via WebCrypto against the runtime-side `REVIEWERS`
   registry and exposes per-skill verdicts (`attested`/`expired`/`invalid`/
@@ -622,7 +701,8 @@ What it does **not** guarantee:
 | `worker.mjs` | PoC MCP server (sync host, inline tools) deployed at `toolhost-mcp.rckflr.workers.dev`. |
 | `worker-spike.mjs` | Async spike (fetch_home/fetch_evil) proving origin-scoped fetch. |
 | `worker-gateway.mjs` | The gateway: discover → verify → load → serve MCP, + origin-memory injection and attestations. Deployed at `llmstxt-gateway.rckflr.workers.dev`. |
-| `llmstxt-parse.mjs` | Pure parser for the executable-skill lines (and the `skills-memory` line) of `llms.txt`. |
+| `llmstxt-parse.mjs` | Pure parser for the executable-skill lines (and the `skills-memory` line) of `llms.txt`. Also reports prose-only (`nonExecutable`) skills found in `## Skills`. |
+| `sigstore-attest.mjs` | `verifySigstoreAttestation` / `buildSigstoreStatement` — Sigstore (keyless) attestation verification. Node-only (see "Sigstore attestations" above); used by `bin/mcpwasm-local.mjs`'s `--require-attestation`, not the gateway. |
 | `worker-memspike.mjs` | Memory spike: docs-site origin served through the gateway with `host.memorySearch` over a BM25 snapshot. |
 | `internal-logic.mjs` | Demo platform logic for the sync PoC (holds the secret, exposes `createPayment`/`refundPayment`). |
 | `tools-inline.mjs` | Inline `tool.js` sources for the sync PoC. |

@@ -19,7 +19,7 @@ capability the host injects. No capability, no access.
 
 This repo integrates with the [llms-txt-skills](https://github.com/MauricioPerera/llms-txt-skills)
 standard via two provisional extensions adopted in the spec: **executable
-skills** (v0.4, with *origin memory*) and **skill attestations** (v0.2). See
+skills** (v0.4, with *origin memory*) and **skill attestations** (v0.3). See
 the dedicated sections below.
 
 ## Why
@@ -189,7 +189,7 @@ documents, plus `get_doc` and `list_docs`.
 
 ## Skill attestations (advisory)
 
-> Spec: [Skill Attestations v0.2](https://github.com/MauricioPerera/llms-txt-skills/blob/master/docs/ext-skill-attestations.md).
+> Spec: [Skill Attestations v0.3](https://github.com/MauricioPerera/llms-txt-skills/blob/master/docs/ext-skill-attestations.md).
 
 A publisher may serve a third trust ring — signed reviewer attestations — at
 `/.well-known/agent-skills/attestations.json`. Each entry is an Ed25519
@@ -336,7 +336,7 @@ What it guarantees:
   it against the `tool_sha256` declared in `llms.txt` before loading. Mismatched or
   corrupt content is rejected and not cached. The same rule applies to the
   origin-memory snapshot (`snapshot_sha256`): unverified → capability not injected.
-- **Skill attestations (third trust ring, spec `ext-skill-attestations` v0.2).**
+- **Skill attestations (third trust ring, spec `ext-skill-attestations` v0.3).**
   See the dedicated section. Publishers may serve signed reviewer attestations;
   the gateway verifies them via WebCrypto against the runtime-side `REVIEWERS`
   registry and exposes per-skill verdicts (`attested`/`expired`/`invalid`/

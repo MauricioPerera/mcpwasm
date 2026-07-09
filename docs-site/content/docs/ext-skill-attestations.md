@@ -1,8 +1,8 @@
 # Extension: Skill Attestations
 
-**Status:** Draft (v0.2)
+**Status:** Draft (v0.3)
 **Date:** 2026-07-02
-**Extends:** [Extension: Executable Skills](./ext-executable-skills.md) (v0.3)
+**Extends:** [Extension: Executable Skills](./ext-executable-skills.md) (v0.4)
 **Design donor:** the three-layer knowledge-governance PoC in [ccdd/examples/okf-integration](https://github.com/MauricioPerera/ccdd/tree/main/examples/okf-integration) (working Ed25519 attestation + freshness tooling), adapted here to executable skills.
 
 ---
@@ -55,6 +55,56 @@ origin + "\n" + skill + "\n" + tool_sha256 + "\n" + signed_on + "\n" + valid_unt
 
 **`origin` is deliberately inside the payload.** Identical bytes on a different origin are a *different skill in effect*: `fetchOrigin` is scoped to the publishing origin, so the same code talks to a different backend. An attestation MUST NOT be replayable across origins. (This is the one place this extension diverges from the donor PoC, which had no cross-site dimension.)
 
+### 2.1b Alternative: Sigstore (keyless) attestation
+
+The Ed25519 model above requires pre-registering every reviewer's public key
+(§3) — a coordination step that does not scale past a handful of trusted
+individuals. As a **second, optional** attestation type, an entry MAY carry a
+`sigstore_bundle` instead of `signature`:
+
+```json
+{
+  "origin": "https://llmstxt-bookstore.rckflr.workers.dev",
+  "skill": "create_order",
+  "tool_sha256": "a3c2…",
+  "attester": "sigstore:https://github.com/OWNER/REPO/.github/workflows/release.yml@refs/heads/main",
+  "signed_on": "2026-07-02",
+  "valid_until": "2027-07-02",
+  "sigstore_bundle": { "mediaType": "application/vnd.dev.sigstore.bundle+json;version=0.2", "...": "..." }
+}
+```
+
+`attester` is prefixed `sigstore:` followed by the exact OIDC identity URI
+(e.g. a GitHub Actions workflow ref, matching the certificate's Subject
+Alternative Name) — not a pre-registered key name. `sigstore_bundle` is a
+standard [Sigstore Bundle](https://github.com/sigstore/protobuf-specs) (DSSE
+envelope + Fulcio certificate chain + Rekor transparency-log inclusion proof).
+The signed payload is an [in-toto Statement v1](https://in-toto.io/Statement/v1)
+whose `predicate` carries the *same five fields* as §2.2's canonical string
+(`origin`, `skill`, `tool_sha256`, `signed_on`, `valid_until`) — a verifier
+MUST confirm the DSSE-embedded predicate matches the attestation's own
+top-level fields; without that cross-check, a validly-signed bundle for skill
+A could be relabeled as skill B's attestation without re-signing anything (the
+signature only covers the DSSE payload, not whatever JSON a caller wraps
+around it).
+
+**What this buys over pre-registered Ed25519:** *any* OIDC identity can
+produce a valid Sigstore signature (verifiable against Fulcio's public root +
+Rekor's public transparency log) with no prior coordination with the
+publisher or runtime operator. The runtime's trust decision shifts from
+"which public keys do I whitelist" to "which *identities* do I require" —
+e.g. "only this specific GitHub Actions release workflow", still an
+allowlist, but one that scales to any number of contributors without a
+manual key-registration step per person. This is the core RFC §4.6
+"higher assurance... keyless signing via a transparency log" recommendation,
+applied to this extension's third trust ring specifically.
+
+**What it does not change:** the reviewer registry (§3) still decides *which*
+identities are trusted — Sigstore does not eliminate the allowlist, it changes
+its unit from public keys to OIDC identity strings, and removes the private
+per-reviewer key-management burden (Fulcio issues short-lived certificates
+per signing operation instead).
+
 ### 2.3 Publication
 
 Attestations are published by the origin as a static JSON array at:
@@ -71,11 +121,15 @@ Verification requires knowing reviewers' public keys. The registry is **runtime-
 
 ```json
 {
-  "human:mauricio": { "public_key": "<ed25519-public-key-base64>", "registered_at": "2026-07-02" }
+  "human:mauricio": { "public_key": "<ed25519-public-key-base64>", "registered_at": "2026-07-02" },
+  "sigstore:https://github.com/OWNER/REPO/.github/workflows/release.yml@refs/heads/main": {
+    "issuer": "https://token.actions.githubusercontent.com",
+    "registered_at": "2026-07-02"
+  }
 }
 ```
 
-Runtimes MAY populate it by explicit configuration (recommended) or TOFU-pin keys on first sight (consistent with core RFC §4.6). An attestation from an unknown attester verifies as UNKNOWN-ATTESTER, not as valid.
+Runtimes MAY populate it by explicit configuration (recommended) or TOFU-pin keys on first sight (consistent with core RFC §4.6). An attestation from an unknown attester verifies as UNKNOWN-ATTESTER, not as valid. For a `sigstore:` entry, the registry maps the identity to its expected OIDC `issuer` (rather than a public key); verification asks Sigstore's own trust infrastructure (Fulcio, Rekor) whether the bundle's certificate was validly issued to that exact identity by that issuer — the runtime never handles or stores a reviewer's private key material, because there isn't one to store.
 
 ## 4. Runtime behavior
 
@@ -97,6 +151,8 @@ Runtimes SHOULD support at least two modes:
 
 Verification MUST be independently computable from static files: fetch `attestations.json`, verify Ed25519 (available in Workers/browsers via WebCrypto) against the registry. No callbacks to any service.
 
+**Sigstore verification is the one exception to "no callbacks":** confirming a Fulcio certificate chain and a Rekor inclusion proof needs network access to Sigstore's public trust infrastructure (the core RFC §4.6 already flags this trade-off for identity-bound provenance). A platform without outbound network access at verification time (or without filesystem access to cache Sigstore's TUF-distributed trust root — **confirmed in the mcpwasm reference implementation: Cloudflare Workers cannot run Sigstore verification for exactly this reason**) simply does not support the `sigstore:` attester type; it MUST fall back to treating such an entry as UNKNOWN-ATTESTER, not silently accept or crash.
+
 ## 5. Security considerations
 
 - **What this buys:** an agent operator can require "code reviewed by someone I chose, endorsement not expired" before executing third-party artifacts. Compromising the publisher's site is no longer enough to ship malicious code to enforcing runtimes — the attacker also needs a registered reviewer's private key.
@@ -110,7 +166,21 @@ Verification MUST be independently computable from static files: fetch `attestat
 3. Should `enforcing` mode distinguish per-capability risk (e.g. require attestation only for skills using POST)?
 4. Alignment with core RFC §4.6: a signed `llms.txt` could pin `attestations.json` transitively.
 
+## 8. Reference implementation
+
+[mcpwasm](https://github.com/MauricioPerera/mcpwasm)'s local runtime
+(`bin/mcpwasm-local.mjs`, `sigstore-attest.mjs`) implements §2.1b: opt-in via
+`--require-attestation <issuer>|<identity>`, verified end-to-end against a
+real, live, publicly fetched Sigstore bundle (an npm package's own SLSA
+provenance attestation) proving the Fulcio/Rekor verification path genuinely
+works, plus all documented rejection paths (no attestations.json, no matching
+entry, expired, malformed dates, invalid/mismatched bundle). The gateway
+(`worker-gateway.mjs`) still implements only the Ed25519 model — confirmed
+during development that Sigstore's TUF-based trust-root cache needs
+filesystem access Cloudflare Workers does not have (§4).
+
 ## 7. Changelog
 
+- **v0.3 (2026-07-09):** Added §2.1b: Sigstore (keyless) attestations as a second, optional attester type alongside Ed25519 — closes the "only pre-registered reviewers scale" bottleneck (§5) by trusting OIDC identities instead of pre-shared keys. Updated §3 (reviewer registry entry shape for `sigstore:` attesters) and §4 (network-access exception, platform-support fallback to UNKNOWN-ATTESTER). Added §8 pointing at the reference implementation.
 - **v0.2 (2026-07-02):** Review fixes: base64 encoding for signatures/keys (aligned with core RFC tooling), canonical-origin and date normalization rules for the signing payload, inclusive-end UTC expiry semantics, and explicit verdict precedence (invalid dominates).
 - **v0.1 (2026-07-02):** Initial draft, adapted from the ccdd okf-integration PoC (Ed25519 attestations + freshness windows + key registry), with origin-binding added for the cross-site skill context.

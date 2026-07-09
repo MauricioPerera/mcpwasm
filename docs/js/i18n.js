@@ -98,7 +98,7 @@
       "quickstart.disclaimer__html": "The deployed gateway requires a bearer token (not published here). Full curl walkthrough — including the open demo, bookstore, and docs publishers — is in the <a href=\"https://github.com/MauricioPerera/mcpwasm#readme\">README</a>.",
 
       "ecosystem.h2": "Part of a spec, not just a repo",
-      "ecosystem.lede__html": "mcpwasm is the reference implementation of two provisional extensions to the <a href=\"https://github.com/MauricioPerera/llms-txt-skills\">llms-txt-skills</a> standard: <strong>Executable Skills</strong> (v0.4, with origin memory) and <strong>Skill Attestations</strong> (v0.2). Every MUST in those specs is field-tested in this code — spec and implementation are kept in sync.",
+      "ecosystem.lede__html": "mcpwasm is the reference implementation of two provisional extensions to the <a href=\"https://github.com/MauricioPerera/llms-txt-skills\">llms-txt-skills</a> standard: <strong>Executable Skills</strong> (v0.4, with origin memory) and <strong>Skill Attestations</strong> (v0.3). Every MUST in those specs is field-tested in this code — spec and implementation are kept in sync.",
 
       "footer.onboard": "Onboard a publisher",
       "footer.license": "MIT License",
@@ -182,7 +182,7 @@
       "quickstart.disclaimer__html": "El gateway desplegado requiere un bearer token (no publicado acá). El recorrido completo con curl — incluyendo el demo abierto, el bookstore, y los publishers de docs — está en el <a href=\"https://github.com/MauricioPerera/mcpwasm#readme\">README</a>.",
 
       "ecosystem.h2": "Parte de una spec, no solo un repo",
-      "ecosystem.lede__html": "mcpwasm es la implementación de referencia de dos extensiones provisionales del estándar <a href=\"https://github.com/MauricioPerera/llms-txt-skills\">llms-txt-skills</a>: <strong>Executable Skills</strong> (v0.4, con memoria de origin) y <strong>Skill Attestations</strong> (v0.2). Cada MUST de esas specs está probado en este código — spec e implementación se mantienen sincronizadas.",
+      "ecosystem.lede__html": "mcpwasm es la implementación de referencia de dos extensiones provisionales del estándar <a href=\"https://github.com/MauricioPerera/llms-txt-skills\">llms-txt-skills</a>: <strong>Executable Skills</strong> (v0.4, con memoria de origin) y <strong>Skill Attestations</strong> (v0.3). Cada MUST de esas specs está probado en este código — spec e implementación se mantienen sincronizadas.",
 
       "footer.onboard": "Sumar un publisher",
       "footer.license": "Licencia MIT",
@@ -266,7 +266,7 @@
       "quickstart.disclaimer__html": "O gateway em produção exige um bearer token (não publicado aqui). O passo a passo completo com curl — incluindo o demo aberto, o bookstore, e os publishers de docs — está no <a href=\"https://github.com/MauricioPerera/mcpwasm#readme\">README</a>.",
 
       "ecosystem.h2": "Parte de uma spec, não só um repositório",
-      "ecosystem.lede__html": "mcpwasm é a implementação de referência de duas extensões provisórias do padrão <a href=\"https://github.com/MauricioPerera/llms-txt-skills\">llms-txt-skills</a>: <strong>Executable Skills</strong> (v0.4, com memória de origin) e <strong>Skill Attestations</strong> (v0.2). Todo MUST dessas specs é testado neste código — spec e implementação se mantêm sincronizadas.",
+      "ecosystem.lede__html": "mcpwasm é a implementação de referência de duas extensões provisórias do padrão <a href=\"https://github.com/MauricioPerera/llms-txt-skills\">llms-txt-skills</a>: <strong>Executable Skills</strong> (v0.4, com memória de origin) e <strong>Skill Attestations</strong> (v0.3). Todo MUST dessas specs é testado neste código — spec e implementação se mantêm sincronizadas.",
 
       "footer.onboard": "Cadastrar um publisher",
       "footer.license": "Licença MIT",

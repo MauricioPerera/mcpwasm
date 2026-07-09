@@ -50,11 +50,13 @@ import baseAsyncifyVariant from "@jitl/quickjs-wasmfile-release-asyncify";
 import { AsyncToolHost } from "../host-async.mjs";
 import { handleMcpMessageAsync } from "../mcp-core-async.mjs";
 import { parseLlmsTxt } from "../llmstxt-parse.mjs";
+import { verifySigstoreAttestation } from "../sigstore-attest.mjs";
 
 const PKG = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const MAX_LLMS_BYTES = 262144; // 256 KB (mismos defaults que el gateway)
 const MAX_TOOL_BYTES = 1048576; // 1 MB
 const MAX_INDEX_BYTES = 262144; // 256 KB (mismo default que el gateway)
+const MAX_ATTESTATIONS_BYTES = 262144; // 256 KB (mismo default que el gateway)
 const FETCH_TIMEOUT_MS = 10000;
 
 function err(msg) {
@@ -67,12 +69,17 @@ function out(obj) {
 
 const USAGE =
   "uso: mcpwasm <origin>                 (ej: npx @rckflr/mcpwasm https://usuario.github.io)\n" +
-  "     mcpwasm --serve <dir> [--port N] (sirve un directorio local, ej. un git clone, y conecta ahi)";
+  "     mcpwasm --serve <dir> [--port N] (sirve un directorio local, ej. un git clone, y conecta ahi)\n" +
+  "     --require-attestation <issuer>|<identity>  (opcional, ambos modos: exige una\n" +
+  "         atestacion Sigstore valida de esa identidad OIDC exacta para CADA skill;\n" +
+  "         sin ella, la skill se excluye igual que un tool_sha256 mismatch. Ej:\n" +
+  "         --require-attestation 'https://token.actions.githubusercontent.com|https://github.com/OWNER/REPO/.github/workflows/release.yml@refs/heads/main')";
 
 const argv = process.argv.slice(2);
 let originArg = null;
 let serveDir = null;
 let fixedPort = null;
+let requireAttestation = null; // { issuer, identity } | null (opt-in)
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === "--serve") {
@@ -84,6 +91,18 @@ for (let i = 0; i < argv.length; i++) {
       process.exit(2);
     }
     fixedPort = p;
+  } else if (a === "--require-attestation") {
+    const raw = argv[++i] || "";
+    const sep = raw.indexOf("|");
+    if (sep === -1) {
+      err("--require-attestation requiere '<issuer>|<identity>'");
+      process.exit(2);
+    }
+    requireAttestation = { issuer: raw.slice(0, sep), identity: raw.slice(sep + 1) };
+    if (!requireAttestation.issuer || !requireAttestation.identity) {
+      err("--require-attestation: issuer e identity no pueden estar vacios");
+      process.exit(2);
+    }
   } else if (originArg === null && serveDir === null) {
     originArg = a;
   }
@@ -224,6 +243,48 @@ async function fetchAgentSkillsIndex() {
   }
 }
 
+function canonicalOrigin(s) {
+  try {
+    return new URL(s).origin;
+  } catch {
+    return null;
+  }
+}
+
+function todayUtcStr() {
+  const d = new Date();
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+const ATTEST_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Descarga /.well-known/agent-skills/attestations.json. Solo se llama si
+// --require-attestation esta presente (opt-in; el runtime local no verificaba
+// NINGUNA atestacion antes de este cambio -- limite v1 documentado en el
+// README). 404/no-200/JSON no-array -> [] (sin atestaciones publicadas; con
+// --require-attestation activo, [] excluye TODAS las skills -- el usuario
+// pidio explicitamente exigirla, asi que ausencia es fail-CLOSED aqui, a
+// diferencia del gateway en modo advisory/off donde ausencia es fail-open).
+async function fetchAttestations() {
+  let r;
+  try {
+    r = await fetchText(origin + "/.well-known/agent-skills/attestations.json", MAX_ATTESTATIONS_BYTES);
+  } catch (e) {
+    err("attestations.json fetch fallo: " + (e && e.message) + " -> 0 atestaciones");
+    return [];
+  }
+  if (r.status !== 200) return [];
+  try {
+    const arr = JSON.parse(r.text);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    err("attestations.json invalido -> 0 atestaciones");
+    return [];
+  }
+}
+
 // Descubrimiento: llms.txt -> skills ejecutables -> fetch + verify sha256.
 // Mismatch/HTTP != 200/cap excedido => skill rechazada (stderr), las demas cargan.
 async function discover() {
@@ -258,6 +319,11 @@ async function discover() {
     }
   }
 
+  // --require-attestation (opt-in): fetch UNA vez, verificar por-skill abajo.
+  const attestations = requireAttestation ? await fetchAttestations() : [];
+  const canonOrigin = canonicalOrigin(origin);
+  const todayStr = todayUtcStr();
+
   const verified = [];
   for (const s of parsed) {
     // Si index.json declara tool_sha256 para esta skill, debe coincidir con lo
@@ -272,6 +338,34 @@ async function discover() {
       );
       continue;
     }
+
+    // --require-attestation: exige una atestacion Sigstore valida, sin expirar,
+    // de la identidad OIDC exacta pedida por linea de comandos. Fail-closed: sin
+    // match (o firma/identidad invalida, o expirada) -> skill excluida, igual
+    // trato que un tool_sha256 mismatch.
+    if (requireAttestation) {
+      const match = attestations.find(
+        (a) => a && a.skill === s.name && a.tool_sha256 === s.sha256 && canonicalOrigin(a.origin) === canonOrigin
+      );
+      if (!match) {
+        err("skill rechazada: " + s.name + " -> --require-attestation activo, ninguna atestacion coincide (origin+skill+tool_sha256)");
+        continue;
+      }
+      if (!ATTEST_DATE_RE.test(match.signed_on) || !ATTEST_DATE_RE.test(match.valid_until)) {
+        err("skill rechazada: " + s.name + " -> atestacion con signed_on/valid_until malformado");
+        continue;
+      }
+      if (todayStr > match.valid_until) {
+        err("skill rechazada: " + s.name + " -> atestacion expirada (valid_until=" + match.valid_until + ")");
+        continue;
+      }
+      const attestOk = await verifySigstoreAttestation(match, requireAttestation);
+      if (!attestOk) {
+        err("skill rechazada: " + s.name + " -> firma Sigstore invalida o no coincide con la identidad esperada");
+        continue;
+      }
+    }
+
     const toolUrl = new URL(s.toolPath, origin).href;
     let tr;
     try {

@@ -38,6 +38,7 @@
     "./mcp-core": "./mcp-core.mjs",
     "./mcp-core-async": "./mcp-core-async.mjs",
     "./llmstxt-parse": "./llmstxt-parse.mjs",
+    "./sigstore-attest": "./sigstore-attest.mjs",
     "./shim": "./shim.mjs"
   },
   "files": [
@@ -48,6 +49,7 @@
     "mcp-core.mjs",
     "mcp-core-async.mjs",
     "llmstxt-parse.mjs",
+    "sigstore-attest.mjs",
     "shim.mjs"
   ],
   "publishConfig": {
@@ -65,7 +67,8 @@
   },
   "dependencies": {
     "@jitl/quickjs-wasmfile-release-asyncify": "^0.32.0",
-    "quickjs-emscripten-core": "^0.32.0"
+    "quickjs-emscripten-core": "^0.32.0",
+    "sigstore": "^5.0.0"
   },
   "peerDependencies": {
     "quickjs-emscripten": "^0.32.0"

@@ -1,5 +1,8 @@
 # mcpwasm — Static MCP
 
+[![CI](https://github.com/MauricioPerera/mcpwasm/actions/workflows/ci.yml/badge.svg)](https://github.com/MauricioPerera/mcpwasm/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/%40rckflr%2Fmcpwasm)](https://www.npmjs.com/package/@rckflr/mcpwasm)
+
 **Static MCP: your tools are files, not servers.** Tools are published as
 static, hash-verified content and executed sandboxed on demand. What static
 site hosting did to web servers — "don't run Apache, publish HTML" — this does
@@ -21,6 +24,169 @@ This repo integrates with the [llms-txt-skills](https://github.com/MauricioPerer
 standard via two provisional extensions adopted in the spec: **executable
 skills** (v0.4, with *origin memory*) and **skill attestations** (v0.3). See
 the dedicated sections below.
+
+## Use as a library (npm)
+
+The embeddable host — what the gateway itself builds on — ships as
+[`@rckflr/mcpwasm`](https://www.npmjs.com/package/@rckflr/mcpwasm):
+
+```bash
+npm install @rckflr/mcpwasm
+```
+
+```js
+import { AsyncToolHost } from "@rckflr/mcpwasm";
+
+const host = new AsyncToolHost({ allowedOrigin: "https://example.com" });
+await host.init();
+host.loadToolSource(toolJsSource); // a tool.js that calls registerTool({...})
+const tools = host.listTools();
+const result = await host.callTool("sum_numbers", { a: 2, b: 40 });
+host.dispose();
+```
+
+Notes:
+
+- In Cloudflare Workers, pass a pre-built asyncify module via the `quickjs`
+  option (see `worker-gateway.mjs` for the `CompiledWasm` import pattern and
+  import `@rckflr/mcpwasm/shim` first).
+- Subpath exports: `/host` (sync `ToolHost`), `/host-async`, `/mcp-core`,
+  `/mcp-core-async`, `/llmstxt-parse`, `/shim`.
+- The sync `ToolHost` lazy-imports the optional peer `quickjs-emscripten`
+  unless you pass a pre-built module; the async host's dependencies install
+  with the package.
+- The package contains only the host/core/parser files plus the local runtime
+  binary; the workers, publisher sites and test suites stay in this repo (they
+  are the deployed reference, not the library).
+
+### Local MCP runtime — no gateway at all
+
+The package also ships a stdio MCP server that runs an origin's skills
+**locally**: it fetches `/llms.txt`, verifies every `tool_sha256`, loads each
+verified skill into its own QuickJS-wasm context, and speaks MCP over
+stdin/stdout — so a static site (e.g. a GitHub Pages *user* site) becomes an
+MCP server on your machine with zero deployed infrastructure on either side:
+
+```bash
+npx -y @rckflr/mcpwasm https://usuario.github.io
+```
+
+MCP client configuration (Claude Code, Cursor, …):
+
+```json
+{
+  "mcpServers": {
+    "misitio": {
+      "command": "npx",
+      "args": ["-y", "@rckflr/mcpwasm", "https://usuario.github.io"]
+    }
+  }
+}
+```
+
+Honest v1 limits (stated in `bin/mcpwasm-local.mjs`): no origin memory
+(`host.memorySearch` is absent; skills that call it fail controlled, which the
+spec allows), and discovery runs once per process (restart to refresh). Hash
+verification and the sandbox model (per-skill contexts, origin-scoped
+`fetchOrigin`, resource limits) are the same as the gateway's. Trust is your
+choice of origin by default (no attestation required); Sigstore attestation
+verification is available opt-in via `--require-attestation` (below). Also
+cross-checks `tool_sha256` against `.well-known/agent-skills/index.json` when
+the origin publishes one (see "Cross-checking against index.json"). Tested by
+`npm run local` (hermetic, localhost-only; part of the CI gate).
+
+#### Cross-checking against `index.json`
+
+Both the local runtime and the gateway now also fetch
+`/.well-known/agent-skills/index.json` — the canonical metadata layer the core
+llms-txt-skills RFC defines (§8 Open Question 5: `llms.txt` is the zero-fetch
+discovery pointer, `index.json` is the metadata/verification source of truth).
+When a skill's name appears in both `llms.txt` and `index.json`, and the
+latter declares a `tool_sha256`, it **must** match the one declared in
+`llms.txt`; a mismatch rejects the skill (drift/tampering signal) exactly like
+a `tool_sha256` mismatch against the fetched `tool.js` itself. Absence of
+`index.json` (most origins today) changes nothing.
+
+#### Sigstore attestations: `--require-attestation` (local runtime only)
+
+> **Platform limitation, discovered during implementation:** the `sigstore`
+> npm package depends on `@sigstore/tuf` to cache Fulcio/Rekor's trusted root
+> via TUF, and that cache uses `node:fs` with no way to bypass it through the
+> public API. Cloudflare Workers has no filesystem, so Sigstore verification
+> **only runs in the local Node runtime** (`bin/mcpwasm-local.mjs`) — the
+> gateway's attestation model remains the pre-registered-key Ed25519 scheme
+> above, unaffected. This is the mirror image of origin memory, which is
+> gateway-only; see [Capability support by runtime](#capability-support-by-runtime).
+
+The Ed25519 model (above) requires pre-registering every reviewer's public
+key — a real bottleneck (today, only the maintainer is registered). Sigstore
+verifies **any** OIDC identity (a GitHub Actions workflow, a Google/GitHub
+login) without pre-coordination; the runtime's trust decision is which
+*identity* to require, not which *key* to whitelist — closer to what core RFC
+§4.6 recommends for identity-bound provenance.
+
+```bash
+npx -y @rckflr/mcpwasm https://usuario.github.io \
+  --require-attestation "https://token.actions.githubusercontent.com|https://github.com/OWNER/REPO/.github/workflows/release.yml@refs/heads/main"
+```
+
+When set, discovery additionally fetches
+`/.well-known/agent-skills/attestations.json` and, for **every** skill,
+requires a matching entry (`origin` + `skill` + `tool_sha256`) whose
+`sigstore_bundle` verifies against exactly that `issuer|identity` pair, within
+its `[signed_on, valid_until]` window. A skill without one — absent
+attestations.json, no matching entry, expired, or an invalid/mismatched bundle
+— is excluded, same treatment as a `tool_sha256` mismatch. This flag is
+fail-closed by design: it is opt-in, but once set, absence of a valid
+attestation is *not* tolerated (unlike the gateway's `advisory` mode).
+
+The attestation object's signed payload is an
+[in-toto Statement v1](https://in-toto.io/Statement/v1) inside a DSSE
+envelope, whose `predicate` must carry the same 5 fields as the Ed25519 model
+(`origin`, `skill`, `tool_sha256`, `signed_on`, `valid_until`) — verified to
+match the attestation's own top-level fields, so a validly-signed bundle for
+skill A cannot be relabeled as skill B's attestation without re-signing.
+`sigstore-attest.mjs` exports `verifySigstoreAttestation` (the verifier) and
+`buildSigstoreStatement` (the canonical payload shape a publisher signs with
+`sigstore attest` or an equivalent SDK call — this repo does not ship a
+signing tool for it, since producing a real Sigstore signature needs a live
+OIDC flow, out of scope for a script run here).
+
+Verified against a **real, live, publicly fetched** Sigstore bundle (the SLSA
+provenance attestation for the `sigstore@5.0.0` npm package's own publish,
+`https://registry.npmjs.org/-/npm/v1/attestations/sigstore@5.0.0`) — proving
+the underlying Fulcio cert-chain + Rekor transparency-log verification
+genuinely runs and succeeds, and that a schema-mismatched or wrong-identity
+bundle is correctly rejected. All 6 `--require-attestation` rejection paths
+(no attestations.json, empty array, no matching skill, malformed date,
+expired, invalid/empty bundle) verified end-to-end against
+`bin/mcpwasm-local.mjs`. **Honest gap:** producing a *positive* fixture (a
+real Sigstore signature over this repo's own canonical payload, verifying as
+`attested`) needs a live OIDC signing flow this environment cannot complete
+headlessly — untested is the happy path specifically, not the security-critical
+rejection paths.
+
+#### Developing your own skills: `--serve <dir>`
+
+Pointing the runtime at a raw GitHub URL does **not** work: `new URL(...).origin`
+keeps only scheme+host+port, so `https://raw.githubusercontent.com/you/repo/main/`
+collapses to `https://raw.githubusercontent.com` — the `you/repo/main` part (and
+therefore `/llms.txt`) is gone. `--serve` is the practical alternative: it starts
+an internal static file server (bound to `127.0.0.1` only, never exposed to the
+network) over a local directory — e.g. your own `git clone` of a skills repo —
+and uses that as the origin, combining "serve this directory" and "connect to
+it" into one command:
+
+```bash
+npx -y @rckflr/mcpwasm --serve ./my-skills-repo
+# npx -y @rckflr/mcpwasm --serve ./my-skills-repo --port 4000   (fixed port, optional)
+```
+
+This is meant for developing and testing your own skills locally before
+publishing them (to GitHub Pages or any other static host) — not for browsing
+someone else's GitHub repo directly. Path-traversal requests against the
+internal file server are rejected (resolved and checked against the served
+directory's root); covered by `npm run local`.
 
 ## Why
 
@@ -44,6 +210,69 @@ mcpwasm removes the trust requirement for the *code*:
 - Resource limits bound what a malicious/buggy tool can do: memory cap, stack
   cap, a deterministic gas budget (interrupt-handler invocation count), and a
   wall-clock fetch deadline per call.
+
+## Static MCP vs. a traditional MCP server
+
+In mcpwasm, *publishing* (static files + a hash) and *execution* (a runtime
+that discovers, verifies, and sandboxes on demand) are two separate things. In
+a traditional MCP server they are the same thing — the server you deploy *is*
+the execution, with no isolation layer in between.
+
+| | Static MCP — local (`npx @rckflr/mcpwasm`) | Static MCP — gateway | Traditional MCP server |
+|---|---|---|---|
+| What the publisher ships | Static files: `llms.txt` + `tool.js` (+ `SKILL.md`) | Same static files | A running server process (any language) |
+| Infrastructure the publisher operates | None — GitHub Pages, R2, any static host | None — same | The whole server: uptime, scaling, patching, secrets |
+| Where the tool code runs | Your own machine, in a QuickJS-wasm sandbox | The gateway Worker, in the same sandbox | The publisher's own process, natively, no isolation |
+| Integrity guarantee | SHA-256 verified before any byte executes | Same | None built in — you trust the deployed binary/image as-is |
+| Third trust ring (human review) | Not enforced (v1 limit — trust is your choice of origin) | Ed25519 attestations, `enforcing` mode in production | No standard mechanism |
+| Transport | stdio (JSON-RPC over stdin/stdout) | HTTP POST (JSON-RPC); needs the gateway URL + a token | Either — but fixed per implementation |
+| Network hops for the MCP call itself | Zero (local process); the tool can still call out via `fetchOrigin` | Two: client → gateway → publisher origin | Zero for local stdio, one for remote HTTP |
+| Measured overhead (this repo's own benchmarks) | Not separately benchmarked — same sandbox cost, no gateway hop | ~2 ms sandbox warm, ~6 ms for the full gateway vs. a direct API call ([BENCHMARK.md](./BENCHMARK.md)) | N/A — no sandbox tax, but no isolation either |
+| Discovery freshness | Once per process start (restart to refresh) | Cached 60 s (two layers + cron preheat) | Whatever the server implements |
+| Multi-client / shared access | No — one local process per user | Yes — one gateway serves any number of MCP clients | Yes, if built as a shared server |
+| Auth | None (you chose to run it) | Optional: shared token or per-client tokens + rate limiting | Whatever the publisher builds |
+| Best fit | Developing/testing your own skills locally; zero-trust execution of someone else's skills without running a server | Teams wanting one shared endpoint serving many static publishers, with signed review as policy | Stateful logic, database connections, capabilities that genuinely need no sandbox constraint |
+
+The takeaway that doesn't fit in a table: a traditional MCP server answers "how
+do I expose this logic as a tool?" Static MCP additionally answers "how do I
+run code from an origin I don't fully trust?" If you write and control the
+server yourself, traditional is simpler and none of this is necessary. Static
+MCP matters when the tool code comes from *someone else*, and you want a
+verifiable guarantee (hash + sandbox, optionally review) before running it —
+that is the problem this repo exists to solve, not a general-purpose
+alternative to MCP.
+
+### If you already have an API
+
+You do not need to build or maintain an MCP protocol server — that is the
+whole point. The runtime (local or gateway) already handles JSON-RPC,
+`tools/list`, `tools/call`, and the transport; none of that is your code.
+
+What you still have to write is **not** prose. A `tool.js` per action is real,
+small glue code: it validates `args` against the schema you declared, calls
+your existing API through `host.fetchOrigin`, and shapes the response — see
+`bookstore/content/create_order.tool.js` in this repo for a concrete example
+(validates `qty` and `book_id`, handles a 409 for insufficient stock as a
+distinct case, never lets a malformed call reach your backend). This is a
+different, stronger mechanism than a `SKILL.md` with no `tool.js`: prose-only
+skills are the core RFC's basic mode — an agent reads them and *improvises*
+the HTTP call with whatever generic request tool it has, with no schema
+validation, no sandbox, and no hash pinning. That is the "execution gap" that
+executable skills (this repo's reference feature) close. Handing an agent a
+raw "make any HTTP request" capability against your API reintroduces the
+problem this project exists to avoid — your backend ends up validating
+against an arbitrary caller either way; a `tool.js` does that validation
+before your API is ever hit, and the agent only ever gets the specific,
+parameterized actions you defined.
+
+"Zero infrastructure" is literal for internal use — your own team pointing
+`npx @rckflr/mcpwasm` (or `--serve`) at your published skills needs no server
+on either side. For external clients to reach you without installing
+anything, you need one endpoint answering MCP over HTTP; that means either
+your origin gets added to an existing deployed gateway's `ALLOWED_ORIGINS`,
+or you `wrangler deploy` your own instance of the same generic gateway code in
+this repo, configured for your origin. Either way it is a one-time,
+tool-agnostic deploy — not a bespoke MCP server built per API.
 
 ## Architecture
 
@@ -152,6 +381,14 @@ registerTool({
 > Spec: *origin memory* in
 > [Executable Skills v0.4](https://github.com/MauricioPerera/llms-txt-skills/blob/master/docs/ext-executable-skills.md).
 
+> **Gateway only.** Origin memory runs in the **gateway** (`worker-gateway.mjs`).
+> The **local runtime** (`bin/mcpwasm-local.mjs`) does not implement it: if an
+> origin declares a `skills-memory` line, the local runtime logs that it is
+> unsupported and leaves `host.memorySearch` **absent** — spec-conformant, a
+> skill that calls it fails closed inside the sandbox (`isError: true`), it is
+> not a crash. This mirrors the Sigstore limitation in the opposite direction
+> (Sigstore is local-only); see [Capability support by runtime](#capability-support-by-runtime).
+
 A publisher that wants its skills to search over its own static content (docs,
 catalog text, any corpus) declares a memory snapshot with a single HTML comment
 **before** the `## Skills` section (this ordering is required by the reference
@@ -187,9 +424,35 @@ the spec snapshot and a `search_spec` skill that runs
 `host.memorySearch(args.q, k)` to do BM25 search over the four llms-txt-skills
 documents, plus `get_doc` and `list_docs`.
 
+### Capability support by runtime
+
+Discovery, `tool_sha256` content-addressing, sandboxed `tool.js` execution, and
+Ed25519 attestations work on **both** runtimes. Two capabilities are asymmetric
+— each supported on exactly one runtime, and each for a declared platform reason,
+not a bug. They are mirror images of each other:
+
+| Capability | Gateway (`worker-gateway.mjs`, Workers) | Local runtime (`bin/mcpwasm-local.mjs`, Node) |
+| :--- | :---: | :---: |
+| Origin memory — `host.memorySearch` | ✅ full | ❌ not in v1 — capability absent, skills that call it fail closed in-sandbox (spec-conformant) |
+| Sigstore (keyless) attestations | ❌ Workers has no `node:fs` for `@sigstore/tuf`'s trust-root cache | ✅ `--require-attestation` |
+
+Consequence: no single runtime provides **both** origin memory and Sigstore
+verification today. The gateway gives you memory but its attestation model is
+Ed25519-only; the local runtime gives you Sigstore but no memory. Closing either
+gap is known work, not a deep incompatibility. The reasons are documented where
+each feature is: [Sigstore](#sigstore-attestations---require-attestation-local-runtime-only)
+above, origin memory in this section.
+
 ## Skill attestations (advisory)
 
 > Spec: [Skill Attestations v0.3](https://github.com/MauricioPerera/llms-txt-skills/blob/master/docs/ext-skill-attestations.md).
+
+This section describes the **gateway's** model: Ed25519 signatures from a
+runtime-side pre-registered `REVIEWERS` key registry. The **local runtime**
+additionally supports **Sigstore (keyless)** attestations via
+`--require-attestation` — no pre-registered key, any OIDC identity the runtime
+explicitly trusts — see "Sigstore attestations" above; that section closes
+the "only one registered reviewer scales" bottleneck this one has.
 
 A publisher may serve a third trust ring — signed reviewer attestations — at
 `/.well-known/agent-skills/attestations.json`. Each entry is an Ed25519
@@ -232,11 +495,12 @@ with `origin` canonical (lowercase, no trailing slash, no default port) and
 
 Three modes via `ATTESTATION_MODE`:
 
-- `off` — attestations are not fetched; behavior is the pre-T25 gateway.
-- `advisory` (default, deployed) — everything loads; verdicts are visible but
-  do not exclude.
-- `enforcing` — only `attested` skills load; non-`attested` skills are excluded
-  exactly like a `tool_sha256` mismatch (logged, not registered).
+- `off` (default when `ATTESTATION_MODE` is unset) — attestations are not
+  fetched; behavior is the pre-T25 gateway.
+- `advisory` — everything loads; verdicts are visible but do not exclude.
+- `enforcing` (deployed since T45) — only `attested` skills load;
+  non-`attested` skills are excluded exactly like a `tool_sha256` mismatch
+  (logged, not registered).
 
 `scripts/attest.mjs` is the signing tool (Node `node:crypto` Ed25519, no deps):
 
@@ -250,6 +514,9 @@ Three modes via `ATTESTATION_MODE`:
 The private key lives in `.attester-key.json` and is **local and gitignored** —
 never commit it, and it is never printed by the tool. No key material belongs
 in this repo or in `REVIEWERS` (only public keys).
+
+Third-party publishers (sites you do not control): see [`ONBOARDING.md`](./ONBOARDING.md)
+for the eligibility, review, attestation, activation, and revocation process.
 
 ## Quick start
 
@@ -279,7 +546,10 @@ skill `create_order`), and the docs-site
 `origin` is URL-encoded as a query param. **The deployed gateway has auth
 enabled:** every request below needs `-H "Authorization: Bearer <AUTH_TOKEN>"`
 (the `AUTH_TOKEN` secret; 401 otherwise). The token is a secret — it is not in
-this repo.
+this repo. The deployed gateway can also run in **per-client mode** (the
+`CLIENTS` secret), in which case each client sends its own
+`Authorization: Bearer <client_token>` with the same curl syntax; the response
+then carries `X-Gw-Client: <client_id>`.
 
 List the skills the demo site publishes:
 
@@ -341,9 +611,10 @@ What it guarantees:
   the gateway verifies them via WebCrypto against the runtime-side `REVIEWERS`
   registry and exposes per-skill verdicts (`attested`/`expired`/`invalid`/
   `unattested`, `invalid` dominates) in each tool description and the
-  `X-Gw-Attestations` header. Modes: `off` / `advisory` (default: everything
-  loads, verdicts visible) / `enforcing` (only `attested` skills load).
-  `scripts/attest.mjs` is the signing tool (keygen + sign).
+  `X-Gw-Attestations` header. Modes: `off` (default when unset) / `advisory`
+  (everything loads, verdicts visible) / `enforcing` (only `attested` skills
+  load; deployed mode since T45). `scripts/attest.mjs` is the signing tool
+  (keygen + sign).
 - **Origin-scoped fetch.** `host.fetchOrigin` only fetches the single allowed
   origin for the request. Any other origin throws *inside the sandbox* and is
   surfaced as `isError: true`, not a JSON-RPC error.
@@ -368,30 +639,81 @@ What it guarantees:
 - **Per-skill contexts in the gateway.** Each skill is loaded into its own
   QuickJS context; a skill cannot see or overwrite another skill's
   registration or globals, even within the same origin.
-- **Concurrency safety.** The wasm module is instantiated once per isolate and
-  guarded by a per-module mutex; discovery is single-flighted per origin so
-  concurrent cold requests share one discovery pass (see TAREA19).
+- **Concurrency safety.** The gateway keeps a pool of up to N independent
+  instances of the asyncify wasm module per isolate (`WASM_POOL_SIZE`, default
+  4, clamped to [1, 8]; the compiled `WebAssembly.Module` is shared, each
+  instance has its own memory). Each request acquires one instance exclusively,
+  so up to N requests run truly in parallel per isolate and the (N+1)-th waits
+  by polling in its own request context (workerd cancels continuations of
+  promises resolved from another request context, so a FIFO handoff is not
+  viable) — with N=1 this degenerates to the previous per-module mutex (TAREA19).
+  Discovery is single-flighted per origin so concurrent cold requests share one
+  discovery pass.
 
 What it does **not** guarantee:
 
-- **Auth is a single shared bearer token, optional by config.** If the
-  `AUTH_TOKEN` secret is set, the gateway requires
-  `Authorization: Bearer <token>` on `POST /mcp` (401 otherwise); the deployed
-  gateway has it enabled. Without the secret it runs open (dev mode). There is
-  still no per-client identity or rate limiting. The PoC worker remains open.
+- **Auth has three modes, selected by config.** Precedence is per-client
+  → legacy shared token → dev open.
+  - *Per-client (`CLIENTS` secret, opt-in).* `CLIENTS` is a JSON secret mapping
+    `sha256_hex_of_token → { client_id, rpm? }`. Tokens never appear in
+    cleartext in config — the key is the lowercase hex SHA-256 of the token's
+    UTF-8 bytes. On `POST /mcp` the gateway hashes the `Authorization: Bearer
+    <token>` value and does an exact lookup on that hash; the lookup *is* the
+    timing-safe mechanism (a fixed digest is compared, never the cleartext
+    token against a secret). A known token passes and the response carries
+    `X-Gw-Client: <client_id>`; an unknown token, missing header, or malformed
+    header yields `401`. `AUTH_TOKEN` is ignored in this mode. If `CLIENTS` is
+    set but its JSON is invalid, the gateway **fail-closes** — every `POST /mcp`
+    returns `401` rather than opening by config error (signalled on `GET /`).
+  - *Legacy shared token (`AUTH_TOKEN` secret).* If `CLIENTS` is unset, the
+    `AUTH_TOKEN` secret enables a single shared bearer token (constant-time
+    comparison); the deployed gateway has it enabled. Without it the gateway
+    runs open (dev mode). The PoC worker remains open.
+  - *Per-client rate limiting (opt-in, requires per-client mode).* When
+    per-client mode is active, the client's `rpm` is a non-null number, and the
+    `RATE_LIMITER` Durable Object binding is present, each `POST /mcp` is
+    counted against a **fixed window** of 60 s persisted in the DO's
+    SQLite-backed storage (one DO instance per `client_id`, keyed by name).
+    Within quota, responses carry `X-Gw-RateLimit-Limit` / `-Remaining` /
+    `-Reset`; `Remaining` counts **including the current request** (the
+    admitted sequence shows `rpm, rpm-1, … 1`). Over quota the gateway returns
+    `429` with `Retry-After` and `Remaining: 0`. Honest edges: a fixed window
+    allows a burst of up to `2 × rpm` straddling a window boundary (a client
+    can spend a full window's quota at its tail and the next window's at its
+    head), and the limiter is per-request, not per-cost — it caps call count,
+    not payload size, CPU, or complexity. If the DO itself fails while the
+    limiter is active, the gateway **fail-closes** with an observable
+    `500 rate_limiter_unavailable` rather than letting the request through
+    uncounted. Without the binding (or with no `rpm`), the limiter stays
+    inactive and the request path is byte-identical to the prior behavior.
 - **Per-skill isolation is context-level, not process-level.** Skills get
   separate QuickJS contexts but share the same wasm module instance and the
   same Worker request; the boundary is the QuickJS API surface, not an OS
   process.
-- **One asyncify suspension at a time.** QuickJS asyncify suspends/resumes a
-  single stack; concurrent overlapping async capabilities are not supported.
+- **One asyncify suspension at a time — per module instance.** QuickJS asyncify
+  suspends/resumes a single stack per wasm instance; within one request all
+  execution is sequential on its instance. Cross-request parallelism comes from
+  the instance pool (up to `WASM_POOL_SIZE` concurrent requests per isolate),
+  not from overlapping suspensions on one instance.
 - **State is in-memory and per-request.** No persistence, no warm state between
   requests. A tool that accumulates state loses it when the request ends.
 - **DoS is bounded, not impossible.** The limits above cap a single call's
   cost; a determined caller can still spend the limits' worth of CPU/memory
-  per request, and the gateway caches discovery per isolate for 60 s (observable
-  via the `X-Gw-Discovery: hit|miss` response header) plus `llms.txt` / verified
-  `tool.js` in the Cache API, so cold-path cost is amortized but not zero.
+  per request. Discovery is cached in two layers: layer 1 caches the parsed
+  result per isolate for 60 s, and layer 2 caches the full post-verification
+  result in the Cache API per colo for 60 s (observable via the
+  `X-Gw-Discovery: hit|l2|miss` response header — `hit` served from layer 1,
+  `l2` hydrated cross-isolate from layer 2, `miss` fetched from the origin).
+  The layer 2 key carries a config fingerprint (attestation mode + reviewer
+  registry + UTC date), so changing the config never serves stale verdicts.
+  What is cached is post-verification (the `tool.js` bytes were already
+  hash-checked when layer 2 was populated), inside the account's own trust
+  domain; the cold path is amortized more, but still not zero. A scheduled
+  preheat (cron every minute, `[triggers]` in `wrangler-gateway.toml`) runs
+  discovery for every allowlisted origin and instantiates a wasm module, so
+  the cron's isolate/colo rarely serves a cold miss — honest caveat: the
+  Cache API is per-colo and the cron runs in one location, so other colos
+  still pay their first miss.
 - **The publisher is trusted for the skill list.** The gateway trusts the
   origin's `/llms.txt` to name skills; it verifies the `tool.js` bytes match
   the declared SHA-256, but it does not vet what the tool does.
@@ -407,7 +729,8 @@ What it does **not** guarantee:
 | `worker.mjs` | PoC MCP server (sync host, inline tools) deployed at `toolhost-mcp.rckflr.workers.dev`. |
 | `worker-spike.mjs` | Async spike (fetch_home/fetch_evil) proving origin-scoped fetch. |
 | `worker-gateway.mjs` | The gateway: discover → verify → load → serve MCP, + origin-memory injection and attestations. Deployed at `llmstxt-gateway.rckflr.workers.dev`. |
-| `llmstxt-parse.mjs` | Pure parser for the executable-skill lines (and the `skills-memory` line) of `llms.txt`. |
+| `llmstxt-parse.mjs` | Pure parser for the executable-skill lines (and the `skills-memory` line) of `llms.txt`. Also reports prose-only (`nonExecutable`) skills found in `## Skills`. |
+| `sigstore-attest.mjs` | `verifySigstoreAttestation` / `buildSigstoreStatement` — Sigstore (keyless) attestation verification. Node-only (see "Sigstore attestations" above); used by `bin/mcpwasm-local.mjs`'s `--require-attestation`, not the gateway. |
 | `worker-memspike.mjs` | Memory spike: docs-site origin served through the gateway with `host.memorySearch` over a BM25 snapshot. |
 | `internal-logic.mjs` | Demo platform logic for the sync PoC (holds the secret, exposes `createPayment`/`refundPayment`). |
 | `tools-inline.mjs` | Inline `tool.js` sources for the sync PoC. |
@@ -416,7 +739,7 @@ What it does **not** guarantee:
 | `build-memspike.mjs` / `build-memsnapshot.mjs` | esbuild bundler for the memspike worker, and the snapshot builder for the docs-site BM25 snapshot. |
 | `mf-test.mjs` / `mf-spike.mjs` / `mf-gateway.mjs` / `mf-memspike.mjs` | e2e tests with Miniflare v4 against the built workers (PoC, spike, gateway, memspike). |
 | `wrangler.toml` | Wrangler config for the PoC (sync) worker. |
-| `wrangler-gateway.toml` | Wrangler config for the gateway. Vars: `ALLOWED_ORIGINS` (origin allowlist), `REVIEWERS` (attestation reviewer registry, JSON), `ATTESTATION_MODE` (`off`/`advisory`/`enforcing`). Service bindings `DEMO`, `BOOKSTORE`, `DOCS` (same-account worker-to-worker fetch, bypassing Cloudflare error 1042). `AUTH_TOKEN` is set as a secret, not in this file. |
+| `wrangler-gateway.toml` | Wrangler config for the gateway. Vars: `ALLOWED_ORIGINS` (origin allowlist), `REVIEWERS` (attestation reviewer registry, JSON), `ATTESTATION_MODE` (`off`/`advisory`/`enforcing`). Service bindings `DEMO`, `BOOKSTORE`, `DOCS` (same-account worker-to-worker fetch, bypassing Cloudflare error 1042). `AUTH_TOKEN` and `CLIENTS` are set as secrets, not in this file. Durable Object binding `RATE_LIMITER` (class `RateLimiter`, migration `v1` with `new_sqlite_classes`) deploys with the worker; the limiter stays inactive until a `CLIENTS` registry with `rpm` values exists. |
 | `scripts/attest.mjs` | Attestation tool: `keygen` (writes local `.attester-key.json`, prints public key) and `sign <origin> <skill> <valid_until>` (Ed25519 attestation JSON). |
 | `bench/` + `BENCHMARK.md` | `bench/run.mjs` (single-client latency harness against the deployed workers) and its raw results; `BENCHMARK.md` is the write-up. |
 | `quickjs.wasm` / `quickjs-asyncify.wasm` | Pre-compiled QuickJS binaries imported as static `CompiledWasm` modules. |
@@ -424,51 +747,81 @@ What it does **not** guarantee:
 | `demo-site/` | Demo publisher site (`llms.txt` + `sum_numbers` / `server_time` skills). Deployed at `llmstxt-demo-site.rckflr.workers.dev`. |
 | `bookstore/` | Realistic publisher: D1-backed catalog (52 books), read skills + `create_order` write skill, plus permanent robustness fixtures (`corrupt_skill` hash-mismatch, `busy_loop` infinite loop). Deployed at `llmstxt-bookstore.rckflr.workers.dev`. |
 | `docs-site/` | Docs publisher: serves the llms-txt-skills spec documents + a `skills-index.snapshot` (BM25, `minimemory-okf-v1`), with `search_spec` (BM25 via `host.memorySearch`), `get_doc`, and `list_docs` skills. Deployed at `llmstxt-docs.rckflr.workers.dev`. |
-| `TAREA*-REPORT.md` (one per milestone) | Development reports (see below). |
+| `reports/` | Development reports, one `TAREA*-REPORT.md` per milestone (see below), plus the raw MCP-client outputs of T13-T15. |
+| `.github/workflows/ci.yml` | GitHub Actions CI: two jobs (`hermetic` gate + `prod-integration` non-blocking) on push and pull_request to `main`. |
+
+## CI
+
+The workflow in `.github/workflows/ci.yml` runs two jobs on every push and
+pull_request to `main`, both on `ubuntu-latest` with Node 22 and `npm ci`
+(with cache), timing out after 15 minutes.
+
+The `hermetic` job is the gate. It runs five local suites — `npm test`,
+`npm run spike`, `npm run memspike`, `npm run gateway:offline`, `npm run
+local` — each preceded by its own build. None of these touch the network
+beyond `npm` itself: `test`, `spike`, `memspike`, and `local` are fully local
+(the last spawns the stdio runtime against an in-process fake publisher on
+`127.0.0.1`), and `gateway:offline` is the hermetic mode of the gateway suite
+(T35), where the production workers are replaced by in-process fakes served
+through the same URL-to-binding map the gateway uses. Hermeticity is enforced
+by an outbound fetch interceptor: if anything in the suite tries to leave the
+process for the network, the run
+fails. This job blocks the merge.
+
+The `prod-integration` job runs `npm run gateway`, the online gateway suite
+against the deployed production workers (`*.rckflr.workers.dev`) over the
+public internet. This is the only command in CI that reaches production, and
+its purpose is to detect drift between the fakes and the real workers. It is
+non-blocking (`continue-on-error`): an outage on their side surfaces as a
+warning, not a red gate, so a foreign incident cannot block work in this repo.
 
 ## Development notes
 
-Each milestone is documented in its `TAREA*-REPORT.md` (TAREA1 through TAREA27;
-`TAREA2` was skipped in numbering and `TAREA12B` is a continuation of TAREA12).
+Each milestone is documented in its `reports/TAREA*-REPORT.md` (TAREA1 through TAREA45;
+`TAREA2` and `TAREA30` were skipped in numbering and `TAREA12B` is a
+continuation of TAREA12).
 The non-obvious bits live there:
 
-- `TAREA4-REPORT.md` — deploying to Cloudflare Workers: the `CompiledWasm` rule
+- `reports/TAREA4-REPORT.md` — deploying to Cloudflare Workers: the `CompiledWasm` rule
   and why importing the `.wasm` as a static module avoids
   "Wasm code generation disallowed by embedder".
-- `TAREA5-REPORT.md` — the asyncify spike: why asyncify is needed for an
+- `reports/TAREA5-REPORT.md` — the asyncify spike: why asyncify is needed for an
   `await`-shaped capability, and the promise-pumping loop in
   `AsyncToolHost.callTool`.
-- `TAREA7-REPORT.md` — the gateway: sha256 verification, the Cache API use, and
+- `reports/TAREA7-REPORT.md` — the gateway: sha256 verification, the Cache API use, and
   the Cloudflare error 1042 (same-account worker-to-worker fetch via
   `workers.dev`) workaround via a service binding.
-- `TAREA12-REPORT.md` / `TAREA12B-REPORT.md` — `Date.now()` is frozen in
+- `reports/TAREA12-REPORT.md` / `reports/TAREA12B-REPORT.md` — `Date.now()` is frozen in
   Cloudflare Workers during synchronous execution, so a wall-clock deadline
   never cuts a `while(true){}`. Fix: a deterministic gas budget — the interrupt
   handler counts its own invocations and interrupts at 20 000, independent of
   the clock. Calibrated against the heaviest legitimate skill.
-- `TAREA14-REPORT.md` — `structuredContent` in an MCP result must be a JSON
+- `reports/TAREA14-REPORT.md` — `structuredContent` in an MCP result must be a JSON
   object (MCP-shaped), not a bare scalar/array; the gateway normalizes tool
   output accordingly.
-- `TAREA19-REPORT.md` — concurrency: a per-wasm-module mutex on instantiation
+- `reports/TAREA19-REPORT.md` — concurrency: a per-wasm-module mutex on instantiation
   plus single-flight discovery per origin, so parallel cold requests share one
   discovery pass and one module build.
-- `TAREA22-REPORT.md` — origin memory: the `skills-memory` line, sha256-verified
+- `reports/TAREA22-REPORT.md` — origin memory: the `skills-memory` line, sha256-verified
   BM25 snapshot, and the `host.memorySearch` capability injected via
   `extraCapabilities`.
-- `TAREA25-REPORT.md` — skill attestations (Ed25519, WebCrypto, `REVIEWERS`
+- `reports/TAREA25-REPORT.md` — skill attestations (Ed25519, WebCrypto, `REVIEWERS`
   registry, verdicts, advisory/enforcing modes, `scripts/attest.mjs`).
-- `TAREA26-REPORT.md` — code-review fixes: `extraCapabilities` now forwards all
+- `reports/TAREA26-REPORT.md` — code-review fixes: `extraCapabilities` now forwards all
   positional args (so `host.memorySearch(q, k)` keeps `k`), and the
   `fetchOrigin` timeout backstop timer is cleared on resolve (no leaked
   timers).
 
 Benchmark headline numbers (full matrix and methodology in
 [`BENCHMARK.md`](./BENCHMARK.md), single-client from México to the Workers
-edge, not a load test): the sandbox adds ~5–10 ms over a direct call (PoC
-sandbox `tools/call` p50 ≈ 63 ms vs. direct API p50 ≈ 101 ms; gateway warm
-pure-sandbox `sum_numbers` p50 ≈ 65 ms), and a warm gateway read with
-`fetchOrigin` + D1 sits around p50 ≈ 110 ms (`stock_report` p50 = 113 ms).
-A cold discovery miss costs ~250–400 ms (compile + sha256 + fetch).
+edge, not a load test; latest figures from the post-pool+preheat run):
+the sandbox itself costs **~2 ms warm** (gateway pure-sandbox `sum_numbers`
+p50 ≈ 55 ms vs. the same worker's raw ping p50 ≈ 53 ms), and the full gateway
+adds **~6 ms** over calling the publisher's API directly for the same read
+(`stock_report` through the gateway p50 = 96 ms vs. direct API p50 = 90 ms).
+A cold discovery miss costs ~210–400 ms (compile + sha256 + fetch); the
+scheduled preheat (see "Security model" above) keeps the cron's own
+isolate/colo mostly out of this cold path.
 
 Run the e2e tests with `npm test` (sync) / `npm run spike` (async) /
 `npm run gateway` (gateway against the live demo site) / `npm run memspike`

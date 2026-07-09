@@ -25,6 +25,39 @@ standard via two provisional extensions adopted in the spec: **executable
 skills** (v0.4, with *origin memory*) and **skill attestations** (v0.3). See
 the dedicated sections below.
 
+## Use it now — any static site → an MCP server
+
+Point the local runtime at any origin that publishes `llms.txt` with executable
+skills. It fetches `/llms.txt`, verifies every `tool_sha256`, sandboxes each
+skill in QuickJS-wasm, and speaks MCP over stdio — **no account, no deploy, no
+infrastructure on either side**:
+
+```bash
+npx -y @rckflr/mcpwasm https://usuario.github.io
+```
+
+Wire it into an MCP client (Claude Code, Cursor, Cline, …):
+
+```json
+{
+  "mcpServers": {
+    "misitio": {
+      "command": "npx",
+      "args": ["-y", "@rckflr/mcpwasm", "https://usuario.github.io"]
+    }
+  }
+}
+```
+
+That is the whole path from a static site to a running MCP server. The two
+other ways to use mcpwasm are for when you specifically need them: the **hosted
+gateway** (multi-tenant, on Cloudflare Workers — serves many origins behind one
+endpoint, with an onboarding step per origin) and the **embeddable library**
+(`@rckflr/mcpwasm` — for building your own host). Both are documented below;
+the local runtime above needs none of it. Its honest v1 limits and the
+`index.json`/attestation options are detailed under
+"[Local MCP runtime](#local-mcp-runtime--no-gateway-at-all)".
+
 ## Use as a library (npm)
 
 The embeddable host — what the gateway itself builds on — ships as

@@ -66,7 +66,7 @@
       "ways.gatewayTag": "turnkey MCP server",
       "ways.gatewayP": "Point any MCP client at the deployed gateway. It discovers, verifies, and sandboxes a publisher's skills on every request.",
       "ways.localTag": "zero infra, both sides",
-      "ways.localP": "Run any origin's skills locally over stdio — including origin memory (verified BM25 search, 0.4.0) and each skill's SKILL.md recipe served as an MCP resource (new in 0.5.0). No gateway, no server, on either end.",
+      "ways.localP": "Run any origin's skills locally over stdio — including origin memory (verified BM25 search, 0.4.0), each skill's SKILL.md recipe served as an MCP resource (0.5.0), and multi-project origins via scopes: kdd__search_knowledge with per-scope memory (new in 0.6.0). No gateway, no server, on either end.",
       "ways.libraryTag": "embed the sandbox",
       "ways.libraryP": "Build your own platform host with the exact isolation the gateway uses.",
 
@@ -172,7 +172,7 @@
       "ways.gatewayTag": "servidor MCP listo para usar",
       "ways.gatewayP": "Apuntá cualquier cliente MCP al gateway desplegado. Descubre, verifica, y sandboxea las skills de un publisher en cada request.",
       "ways.localTag": "cero infra, en ambos lados",
-      "ways.localP": "Corré las skills de cualquier origin localmente por stdio — incluidas la memoria de origin (búsqueda BM25 verificada, 0.4.0) y la receta SKILL.md de cada skill servida como resource MCP (nueva en 0.5.0). Sin gateway, sin servidor, en ningún lado.",
+      "ways.localP": "Corré las skills de cualquier origin localmente por stdio — incluidas la memoria de origin (búsqueda BM25 verificada, 0.4.0), la receta SKILL.md de cada skill servida como resource MCP (0.5.0) y origins multi-proyecto vía scopes: kdd__search_knowledge con memoria por scope (nuevo en 0.6.0). Sin gateway, sin servidor, en ningún lado.",
       "ways.libraryTag": "embebé el sandbox",
       "ways.libraryP": "Construí tu propio host de plataforma con el mismo aislamiento que usa el gateway.",
 
@@ -278,7 +278,7 @@
       "ways.gatewayTag": "servidor MCP pronto para uso",
       "ways.gatewayP": "Aponte qualquer cliente MCP para o gateway em produção. Ele descobre, verifica, e isola as skills de um publisher a cada requisição.",
       "ways.localTag": "zero infra, dos dois lados",
-      "ways.localP": "Rode as skills de qualquer origin localmente via stdio — incluindo a memória de origin (busca BM25 verificada, 0.4.0) e a receita SKILL.md de cada skill servida como resource MCP (nova na 0.5.0). Sem gateway, sem servidor, em nenhum dos lados.",
+      "ways.localP": "Rode as skills de qualquer origin localmente via stdio — incluindo a memória de origin (busca BM25 verificada, 0.4.0), a receita SKILL.md de cada skill servida como resource MCP (0.5.0) e origins multi-projeto via scopes: kdd__search_knowledge com memória por scope (novo na 0.6.0). Sem gateway, sem servidor, em nenhum dos lados.",
       "ways.libraryTag": "embuta o sandbox",
       "ways.libraryP": "Construa seu próprio host de plataforma com o mesmo isolamento que o gateway usa.",
 

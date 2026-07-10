@@ -71,6 +71,9 @@
       "ways.browserP": "The whole runtime in a browser tab (new in 0.7.0): discovery, byte-for-byte SHA-256 verification, one QuickJS-wasm sandbox per tool, scopes and per-scope memory. The publisher only needs CORS — GitHub Pages already sends it. No server on their side, no Node on yours.",
       "ways.browserDemo": "Open the live demo",
       "ways.browserAgent": "Full-stack agent demo",
+      "tabagent.h2": "The whole stack, as one personal agent",
+      "tabagent.lede__html": "<a href=\"https://github.com/MauricioPerera/tab-agent\">tab-agent</a> is a personal AI agent that is nothing but static files + your browser: shared <strong>memory</strong> (the cq-git commons over the GitHub API), <strong>verified tools</strong> (this runtime, hash-pinned &amp; sandboxed), and a <strong>model you own</strong> — the provider credential is never exposed (run it in-tab via WebGPU, your endpoint, or an operator proxy). It answers the personal-agent supply-chain problem by inverting it: tools are verified, not screened.",
+      "tabagent.cta": "Open tab-agent",
       "ways.libraryTag": "embed the sandbox",
       "ways.libraryP": "Build your own platform host with the exact isolation the gateway uses.",
 
@@ -182,6 +185,9 @@
       "ways.browserP": "El runtime completo en una pestaña del navegador (nuevo en 0.7.0): descubrimiento, verificación SHA-256 byte a byte, un sandbox QuickJS-wasm por tool, scopes y memoria por scope. El publicador solo necesita CORS — GitHub Pages ya lo manda. Sin servidor de su lado, sin Node del tuyo.",
       "ways.browserDemo": "Abrir la demo en vivo",
       "ways.browserAgent": "Demo del agente full-stack",
+      "tabagent.h2": "Todo el stack, como un agente personal",
+      "tabagent.lede__html": "<a href=\"https://github.com/MauricioPerera/tab-agent\">tab-agent</a> es un agente personal que es solo archivos estáticos + tu navegador: <strong>memoria</strong> compartida (el commons cq-git vía la API de GitHub), <strong>tools verificadas</strong> (este runtime, fijadas por hash y en sandbox) y un <strong>modelo que es tuyo</strong> — la credencial del proveedor nunca se expone (correlo en la pestaña vía WebGPU, tu endpoint, o un proxy de operador). Responde al problema de supply-chain de los agentes personales invirtiéndolo: las tools se verifican, no se escanean.",
+      "tabagent.cta": "Abrir tab-agent",
       "ways.libraryTag": "embebé el sandbox",
       "ways.libraryP": "Construí tu propio host de plataforma con el mismo aislamiento que usa el gateway.",
 
@@ -293,6 +299,9 @@
       "ways.browserP": "O runtime completo numa aba do navegador (novo na 0.7.0): descoberta, verificação SHA-256 byte a byte, um sandbox QuickJS-wasm por tool, scopes e memória por scope. O publicador só precisa de CORS — o GitHub Pages já o envia. Sem servidor do lado dele, sem Node do seu.",
       "ways.browserDemo": "Abrir a demo ao vivo",
       "ways.browserAgent": "Demo do agente full-stack",
+      "tabagent.h2": "Todo o stack, como um agente pessoal",
+      "tabagent.lede__html": "<a href=\"https://github.com/MauricioPerera/tab-agent\">tab-agent</a> é um agente pessoal que é apenas arquivos estáticos + seu navegador: <strong>memória</strong> compartilhada (o commons cq-git via API do GitHub), <strong>tools verificadas</strong> (este runtime, fixadas por hash e em sandbox) e um <strong>modelo que é seu</strong> — a credencial do provedor nunca é exposta (rode na aba via WebGPU, seu endpoint, ou um proxy de operador). Responde ao problema de supply-chain dos agentes pessoais invertendo-o: as tools são verificadas, não escaneadas.",
+      "tabagent.cta": "Abrir tab-agent",
       "ways.libraryTag": "embuta o sandbox",
       "ways.libraryP": "Construa seu próprio host de plataforma com o mesmo isolamento que o gateway usa.",
 

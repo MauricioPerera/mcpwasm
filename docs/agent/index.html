@@ -76,7 +76,7 @@ const I18N = {
     traceH: "Agent trace", ask: "Ask something that needs the ecosystem…", run: "Run agent",
     thinking: "thinking…", calling: "calling", verifiedSha: "verified sha256: ",
     answer: "Answer", errNoTools: "Connect first", tools: "verified tools",
-    "foot__html": 'Suggested asks: <em>"Which publisher serves a payments demo? Search the registry."</em> · <em>"What is the trust model of llms-txt-skills?"</em> · <em>"List the KDD concepts about contracts."</em> — The learning leg (shared agent memory) runs locally via <a href="https://github.com/MauricioPerera/cq-git-template">cq-git</a>; a browser page cannot write to your commons, and that is the correct trust boundary. Local Ollama note: Chrome may require enabling insecure-private-network access for a public page to reach localhost — or serve this page locally.'
+    "foot__html": 'Suggested asks: <em>"Which publisher serves a payments demo? Search the registry."</em> · <em>"What is the trust model of llms-txt-skills?"</em> · <em>"List the KDD concepts about contracts."</em> — The learning leg (shared agent memory) runs locally via <a href="https://github.com/MauricioPerera/cq-git-template">cq-git</a>; a browser page cannot write to your commons, and that is the correct trust boundary. Local Ollama note: this public page cannot reach your local Ollama until Ollama allows this origin — set <code>OLLAMA_ORIGINS=https://mauricioperera.github.io</code> and restart Ollama (Chrome may also gate private-network access). Or serve this page from localhost, where Ollama accepts it by default.'
   },
   es: {
     "h1__html": "El agente full-stack — en <em>esta pestaña</em>",
@@ -85,7 +85,7 @@ const I18N = {
     traceH: "Traza del agente", ask: "Pedí algo que necesite el ecosistema…", run: "Correr agente",
     thinking: "pensando…", calling: "llamando", verifiedSha: "sha256 verificado: ",
     answer: "Respuesta", errNoTools: "Conectá primero", tools: "tools verificadas",
-    "foot__html": 'Pedidos sugeridos: <em>"¿Qué publicador sirve una demo de pagos? Buscá en el registro."</em> · <em>"¿Cuál es el modelo de confianza de llms-txt-skills?"</em> · <em>"Listá los conceptos de KDD sobre contratos."</em> — La pata de aprendizaje (memoria compartida) corre local vía <a href="https://github.com/MauricioPerera/cq-git-template">cq-git</a>; una página no puede escribir en tu commons, y ese es el límite de confianza correcto. Nota Ollama local: Chrome puede exigir permitir acceso a red privada para que una página pública llegue a localhost — o serví esta página localmente.'
+    "foot__html": 'Pedidos sugeridos: <em>"¿Qué publicador sirve una demo de pagos? Buscá en el registro."</em> · <em>"¿Cuál es el modelo de confianza de llms-txt-skills?"</em> · <em>"Listá los conceptos de KDD sobre contratos."</em> — La pata de aprendizaje (memoria compartida) corre local vía <a href="https://github.com/MauricioPerera/cq-git-template">cq-git</a>; una página no puede escribir en tu commons, y ese es el límite de confianza correcto. Nota Ollama local: esta página pública no llega a tu Ollama local hasta que Ollama permita este origin — poné <code>OLLAMA_ORIGINS=https://mauricioperera.github.io</code> y reiniciá Ollama (Chrome además puede exigir permiso de red privada). O serví esta página desde localhost, donde Ollama la acepta por defecto.'
   },
   pt: {
     "h1__html": "O agente full-stack — <em>nesta aba</em>",
@@ -94,7 +94,7 @@ const I18N = {
     traceH: "Traço do agente", ask: "Peça algo que precise do ecossistema…", run: "Rodar agente",
     thinking: "pensando…", calling: "chamando", verifiedSha: "sha256 verificado: ",
     answer: "Resposta", errNoTools: "Conecte primeiro", tools: "tools verificadas",
-    "foot__html": 'Pedidos sugeridos: <em>"Qual publicador serve uma demo de pagamentos? Pesquise no registro."</em> · <em>"Qual é o modelo de confiança do llms-txt-skills?"</em> · <em>"Liste os conceitos do KDD sobre contratos."</em> — A perna de aprendizado (memória compartilhada) roda local via <a href="https://github.com/MauricioPerera/cq-git-template">cq-git</a>; uma página não pode escrever no seu commons, e esse é o limite de confiança correto. Nota Ollama local: o Chrome pode exigir liberar acesso à rede privada para uma página pública alcançar localhost — ou sirva esta página localmente.'
+    "foot__html": 'Pedidos sugeridos: <em>"Qual publicador serve uma demo de pagamentos? Pesquise no registro."</em> · <em>"Qual é o modelo de confiança do llms-txt-skills?"</em> · <em>"Liste os conceitos do KDD sobre contratos."</em> — A perna de aprendizado (memória compartilhada) roda local via <a href="https://github.com/MauricioPerera/cq-git-template">cq-git</a>; uma página não pode escrever no seu commons, e esse é o limite de confiança correto. Nota Ollama local: esta página pública não alcança seu Ollama local até que o Ollama permita este origin — defina <code>OLLAMA_ORIGINS=https://mauricioperera.github.io</code> e reinicie o Ollama (o Chrome também pode exigir permissão de rede privada). Ou sirva esta página do localhost, onde o Ollama a aceita por padrão.'
   }
 };
 let LANG = localStorage.getItem("agent-lang") || (navigator.language || "en").slice(0, 2).replace(/^(?!es|pt).*$/, "en");

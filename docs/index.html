@@ -174,8 +174,8 @@
   <!-- ============ THREE WAYS TO USE IT ============ -->
   <section id="ways-to-use" class="section reveal">
     <div class="wrap">
-      <h2 data-i18n="ways.h2">Three ways to use it today</h2>
-      <p class="section-lede" data-i18n="ways.lede">All three are real, deployed, and tested — not roadmap.</p>
+      <h2 data-i18n="ways.h2">Four ways to use it today</h2>
+      <p class="section-lede" data-i18n="ways.lede">All four are real, deployed, and tested — not roadmap.</p>
 
       <div class="cards cards-3">
         <article class="card">
@@ -213,6 +213,18 @@ host.loadToolSource(toolJsSource);
 <span class="tok-kw">const</span> result = <span class="tok-kw">await</span> host.callTool(<span class="tok-str">"sum_numbers"</span>, { a: 2, b: 40 });
 host.dispose();</code></pre>
           </div>
+        </article>
+        <article class="card">
+          <h3>Browser runtime <span class="tag" data-i18n="ways.browserTag">no Node either</span></h3>
+          <p data-i18n="ways.browserP">The whole runtime in a browser tab (new in 0.7.0): discovery, byte-for-byte SHA-256 verification, one QuickJS-wasm sandbox per tool, scopes and per-scope memory. The publisher only needs CORS — GitHub Pages already sends it. No server on their side, no Node on yours.</p>
+          <div class="code-block">
+            <div class="code-head"><span>js</span><button class="copy-btn" type="button" data-i18n="common.copy">Copy</button></div>
+            <pre><code><span class="tok-kw">import</span> { connectStaticSkills } <span class="tok-kw">from</span> <span class="tok-str">"@rckflr/mcpwasm/web"</span>;
+
+<span class="tok-kw">const</span> skills = <span class="tok-kw">await</span> connectStaticSkills(<span class="tok-str">"https://mauricioperera.github.io"</span>, opts);
+<span class="tok-kw">await</span> skills.callTool(<span class="tok-str">"search_knowledge"</span>, { q: <span class="tok-str">"how do I publish?"</span> });</code></pre>
+          </div>
+          <p><a class="btn btn-primary" href="./demo/" data-i18n="ways.browserDemo">Open the live demo</a></p>
         </article>
       </div>
     </div>

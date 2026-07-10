@@ -48,7 +48,7 @@ import { createInterface } from "node:readline";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { readFileSync, existsSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { newQuickJSAsyncWASMModuleFromVariant, newVariant } from "quickjs-emscripten-core";
 import baseAsyncifyVariant from "@jitl/quickjs-wasmfile-release-asyncify";
@@ -77,6 +77,12 @@ function out(obj) {
 const USAGE =
   "uso: mcpwasm <origin>                 (ej: npx @rckflr/mcpwasm https://usuario.github.io)\n" +
   "     mcpwasm --serve <dir> [--port N] (sirve un directorio local, ej. un git clone, y conecta ahi)\n" +
+  "     --lock <archivo>  (opcional: pin-on-first-use de los hashes DECLARADOS por el\n" +
+  "         publicador — tool_sha256 y sha256 de la receta. Si el publicador cambia una\n" +
+  "         skill, se RECHAZA con diagnostico: protege contra un publicador comprometido.\n" +
+  "         Skills nuevas se pinnean con aviso. Los snapshots de memoria NO se lockean:\n" +
+  "         el conocimiento cambia legitimamente; el codigo y las instrucciones, no.)\n" +
+  "     --lock-update  (acepta los cambios detectados y re-pinnea; requiere --lock)\n" +
   "     --require-attestation <issuer>|<identity>  (opcional, ambos modos: exige una\n" +
   "         atestacion Sigstore valida de esa identidad OIDC exacta para CADA skill;\n" +
   "         sin ella, la skill se excluye igual que un tool_sha256 mismatch. Ej:\n" +
@@ -87,6 +93,8 @@ let originArg = null;
 let serveDir = null;
 let fixedPort = null;
 let requireAttestation = null; // { issuer, identity } | null (opt-in)
+let lockPath = null; // --lock <archivo> (opt-in, pin-on-first-use)
+let lockUpdate = false; // --lock-update (aceptar cambios y re-pinnear)
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === "--serve") {
@@ -98,6 +106,14 @@ for (let i = 0; i < argv.length; i++) {
       process.exit(2);
     }
     fixedPort = p;
+  } else if (a === "--lock") {
+    lockPath = argv[++i];
+    if (!lockPath) {
+      err("--lock requiere una ruta de archivo");
+      process.exit(2);
+    }
+  } else if (a === "--lock-update") {
+    lockUpdate = true;
   } else if (a === "--require-attestation") {
     const raw = argv[++i] || "";
     const sep = raw.indexOf("|");
@@ -368,12 +384,51 @@ function makeMemorySearch(mem, snapshotText) {
 // Mismatch/HTTP != 200/cap excedido => skill rechazada (stderr), las demas cargan.
 // Devuelve { skills, snapshotText }: snapshotText es el snapshot de origin-memory
 // YA verificado contra snapshot_sha256, o null (sin memoria / verify fallo).
+// ---- lockfile del consumidor (pin-on-first-use) --------------------------
+// Amenaza que cubre: el hash pinning verifica los bytes contra lo que el
+// publicador DECLARA HOY; si el publicador (o quien controle su cuenta)
+// cambia tool.js y su hash juntos, el consumidor lo recibe en silencio. El
+// lock congela los hashes declarados en el primer uso: un cambio posterior
+// se rechaza con diagnostico, salvo aceptacion explicita via --lock-update.
+// Se lockean tool_sha256 y el sha256 de la receta (ambas son superficie de
+// ejecucion/instruccion); los snapshots de memoria NO (son datos y cambian
+// legitimamente con cada actualizacion de contenido).
+function loadLock(path) {
+  if (!existsSync(path)) return { lockfile_version: 1, origins: {} };
+  try {
+    const data = JSON.parse(readFileSync(path, "utf8"));
+    if (!data || typeof data !== "object" || typeof data.origins !== "object") {
+      throw new Error("estructura invalida");
+    }
+    return data;
+  } catch (e) {
+    err("--lock: no se pudo leer " + path + " (" + (e && e.message) + ") — abortando por seguridad");
+    process.exit(2);
+  }
+}
+
+function saveLock(path, lock) {
+  writeFileSync(path, JSON.stringify(lock, null, 2) + "\n", "utf8");
+}
+
 async function discover() {
   const r = await fetchText(origin + "/llms.txt", MAX_LLMS_BYTES);
   if (r.status !== 200) {
     throw new Error("llms.txt: HTTP " + r.status);
   }
   const { skills: parsed, nonExecutable, memories } = parseLlmsTxt(r.text);
+
+  // Estado del lock para este origin (clave: origin; con --serve, la ruta
+  // servida — el puerto efimero haria inutil la clave por origin).
+  let lockState = null;
+  if (lockPath) {
+    if (lockUpdate && !lockPath) { /* imposible: validado en argv */ }
+    const lock = loadLock(lockPath);
+    const key = serveDir ? "serve:" + path.resolve(serveDir) : origin;
+    const entry = lock.origins[key];
+    lockState = { lock, key, entries: (entry && entry.skills) || {} };
+    err("lock: " + lockPath + " activo para " + key + " (" + Object.keys(lockState.entries).length + " skill(s) pinneada(s))");
+  }
 
   // Skills de prosa (core llms-txt-skills spec, sin tool/tool_sha256): este
   // runtime no las ejecuta, pero reportarlas evita que un origin con SOLO
@@ -479,6 +534,28 @@ async function discover() {
       }
     }
 
+    // Lockfile: comparar los hashes DECLARADOS contra los pinneados ANTES de
+    // fetchear. Un cambio (tool o receta) rechaza la skill salvo --lock-update.
+    if (lockState) {
+      const key = s.scope ? s.scope + "__" + s.name : s.name;
+      const pinned = lockState.entries[key];
+      if (pinned) {
+        const toolChanged = pinned.tool_sha256 !== s.sha256;
+        const recipeChanged = (pinned.skill_sha256 || null) !== (s.skillSha256 || null);
+        if ((toolChanged || recipeChanged) && !lockUpdate) {
+          err(
+            "skill rechazada: " + key + " -> LOCK MISMATCH: el publicador cambio " +
+              (toolChanged ? "tool_sha256 (pinneado " + pinned.tool_sha256.slice(0, 12) + "…, declarado " + s.sha256.slice(0, 12) + "…)" : "el sha256 de la receta") +
+              ". Si el cambio es legitimo, re-ejecuta con --lock-update para aceptarlo."
+          );
+          continue;
+        }
+        if ((toolChanged || recipeChanged) && lockUpdate) {
+          err("lock: actualizacion ACEPTADA para " + key + " (re-pinneada por --lock-update)");
+        }
+      }
+    }
+
     const toolUrl = new URL(s.toolPath, origin).href;
     let tr;
     try {
@@ -510,6 +587,28 @@ async function discover() {
   }
   if (verified.length === 0) {
     throw new Error("ninguna skill verificada para " + origin);
+  }
+
+  // Lockfile: pinnear lo verificado (skills nuevas con aviso; cambios ya
+  // aceptados arriba si --lock-update). Se escribe recien aca, con skills
+  // que ADEMAS verificaron sus bytes — nunca se pinnea una skill rota.
+  if (lockState) {
+    let added = 0;
+    for (const v of verified) {
+      const s = parsed.find((x) => (x.scope ? x.scope + "__" + x.name : x.name) === v.publicName);
+      if (!s) continue;
+      if (!lockState.entries[v.publicName]) {
+        added++;
+        err("lock: skill nueva pinneada: " + v.publicName + " (tool " + s.sha256.slice(0, 12) + "…)");
+      }
+      lockState.entries[v.publicName] = {
+        tool_sha256: s.sha256,
+        ...(s.skillSha256 ? { skill_sha256: s.skillSha256 } : {}),
+      };
+    }
+    lockState.lock.origins[lockState.key] = { skills: lockState.entries };
+    saveLock(lockPath, lockState.lock);
+    if (added > 0) err("lock: " + lockPath + " actualizado (" + added + " skill(s) nueva(s))");
   }
 
   // La OTRA mitad de cada skill: la receta (SKILL.md), servida al cliente MCP

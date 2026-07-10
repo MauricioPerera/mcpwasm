@@ -488,6 +488,35 @@ limitation of Workers, documented in
 [Sigstore](#sigstore-attestations---require-attestation-local-runtime-only)
 above).
 
+## Consumer lockfile (`--lock`) — what if the publisher is the attacker?
+
+Hash pinning verifies bytes against what the publisher declares **today**.
+If the publisher — or whoever compromised their account — changes `tool.js`
+*and* its declared hash together, a consumer receives the new code
+silently. `--lock` closes that gap with pin-on-first-use:
+
+```bash
+npx -y @rckflr/mcpwasm https://example.com --lock skills.lock
+```
+
+- First use pins each skill's declared `tool_sha256` and recipe `sha256`.
+- A later change is **rejected loudly** (that skill only; the rest load):
+
+  ```
+  skill rechazada: search_knowledge -> LOCK MISMATCH: el publicador cambio tool_sha256 …
+  ```
+
+- If the change is a legitimate update, accept it explicitly:
+
+  ```bash
+  npx -y @rckflr/mcpwasm https://example.com --lock skills.lock --lock-update
+  ```
+
+New skills are pinned with a notice. Memory snapshots are deliberately not
+locked — knowledge changes legitimately with every content update; code and
+instructions should not change without you noticing. Commit `skills.lock`
+next to your agent config, like a package lock.
+
 ## Browser runtime (`mcpwasm-web`)
 
 > The third runtime, since 0.7.0. **Live demo:**

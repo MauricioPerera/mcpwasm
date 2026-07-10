@@ -6,6 +6,26 @@ are the npm publish dates. Entries describe what each published tarball ships
 relative to the previous one (verified against the actual tarballs, not just
 the git log).
 
+## [Unreleased] — 0.8.0
+
+### Added
+- **Consumer lockfile (`--lock <file>`) — pin-on-first-use for declared
+  hashes, local runtime.** Threat covered: classic hash pinning verifies
+  bytes against what the publisher declares *today* — if the publisher (or
+  whoever controls their account) changes `tool.js` **and** its declared
+  hash together, the consumer silently receives the new version. With
+  `--lock`, the first use pins each skill's **declared** `tool_sha256` and
+  recipe `sha256`; any later change is **rejected with a loud diagnostic**
+  (that skill only — the rest keep loading) until explicitly accepted with
+  `--lock-update`, which re-pins. The package-lock.json of skills.
+  - New skills appearing on the origin are pinned with a notice (additive).
+  - Memory snapshots are deliberately NOT locked: knowledge content changes
+    legitimately with every update; code and instructions should not.
+  - Skills are only written to the lock after their bytes also verified —
+    a broken skill is never pinned. Unreadable/corrupt lock file aborts
+    (fail-closed). With `--serve`, entries key on the served path.
+  - Without `--lock`, behavior is byte-identical to 0.7.0.
+
 ## [0.7.0] — 2026-07-10
 
 ### Added

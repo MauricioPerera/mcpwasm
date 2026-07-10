@@ -63,6 +63,7 @@ const MAX_TOOL_BYTES = 1048576; // 1 MB
 const MAX_INDEX_BYTES = 262144; // 256 KB (mismo default que el gateway)
 const MAX_ATTESTATIONS_BYTES = 262144; // 256 KB (mismo default que el gateway)
 const MAX_SNAPSHOT_BYTES = 4194304; // 4 MB (mismo default que el gateway)
+const MAX_SKILLMD_BYTES = 262144; // 256 KB — la receta (SKILL.md) servida como MCP resource
 const FETCH_TIMEOUT_MS = 10000;
 
 function err(msg) {
@@ -499,23 +500,62 @@ async function discover() {
       );
       continue;
     }
-    verified.push({ name: s.name, code: tr.text });
+    verified.push({ name: s.name, description: s.description, code: tr.text, skillPath: s.skillPath, skillSha256: s.skillSha256 });
   }
   if (verified.length === 0) {
     throw new Error("ninguna skill verificada para " + origin);
   }
-  return { skills: verified, snapshotText };
+
+  // La OTRA mitad de cada skill: la receta (SKILL.md), servida al cliente MCP
+  // como resource (y via la tool get_skill_guide). Verificacion contra el
+  // sha256 declarado en la linea de llms.txt (core RFC) cuando esta presente.
+  // Fallo/mismatch => la RECETA se omite con aviso; la TOOL (verificada por su
+  // propio tool_sha256) carga igual — fallo controlado, mitades independientes.
+  const docs = [];
+  for (const v of verified) {
+    if (typeof v.skillPath !== "string" || v.skillPath === "") continue;
+    let dr;
+    try {
+      dr = await fetchText(new URL(v.skillPath, origin).href, MAX_SKILLMD_BYTES);
+    } catch (e) {
+      err("receta omitida: " + v.name + " -> fetch SKILL.md fallo: " + ((e && e.message) || e));
+      continue;
+    }
+    if (dr.status !== 200) {
+      err("receta omitida: " + v.name + " -> SKILL.md HTTP " + dr.status);
+      continue;
+    }
+    if (v.skillSha256) {
+      const dh = sha256Hex(dr.text);
+      if (dh !== v.skillSha256) {
+        err(
+          "receta omitida: " + v.name + " -> SKILL.md sha256 mismatch (declarado " +
+            v.skillSha256.slice(0, 12) + "…, obtenido " + dh.slice(0, 12) + "…)"
+        );
+        continue;
+      }
+    }
+    docs.push({ name: v.name, description: v.description, text: dr.text });
+  }
+
+  return { skills: verified, snapshotText, docs };
 }
 
 // Un contexto QuickJS por skill (aislamiento tool<->tool, como el gateway),
 // compartiendo UN modulo asyncify: valido porque el loop de mensajes procesa
 // las requests EN SERIE (cola de promesas) => nunca hay dos suspensiones
 // asyncify simultaneas sobre el mismo modulo.
+// Tool sintetica del runtime (no sandboxeada — la provee el propio runtime,
+// no el publicador): fallback universal para clientes MCP sin soporte de
+// resources. Devuelve la receta (SKILL.md verificado) de una skill.
+const GUIDE_TOOL_NAME = "get_skill_guide";
+
 class LocalPerSkillHost {
-  constructor(quickjs, skills, extraCapabilities) {
+  constructor(quickjs, skills, extraCapabilities, docs) {
     this._quickjs = quickjs;
     this._skills = skills;
     this._extraCapabilities = extraCapabilities || undefined;
+    this._docs = new Map((docs || []).map((d) => [d.name, d]));
     this._byName = new Map();
     this._order = [];
   }
@@ -539,13 +579,49 @@ class LocalPerSkillHost {
     for (const name of this._order) {
       for (const t of this._byName.get(name).listTools()) all.push(t);
     }
+    if (this._docs.size > 0) {
+      all.push({
+        name: GUIDE_TOOL_NAME,
+        description:
+          "Return the verified SKILL.md guide (when/how to use, sequencing, constraints) " +
+          "for one of this origin's skills. Read it BEFORE composing multi-step calls. " +
+          "Available: " + [...this._docs.keys()].join(", "),
+        inputSchema: {
+          type: "object",
+          properties: { name: { type: "string", description: "skill name" } },
+          required: ["name"],
+        },
+      });
+    }
     return all;
   }
 
   async callTool(name, args) {
+    if (name === GUIDE_TOOL_NAME && this._docs.size > 0) {
+      const doc = this._docs.get(args && args.name);
+      if (!doc) throw new Error("skill sin receta disponible: " + ((args && args.name) || "(sin nombre)") + " — disponibles: " + [...this._docs.keys()].join(", "));
+      return { name: doc.name, guide: doc.text };
+    }
     const h = this._byName.get(name);
     if (!h) throw new Error("tool no encontrada: " + name);
     return await h.callTool(name, args);
+  }
+
+  // MCP resources: la receta de cada skill, verificada en discover().
+  listResources() {
+    return [...this._docs.values()].map((d) => ({
+      uri: "skill://" + d.name,
+      name: d.name + " — SKILL.md",
+      description: d.description,
+      mimeType: "text/markdown",
+    }));
+  }
+
+  readResource(uri) {
+    const m = /^skill:\/\/(.+)$/.exec(uri || "");
+    const doc = m ? this._docs.get(m[1]) : undefined;
+    if (!doc) return null;
+    return [{ uri, mimeType: "text/markdown", text: doc.text }];
   }
 
   dispose() {
@@ -569,7 +645,7 @@ async function start() {
     err("sirviendo " + path.resolve(serveDir) + " en " + origin + " (solo 127.0.0.1, no expuesto a la red)");
   }
   err("descubriendo skills de " + origin + " …");
-  const { skills, snapshotText } = await discover();
+  const { skills, snapshotText, docs } = await discover();
 
   // Origin memory: con snapshot verificado, cargar el engine e inyectar
   // host.memorySearch en TODAS las skills (misma closure, como el gateway).
@@ -584,9 +660,12 @@ async function start() {
   }
 
   const quickjs = await newQuickJSAsyncWASMModuleFromVariant(newVariant(baseAsyncifyVariant, {}));
-  host = new LocalPerSkillHost(quickjs, skills, extraCaps);
+  host = new LocalPerSkillHost(quickjs, skills, extraCaps, docs);
   await host.init();
   err("listo: " + skills.length + " skill(s) verificadas y cargadas (" + skills.map((s) => s.name).join(", ") + ")");
+  if (docs && docs.length > 0) {
+    err("recetas: " + docs.length + " SKILL.md verificadas -> MCP resources + tool " + GUIDE_TOOL_NAME);
+  }
 }
 
 async function handleLine(line) {

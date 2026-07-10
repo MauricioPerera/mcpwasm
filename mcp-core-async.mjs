@@ -34,12 +34,20 @@ export async function handleMcpMessageAsync(host, msg) {
   const isNotification = msg.id === undefined || msg.id === null;
 
   switch (msg.method) {
-    case "initialize":
+    case "initialize": {
+      // `resources` se anuncia solo si el host las implementa: los hosts de los
+      // runtimes exponen los SKILL.md verificados como resources (la mitad
+      // "receta" de una skill ejecutable); el PoC/spike no las tiene.
+      const capabilities = { tools: { listChanged: false } };
+      if (typeof host.listResources === "function") {
+        capabilities.resources = { listChanged: false };
+      }
       return ok(msg.id, {
         protocolVersion: PROTOCOL_VERSION,
-        capabilities: { tools: { listChanged: false } },
+        capabilities,
         serverInfo: SERVER_INFO,
       });
+    }
 
     case "notifications/initialized":
       return null;
@@ -50,6 +58,28 @@ export async function handleMcpMessageAsync(host, msg) {
     case "tools/list": {
       const tools = host.listTools();
       return ok(msg.id, { tools });
+    }
+
+    case "resources/list": {
+      if (typeof host.listResources !== "function") {
+        return err(msg.id, -32601, "Method not found: resources/list");
+      }
+      return ok(msg.id, { resources: host.listResources() });
+    }
+
+    case "resources/read": {
+      if (typeof host.readResource !== "function") {
+        return err(msg.id, -32601, "Method not found: resources/read");
+      }
+      const uri = msg.params && msg.params.uri;
+      if (typeof uri !== "string") {
+        return err(msg.id, -32602, "params.uri requerido");
+      }
+      const contents = host.readResource(uri);
+      if (contents === null) {
+        return err(msg.id, -32002, "Resource not found: " + uri);
+      }
+      return ok(msg.id, { contents });
     }
 
     case "tools/call": {

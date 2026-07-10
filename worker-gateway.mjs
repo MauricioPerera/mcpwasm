@@ -211,7 +211,7 @@ function isolateCacheGet(origin) {
   return e;
 }
 
-function isolateCachePut(origin, skills, rejected, snapshotText, verdicts) {
+function isolateCachePut(origin, skills, rejected, snapshotText, verdicts, docs) {
   if (isolateCache.size >= ISOLATE_MAX_ENTRIES) {
     const oldest = isolateCache.keys().next().value; // evict FIFO (primera clave)
     if (oldest !== undefined) isolateCache.delete(oldest);
@@ -221,6 +221,7 @@ function isolateCachePut(origin, skills, rejected, snapshotText, verdicts) {
     rejected,
     snapshotText: snapshotText || null,
     verdicts: verdicts || null, // {verdicts, counts} o null (modo off)
+    docs: docs || [], // recetas (SKILL.md verificado) -> resources
     expiresAt: Date.now() + ISOLATE_TTL_MS,
   });
 }
@@ -239,6 +240,7 @@ const DEFAULT_SIZE_CAPS = {
   attestations: 262144, // 256 KB
   snapshot: 4194304, // 4 MB
   index: 262144, // 256 KB
+  skillmd: 262144, // 256 KB — la receta (SKILL.md) servida como MCP resource
 };
 function parseSizeCap(raw, def) {
   if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) return Math.floor(raw);
@@ -256,6 +258,7 @@ function parseSizeCaps(env) {
     attestations: parseSizeCap(e.MAX_ATTESTATIONS_BYTES, DEFAULT_SIZE_CAPS.attestations),
     snapshot: parseSizeCap(e.MAX_SNAPSHOT_BYTES, DEFAULT_SIZE_CAPS.snapshot),
     index: parseSizeCap(e.MAX_INDEX_BYTES, DEFAULT_SIZE_CAPS.index),
+    skillmd: parseSizeCap(e.MAX_SKILLMD_BYTES, DEFAULT_SIZE_CAPS.skillmd),
   };
 }
 
@@ -635,7 +638,7 @@ function attestHeaderStr(counts) {
 // defensivo. code (tool.js) ya esta verificado por sha256 al poblar => el L2
 // cachea contenido post-verificacion; no se re-verifica al hidratar (igual que la
 // capa 1, que tampoco re-verifica en hit).
-function serializeDiscL2(skills, rejected, snapshotText, verdicts) {
+function serializeDiscL2(skills, rejected, snapshotText, verdicts, docs) {
   return JSON.stringify({
     kind: "gw-disc",
     v: 1,
@@ -643,6 +646,7 @@ function serializeDiscL2(skills, rejected, snapshotText, verdicts) {
     rejected,
     snapshotText: snapshotText || null,
     verdicts: verdicts || null,
+    docs: docs || [],
   });
 }
 
@@ -681,7 +685,12 @@ function parseDiscL2(raw) {
       verdicts = { verdicts: o.verdicts.verdicts, counts: o.verdicts.counts };
     }
     const snapshotText = typeof o.snapshotText === "string" ? o.snapshotText : null;
-    return { skills, rejected, snapshotText, verdicts };
+    // docs: tolerante — entradas L2 previas a esta version no lo traen => [].
+    const docs = Array.isArray(o.docs)
+      ? o.docs.filter((d) => d && typeof d === "object" && typeof d.name === "string" && typeof d.text === "string")
+          .map((d) => ({ name: d.name, description: typeof d.description === "string" ? d.description : "", text: d.text }))
+      : [];
+    return { skills, rejected, snapshotText, verdicts, docs };
   } catch {
     return null;
   }
@@ -705,6 +714,7 @@ async function discoverSkills(origin, fetchImpl, attestCtx, caps) {
       rejected: cached.rejected,
       snapshotText: cached.snapshotText,
       verdicts: cached.verdicts,
+      docs: cached.docs || [],
       discovery: "hit",
     };
   }
@@ -726,6 +736,7 @@ async function discoverSkills(origin, fetchImpl, attestCtx, caps) {
         rejected: nowCached.rejected,
         snapshotText: nowCached.snapshotText,
         verdicts: nowCached.verdicts,
+        docs: nowCached.docs || [],
         discovery: "hit",
       };
     }
@@ -745,6 +756,7 @@ async function discoverSkills(origin, fetchImpl, attestCtx, caps) {
 async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
   const rejected = [];
   const skills = [];
+  const docs = []; // recetas (SKILL.md) verificadas -> MCP resources + get_skill_guide
 
   // T40: cache L2 del RESULTADO (cross-isolate via caches.default). Se consulta
   // SOLO en el iniciador del single-flight (los waiters no llegan aqui): un solo
@@ -757,13 +769,14 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
   if (l2Raw !== null) {
     const hydrated = parseDiscL2(l2Raw);
     if (hydrated) {
-      isolateCachePut(origin, hydrated.skills, hydrated.rejected, hydrated.snapshotText, hydrated.verdicts);
+      isolateCachePut(origin, hydrated.skills, hydrated.rejected, hydrated.snapshotText, hydrated.verdicts, hydrated.docs);
       return {
         skills: hydrated.skills,
         rejected: hydrated.rejected,
         discovery: "l2",
         snapshotText: hydrated.snapshotText,
         verdicts: hydrated.verdicts,
+        docs: hydrated.docs,
       };
     }
     // malformada -> tratar como miss (caer al descubrimiento completo abajo)
@@ -899,6 +912,35 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
       code: src,
       sha256: s.sha256,
     });
+
+    // La OTRA mitad de la skill: la receta (SKILL.md). Verificada contra el
+    // sha256 declarado en la linea de llms.txt (core RFC) cuando esta presente.
+    // Fallo/mismatch => la RECETA se omite con warn; la TOOL (ya verificada por
+    // tool_sha256) carga igual — fallo controlado, mitades independientes.
+    if (typeof s.skillPath === "string" && s.skillPath !== "") {
+      let dr = null;
+      try {
+        dr = await fetchText(new URL(s.skillPath, origin).href, FETCH_TIMEOUT_MS, caps.skillmd, fetchImpl);
+      } catch (e) {
+        console.warn("[gateway] receta omitida: " + s.name + " -> fetch SKILL.md fallo: " + String((e && e.message) || e));
+      }
+      if (dr && dr.status === 200) {
+        let docOk = true;
+        if (s.skillSha256) {
+          const dh = await sha256Hex(dr.text);
+          if (dh !== s.skillSha256) {
+            docOk = false;
+            console.warn(
+              "[gateway] receta omitida: " + s.name + " -> SKILL.md sha256 mismatch (declarado " +
+                s.skillSha256.slice(0, 12) + "…, obtenido " + dh.slice(0, 12) + "…)"
+            );
+          }
+        }
+        if (docOk) docs.push({ name: s.name, description: s.description, text: dr.text });
+      } else if (dr) {
+        console.warn("[gateway] receta omitida: " + s.name + " -> SKILL.md HTTP " + dr.status);
+      }
+    }
   }
 
   // Si el origin declara memoria (format minimemory-okf-v1), se descarga el snapshot
@@ -959,15 +1001,15 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
 
   // Poblar capa 1 aunque algunas skills se hayan rechazado: las rechazadas no se
   // re-intentan en cada request caliente; el TTL refresca.
-  isolateCachePut(origin, skills, rejected, snapshotText, verdicts);
+  isolateCachePut(origin, skills, rejected, snapshotText, verdicts, docs);
 
   // T40: escribir el RESULTADO post-verificacion en el L2 (cross-isolate). Un
   // nuevo isolate (mismo deploy, misma config, mismo dia) hidrata la capa 1 desde
   // aqui y responde "l2" sin fetchar ni re-verificar. TTL 60s (mismo que capa 1).
   // El L2 nunca puede tumbar un request: cachePut ya traga errores (bypass).
-  await cachePut(l2Key, serializeDiscL2(skills, rejected, snapshotText, verdicts), DISC_L2_TTL_MS);
+  await cachePut(l2Key, serializeDiscL2(skills, rejected, snapshotText, verdicts, docs), DISC_L2_TTL_MS);
 
-  return { skills, rejected, discovery: "miss", snapshotText, verdicts };
+  return { skills, rejected, discovery: "miss", snapshotText, verdicts, docs };
 }
 
 // Cada skill se carga en su PROPIO contexto QuickJS (newContext propio => runtime
@@ -976,13 +1018,16 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
 // AsyncToolHost. Llamadas secuenciales por request (sin concurrencia entre
 // contextos) => respeta asyncify (una suspension async a la vez por modulo).
 // Dispose de TODOS los contextos al final del request (try/finally en el handler).
+const GUIDE_TOOL_NAME = "get_skill_guide";
+
 class PerSkillHost {
-  constructor({ quickjs, allowedOrigin, fetchImpl, skills, snapshotText }) {
+  constructor({ quickjs, allowedOrigin, fetchImpl, skills, snapshotText, docs }) {
     this._quickjs = quickjs;
     this._allowedOrigin = allowedOrigin;
     this._fetchImpl = fetchImpl;
     this._skills = skills; // [{name, code, ...}]
     this._snapshotText = snapshotText || null; // snapshot verificado o null
+    this._docs = new Map((docs || []).map((d) => [d.name, d])); // recetas verificadas
     this._byName = new Map(); // name -> AsyncToolHost
     this._order = []; // names en orden de carga
   }
@@ -1017,14 +1062,52 @@ class PerSkillHost {
       const tools = this._byName.get(name).listTools();
       for (const t of tools) all.push(t);
     }
+    if (this._docs.size > 0) {
+      // Tool sintetica del gateway (no sandboxeada): fallback universal para
+      // clientes MCP sin soporte de resources — devuelve la receta verificada.
+      all.push({
+        name: GUIDE_TOOL_NAME,
+        description:
+          "Return the verified SKILL.md guide (when/how to use, sequencing, constraints) " +
+          "for one of this origin's skills. Read it BEFORE composing multi-step calls. " +
+          "Available: " + [...this._docs.keys()].join(", "),
+        inputSchema: {
+          type: "object",
+          properties: { name: { type: "string", description: "skill name" } },
+          required: ["name"],
+        },
+      });
+    }
     return all;
   }
 
   // tools/call: enruta al contexto de la skill.
   async callTool(name, args) {
+    if (name === GUIDE_TOOL_NAME && this._docs.size > 0) {
+      const doc = this._docs.get(args && args.name);
+      if (!doc) throw new Error("skill sin receta disponible: " + ((args && args.name) || "(sin nombre)") + " — disponibles: " + [...this._docs.keys()].join(", "));
+      return { name: doc.name, guide: doc.text };
+    }
     const h = this._byName.get(name);
     if (!h) throw new Error("tool no encontrada: " + name);
     return await h.callTool(name, args);
+  }
+
+  // MCP resources: la receta (SKILL.md verificado en discovery) de cada skill.
+  listResources() {
+    return [...this._docs.values()].map((d) => ({
+      uri: "skill://" + d.name,
+      name: d.name + " — SKILL.md",
+      description: d.description,
+      mimeType: "text/markdown",
+    }));
+  }
+
+  readResource(uri) {
+    const m = /^skill:\/\/(.+)$/.exec(uri || "");
+    const doc = m ? this._docs.get(m[1]) : undefined;
+    if (!doc) return null;
+    return [{ uri, mimeType: "text/markdown", text: doc.text }];
   }
 
   dispose() {
@@ -1447,12 +1530,14 @@ export default {
     let snapshotText = null;
     let discovery = "none";
     let verdicts = null; // {verdicts, counts} o null (modo off)
+    let docs = []; // recetas (SKILL.md verificado) -> resources + get_skill_guide
     try {
       const discovered = await discoverSkills(origin, fetchImpl, attestCtx, caps);
       skills = discovered.skills;
       snapshotText = discovered.snapshotText || null;
       discovery = discovered.discovery;
       verdicts = discovered.verdicts || null;
+      docs = discovered.docs || [];
       for (const r of discovered.rejected) {
         console.warn("[gateway] skill rechazada: " + r.name + " -> " + r.reason);
       }
@@ -1484,6 +1569,10 @@ export default {
         }
       }
       skills = kept;
+      // La receta acompana a su skill: si la skill quedo excluida (enforcing),
+      // su SKILL.md tampoco se sirve como resource/guide.
+      const keptNames = new Set(kept.map((s) => s.name));
+      docs = docs.filter((d) => keptNames.has(d.name));
     }
 
     if (skills.length === 0) {
@@ -1519,7 +1608,7 @@ export default {
         pool.discard(slot);
         throw e;
       }
-      const host = new PerSkillHost({ quickjs, allowedOrigin: origin, fetchImpl, skills, snapshotText });
+      const host = new PerSkillHost({ quickjs, allowedOrigin: origin, fetchImpl, skills, snapshotText, docs });
       try {
         await host.init();
         response = await handleMcpMessageAsync(host, msg);

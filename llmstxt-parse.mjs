@@ -91,6 +91,11 @@ export function parseLlmsTxt(text) {
             toolPath: meta.tool,
             sha256: meta.tool_sha256,
             version: typeof meta.version === "string" ? meta.version : undefined,
+            // La OTRA mitad de la skill: la receta (SKILL.md). `url` es el enlace
+            // de la propia linea; meta.sha256 (core RFC) es su hash declarado.
+            // Los runtimes la exponen como MCP resource (resources/*).
+            skillPath: url,
+            skillSha256: typeof meta.sha256 === "string" ? meta.sha256 : undefined,
           });
         } else {
           let reason;

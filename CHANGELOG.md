@@ -6,6 +6,28 @@ are the npm publish dates. Entries describe what each published tarball ships
 relative to the previous one (verified against the actual tarballs, not just
 the git log).
 
+## [Unreleased] — 0.5.0
+
+### Added
+- **Skill recipes (SKILL.md) as MCP resources — both runtimes.** An executable
+  skill has two halves: the *recipe* (SKILL.md — when/how to use, sequencing,
+  constraints) and the *capability* (tool.js). Until now the MCP path served
+  only the capability; the recipe never reached the agent. Discovery now also
+  fetches each verified skill's SKILL.md, verifies it against the `sha256`
+  declared in the `llms.txt` line (core RFC field), and exposes it:
+  - via MCP **resources** (`resources/list` + `resources/read`,
+    `skill://<name>`, `text/markdown`) — capability advertised in
+    `initialize`;
+  - via a synthetic **`get_skill_guide`** tool (runtime-provided, not
+    sandboxed) as a universal fallback for MCP clients without resources
+    support.
+  Fetch failure / HTTP error / sha256 mismatch ⇒ the *recipe* is omitted with
+  a warning; the *tool* (independently verified by `tool_sha256`) loads
+  unaffected — the halves fail independently. Under `enforcing` attestation
+  mode, an excluded skill's recipe is excluded with it. New size cap:
+  `MAX_SKILLMD_BYTES` (default 256 KB). `parseLlmsTxt()` skills gain
+  `skillPath`/`skillSha256` (additive).
+
 ## [0.4.0] — 2026-07-10
 
 ### Added

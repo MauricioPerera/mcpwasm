@@ -125,7 +125,9 @@ same as the gateway's. **Origin memory is supported**: if the origin declares
 and `host.memorySearch` is injected — same contract as the gateway; on any
 mismatch (or if the optional `@rckflr/minimemory` engine is missing) the
 capability is simply absent and skills that call it fail closed in-sandbox.
-Trust is your choice of origin by default (no attestation required); Sigstore
+Each verified skill's `SKILL.md` recipe is served as an MCP resource and via
+the `get_skill_guide` tool (see "Skill recipes as MCP resources"). Trust is
+your choice of origin by default (no attestation required); Sigstore
 attestation verification is available opt-in via `--require-attestation`
 (below). Also cross-checks `tool_sha256` against
 `.well-known/agent-skills/index.json` when the origin publishes one (see
@@ -470,8 +472,8 @@ documents, plus `get_doc` and `list_docs`.
 ### Capability support by runtime
 
 Discovery, `tool_sha256` content-addressing, sandboxed `tool.js` execution,
-origin memory (`host.memorySearch`), and Ed25519 attestations work on **both**
-runtimes. One capability remains asymmetric, for a declared platform reason,
+origin memory (`host.memorySearch`), skill recipes as MCP resources, and
+Ed25519 attestations work on **both** runtimes. One capability remains asymmetric, for a declared platform reason,
 not a bug:
 
 | Capability | Gateway (`worker-gateway.mjs`, Workers) | Local runtime (`bin/mcpwasm-local.mjs`, Node) |
@@ -485,6 +487,33 @@ verification, where its attestation model remains Ed25519-only (platform
 limitation of Workers, documented in
 [Sigstore](#sigstore-attestations---require-attestation-local-runtime-only)
 above).
+
+## Skill recipes (SKILL.md) as MCP resources
+
+> Both runtimes. An executable skill has two halves: the **recipe**
+> (`SKILL.md` — when/how to use it, sequencing, constraints; the "recipe
+> layer" the core RFC §3.3 defines) and the **capability** (`tool.js`).
+> Serving only the tools loses the recipe — the agent gets the hammer without
+> the manual.
+
+Discovery also fetches each verified skill's `SKILL.md` and verifies it
+against the `sha256` declared in the same `llms.txt` line (core RFC field).
+Verified recipes are exposed two ways:
+
+- **MCP resources** — `resources/list` / `resources/read`, uri
+  `skill://<name>`, `text/markdown`; the capability is advertised in
+  `initialize`. The semantically correct path for clients that support it.
+- **`get_skill_guide` tool** — a synthetic, runtime-provided (not sandboxed)
+  tool returning the recipe by skill name. Universal fallback: every MCP
+  client supports tools.
+
+Failure semantics mirror everything else here, but the halves are
+**independent**: a missing/unfetchable/hash-mismatched `SKILL.md` omits the
+*recipe* (warned on stderr / console) while the *tool* — verified by its own
+`tool_sha256` — loads unaffected. Under `enforcing` attestation mode, an
+excluded skill's recipe is excluded with it. Size cap: `MAX_SKILLMD_BYTES`
+(default 256 KB). Covered by `npm run local` (verified recipe served, tampered
+recipe excluded, missing recipe tolerated).
 
 ## Skill attestations (advisory)
 
@@ -765,6 +794,7 @@ What it does **not** guarantee:
 
 | File / dir | Purpose |
 |---|---|
+| `CHANGELOG.md` | Per-release changes of the published npm package (verified against the actual tarballs). |
 | `host.mjs` | Synchronous `ToolHost`: loads `tool.js` into QuickJS-wasm, injects the `host.callInternal` capability. |
 | `host-async.mjs` | `AsyncToolHost`: asyncify variant, async handlers, `host.fetchOrigin` capability, the `extraCapabilities` bridge (`host.memorySearch`), mem/stack/gas hardening. |
 | `mcp-core.mjs` | Sync MCP JSON-RPC 2.0 core (`initialize`, `tools/list`, `tools/call`, `ping`). Transport-agnostic. |

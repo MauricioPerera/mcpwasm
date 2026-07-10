@@ -80,6 +80,27 @@ const SEARCH_TOOL = `registerTool({
   }
 });`;
 
+// Recetas (SKILL.md): sum_numbers con sha256 CORRECTO (resource servida);
+// search_mem con sha256 declarado FALSO (receta excluida, tool carga igual);
+// origin_time SIN SKILL.md servido (fetch 404 -> receta omitida, tool carga).
+const SUM_SKILL_MD = `---
+name: sum_numbers
+version: 1.0.0
+---
+
+# sum_numbers
+
+Use this to add two numbers. Always pass BOTH a and b as numbers.
+`;
+const SEARCH_SKILL_MD = `---
+name: search_mem
+---
+
+# search_mem
+
+Search before answering.
+`;
+
 // declaredMemHash es mutable a proposito: el escenario [memory-tamper] re-usa el
 // mismo server declarando un hash FALSO para el mismo snapshot servido.
 let declaredMemHash = MEM_SNAPSHOT_SHA;
@@ -89,9 +110,9 @@ function llmsTxt() {
     "# fake publisher local\n\n" +
     `<!-- skills-memory: ${JSON.stringify({ snapshot: "/mem.snapshot", snapshot_sha256: declaredMemHash, format: "minimemory-okf-v1" })} -->\n\n` +
     "## Skills\n\n" +
-    `- [sum_numbers](/skills/sum_numbers/SKILL.md): Sum two numbers. <!-- skill: ${JSON.stringify({ version: "1.0.0", tool: "/skills/sum_numbers/tool.js", tool_sha256: sha(SUM_TOOL) })} -->\n` +
+    `- [sum_numbers](/skills/sum_numbers/SKILL.md): Sum two numbers. <!-- skill: ${JSON.stringify({ version: "1.0.0", sha256: sha(SUM_SKILL_MD), tool: "/skills/sum_numbers/tool.js", tool_sha256: sha(SUM_TOOL) })} -->\n` +
     `- [origin_time](/skills/origin_time/SKILL.md): Origin time. <!-- skill: ${JSON.stringify({ version: "1.0.0", tool: "/skills/origin_time/tool.js", tool_sha256: sha(TIME_TOOL) })} -->\n` +
-    `- [search_mem](/skills/search_mem/SKILL.md): Search origin memory. <!-- skill: ${JSON.stringify({ version: "1.0.0", tool: "/skills/search_mem/tool.js", tool_sha256: sha(SEARCH_TOOL) })} -->\n` +
+    `- [search_mem](/skills/search_mem/SKILL.md): Search origin memory. <!-- skill: ${JSON.stringify({ version: "1.0.0", sha256: "1".repeat(64), tool: "/skills/search_mem/tool.js", tool_sha256: sha(SEARCH_TOOL) })} -->\n` +
     `- [corrupt](/skills/corrupt/SKILL.md): Hash roto a proposito. <!-- skill: ${JSON.stringify({ version: "1.0.0", tool: "/skills/corrupt/tool.js", tool_sha256: "0".repeat(64) })} -->\n`
   );
 }
@@ -104,6 +125,8 @@ const server = createServer((req, res) => {
   };
   if (u.pathname === "/llms.txt") return send(200, llmsTxt());
   if (u.pathname === "/skills/sum_numbers/tool.js") return send(200, SUM_TOOL, "application/javascript");
+  if (u.pathname === "/skills/sum_numbers/SKILL.md") return send(200, SUM_SKILL_MD, "text/markdown");
+  if (u.pathname === "/skills/search_mem/SKILL.md") return send(200, SEARCH_SKILL_MD, "text/markdown");
   if (u.pathname === "/skills/origin_time/tool.js") return send(200, TIME_TOOL, "application/javascript");
   if (u.pathname === "/skills/search_mem/tool.js") return send(200, SEARCH_TOOL, "application/javascript");
   if (u.pathname === "/skills/corrupt/tool.js") return send(200, CORRUPT_TOOL, "application/javascript");
@@ -225,6 +248,49 @@ try {
   console.log("[8] search_mem(paella) ->", JSON.stringify(memMiss).slice(0, 160));
   const missHits = memMiss.result && memMiss.result.structuredContent && memMiss.result.structuredContent.hits;
   check(Array.isArray(missHits) && missHits.length === 0, "search_mem: query sin relacion -> 0 hits");
+
+  // 9) Recetas (SKILL.md) como MCP resources: solo sum_numbers califica
+  //    (search_mem: sha256 declarado falso -> excluida; origin_time: 404 -> omitida).
+  send({ jsonrpc: "2.0", id: 8, method: "resources/list" });
+  const resList = JSON.parse(await nextLine());
+  console.log("[9] resources/list ->", JSON.stringify(resList).slice(0, 200));
+  const resources = (resList.result && resList.result.resources) || [];
+  check(resources.length === 1 && resources[0].uri === "skill://sum_numbers" && resources[0].mimeType === "text/markdown",
+    "resources/list: exactamente skill://sum_numbers (tamper y 404 excluidos)");
+  check(stderrLines.some((l) => /receta omitida: search_mem/.test(l) && /sha256 mismatch/.test(l)),
+    "stderr registra la receta de search_mem excluida por sha256 mismatch");
+  check(stderrLines.some((l) => /receta omitida: origin_time/.test(l)),
+    "stderr registra la receta de origin_time omitida (404)");
+
+  // 10) resources/read devuelve el markdown verificado; uri desconocida -> error JSON-RPC.
+  send({ jsonrpc: "2.0", id: 9, method: "resources/read", params: { uri: "skill://sum_numbers" } });
+  const resRead = JSON.parse(await nextLine());
+  const contents = (resRead.result && resRead.result.contents) || [];
+  check(contents.length === 1 && /Always pass BOTH a and b/.test(contents[0].text),
+    "resources/read: devuelve el SKILL.md verificado");
+  send({ jsonrpc: "2.0", id: 10, method: "resources/read", params: { uri: "skill://nope" } });
+  const resNope = JSON.parse(await nextLine());
+  check(resNope.error && resNope.error.code === -32002, "resources/read uri desconocida -> error -32002");
+
+  // 11) get_skill_guide (fallback universal por tool) listada y funcional;
+  //     pedir una skill sin receta -> isError controlado.
+  send({ jsonrpc: "2.0", id: 11, method: "tools/list" });
+  const list2 = JSON.parse(await nextLine());
+  const names2 = ((list2.result && list2.result.tools) || []).map((t) => t.name);
+  check(names2.includes("get_skill_guide"), "tools/list incluye get_skill_guide (fallback sin resources)");
+  send({ jsonrpc: "2.0", id: 12, method: "tools/call", params: { name: "get_skill_guide", arguments: { name: "sum_numbers" } } });
+  const guide = JSON.parse(await nextLine());
+  check(guide.result && guide.result.structuredContent && /Always pass BOTH a and b/.test(guide.result.structuredContent.guide),
+    "get_skill_guide(sum_numbers) devuelve la receta");
+  send({ jsonrpc: "2.0", id: 13, method: "tools/call", params: { name: "get_skill_guide", arguments: { name: "search_mem" } } });
+  const guideNo = JSON.parse(await nextLine());
+  check(guideNo.result && guideNo.result.isError === true, "get_skill_guide(skill sin receta) -> isError:true");
+
+  // 12) initialize anuncia la capability resources.
+  send({ jsonrpc: "2.0", id: 14, method: "initialize" });
+  const init2 = JSON.parse(await nextLine());
+  check(init2.result && init2.result.capabilities && init2.result.capabilities.resources,
+    "initialize anuncia capabilities.resources");
 } catch (e) {
   console.error("ERROR en test-local:", e && e.stack ? e.stack : e);
   failures++;

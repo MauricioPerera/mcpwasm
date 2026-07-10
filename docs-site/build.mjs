@@ -31,7 +31,7 @@ const sha256 = (s) => createHash("sha256").update(s, "utf8").digest("hex");
 const read = (name) => readFileSync(join(contentDir, name), "utf8");
 
 // --- Fuentes de los 4 documentos --------------------------------------------
-// master commit (2026-07-09): b60580ebe55fa196a91450950333d874b87d778b
+// master commit (2026-07-10): 3531a941c2d3cd69be2971e76e394fa64617c98e
 // ext-skill-attestations commit: abc8898a1d126e9bd0b46d13ae61b09547d4ec39
 const RAW = (branch, path) =>
   `https://raw.githubusercontent.com/MauricioPerera/llms-txt-skills/${branch}/${path}`;
@@ -64,7 +64,7 @@ const DOC_SOURCES = [
 ];
 
 const COMMIT_BY_BRANCH = {
-  master: "b60580ebe55fa196a91450950333d874b87d778b",
+  master: "3531a941c2d3cd69be2971e76e394fa64617c98e",
   "ext-skill-attestations": "abc8898a1d126e9bd0b46d13ae61b09547d4ec39",
 };
 

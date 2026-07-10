@@ -1,6 +1,6 @@
 # RFC: Publishing Agent Skills through `llms.txt`
 
-- **Status:** Draft (v0.8)
+- **Status:** Draft (v0.9)
 - **Date:** 2026-06-02
 - **Author:** automators.work
 - **Depends on:** [llmstxt.org](https://llmstxt.org/) spec, [Agent Skills](https://agentskills.io) (`SKILL.md`)
@@ -404,6 +404,12 @@ The agent:
 
    URLs in `## Skills` MAY mirror those already declared in `.well-known/agent-skills/index.json`, reusing the same artifacts without duplication. Agents that support both get redundant coverage at zero extra cost for publishers.
 
+6. **Multi-project origins (namespacing).** An origin that aggregates skills for MULTIPLE projects — e.g. a GitHub user/org ROOT site bridging several project pages, since project-page origins are not directly consumable (a URL's origin strips the path) — hits two hard limits, found empirically while aggregating two real publishers on one origin (2026-07-10):
+   - **Skill-name uniqueness.** MCP tool names must be unique per server, and runtimes key skills by name. Two projects publishing the standard knowledge skills (`search_knowledge`, `get_concept`, `list_concepts` — deliberately universal templates) collide on any shared origin.
+   - **One `skills-memory` per origin.** The origin-memory declaration is a single line per `llms.txt`, so a second project's knowledge snapshot has nowhere to go.
+
+   Candidate directions, deliberately unresolved: a `scope`/`project` field in the inline metadata that runtimes use to prefix tool names (`kdd__search_knowledge`); publisher-side name prefixes at generation time; multiple scoped `skills-memory` lines bound to skills by scope; or per-path discovery (contradicts origin-based discovery and the URL-origin model). Whatever the resolution, it must preserve content-addressing (hashes bind to bytes, so re-rooted aggregation today requires byte-identical artifacts).
+
 ---
 
 ## 9. Reference Implementation
@@ -421,6 +427,7 @@ The agent:
 
 ## 10. Changelog
 
+- **v0.9 (2026-07-10):** Added Open Question 6 (multi-project origins / namespacing), from field experience aggregating two real publishers (llms-txt-skills, KDD) on one GitHub Pages root origin: skill-name uniqueness per origin and the single `skills-memory` line make same-origin multi-project aggregation collide today; candidate directions listed, unresolved. No normative change.
 - **v0.8 (2026-06-02):** Extended §3.3 with the `n8n-skills-sdk` companion experiment — reproducing the n8n MCP's build path entirely with a published skill + `@n8n/workflow-sdk` (local parse/validate) + the REST API (no MCP): a local model builds+validates+creates the same workflows in ~3 tool calls (vs the MCP's 6–7), validation preserved, 3 tool defs in context; cross-model (8–9B succeed, 3B hits a code-writing floor).
 - **v0.7 (2026-06-02):** Added §3.3 "Skills as the recipe layer over tool discovery" positioning this RFC against tool-bloat work (Anthropic Tool Search / `defer_loading`, MCP progressive-disclosure SEP #1888, tool RAG) as the publisher-side, recipe-bearing layer those consumer/server-side mechanisms need a catalog for; added a reference POC (`evals/poc_orchestration/`) driving a live n8n MCP (25 tools) through five arms (25→1 tool defs in context), with demoshop as the simple-capability anchor.
 - **v0.6 (2026-06-02):** Added §3.2 "Relationship to `agents.txt` (the action layer)" positioning agents.txt as a complementary discovery layer and this RFC as the authenticity layer it omits; the reference generator now emits `/.well-known/agent-skills/index.json` as a superset of the agentskills.io `discovery/0.2.0` schema (`type` + `digest`) so one file serves both agents.txt/agentskills.io consumers and Tier-2 signature verifiers.

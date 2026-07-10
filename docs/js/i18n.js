@@ -118,9 +118,10 @@
       "bridge.list3__html": "Each verified skill becomes an <strong>MCP tool</strong>, and its <code>SKILL.md</code> recipe is served alongside as an MCP <strong>resource</strong> (with a <code>get_skill_guide</code> fallback) — the agent gets the manual, not just the hammer. Claude, Cursor, any MCP host list and call it like any other tool.",
       "bridge.list4__html": "On a call, mcpwasm executes that <code>tool.js</code> <strong>verbatim</strong> inside a QuickJS-wasm sandbox — no network or filesystem except the host capabilities it grants (a scoped <code>fetchOrigin</code> back to the site, and search over the site's own content). The result returns to the client.",
       "bridge.takeaway__html": "Neither side has to trust the other's prose: mcpwasm re-derives the hash and checks the signature itself. Static hosting + a verifying runtime = an MCP server with <strong>no server to run</strong>.",
+      "bridge.template__html": "Want to be the publisher side? Start from the <a href=\"https://github.com/MauricioPerera/llms-skills-template\">GitHub template</a> — a working publisher out of the box (example knowledge bundle, generated skills, validation CI) that this runtime consumes as-is.",
 
       "ecosystem.h2": "Part of a spec, not just a repo",
-      "ecosystem.lede__html": "mcpwasm is the reference implementation of two provisional extensions to the <a href=\"https://github.com/MauricioPerera/llms-txt-skills\">llms-txt-skills</a> standard: <strong>Executable Skills</strong> (v0.4, with origin memory) and <strong>Skill Attestations</strong> (v0.4). Every MUST in those specs is field-tested in this code — spec and implementation are kept in sync.",
+      "ecosystem.lede__html": "mcpwasm is the reference implementation of two provisional extensions to the <a href=\"https://github.com/MauricioPerera/llms-txt-skills\">llms-txt-skills</a> standard: <strong>Executable Skills</strong> (v0.5, with origin memory and scopes) and <strong>Skill Attestations</strong> (v0.4). Every MUST in those specs is field-tested in this code — spec and implementation are kept in sync.",
 
       "footer.onboard": "Onboard a publisher",
       "footer.license": "MIT License",
@@ -224,9 +225,10 @@
       "bridge.list3__html": "Cada skill verificada se vuelve una <strong>herramienta MCP</strong>, y su receta <code>SKILL.md</code> se sirve al lado como <strong>resource</strong> MCP (con el fallback <code>get_skill_guide</code>) — el agente recibe el manual, no solo el martillo. Claude, Cursor o cualquier host MCP la lista e invoca como cualquier otra herramienta.",
       "bridge.list4__html": "Al invocarla, mcpwasm ejecuta ese <code>tool.js</code> <strong>al pie de la letra</strong> dentro de un sandbox QuickJS-wasm — sin red ni sistema de archivos salvo las capabilities que le concede el host (un <code>fetchOrigin</code> acotado de vuelta al sitio, y búsqueda sobre el propio contenido del sitio). El resultado vuelve al cliente.",
       "bridge.takeaway__html": "Ninguna de las dos partes tiene que confiar en la prosa de la otra: mcpwasm re-deriva el hash y verifica la firma por sí mismo. Hosting estático + un runtime que verifica = un servidor MCP <strong>sin servidor que correr</strong>.",
+      "bridge.template__html": "¿Querés estar del lado publicador? Arrancá de la <a href=\"https://github.com/MauricioPerera/llms-skills-template\">plantilla de GitHub</a> — un publicador funcional desde el minuto cero (bundle de conocimiento de ejemplo, skills generadas, CI de validación) que este runtime consume tal cual.",
 
       "ecosystem.h2": "Parte de una spec, no solo un repo",
-      "ecosystem.lede__html": "mcpwasm es la implementación de referencia de dos extensiones provisionales del estándar <a href=\"https://github.com/MauricioPerera/llms-txt-skills\">llms-txt-skills</a>: <strong>Executable Skills</strong> (v0.4, con memoria de origin) y <strong>Skill Attestations</strong> (v0.4). Cada MUST de esas specs está probado en este código — spec e implementación se mantienen sincronizadas.",
+      "ecosystem.lede__html": "mcpwasm es la implementación de referencia de dos extensiones provisionales del estándar <a href=\"https://github.com/MauricioPerera/llms-txt-skills\">llms-txt-skills</a>: <strong>Executable Skills</strong> (v0.5, con memoria de origin y scopes) y <strong>Skill Attestations</strong> (v0.4). Cada MUST de esas specs está probado en este código — spec e implementación se mantienen sincronizadas.",
 
       "footer.onboard": "Sumar un publisher",
       "footer.license": "Licencia MIT",
@@ -330,9 +332,10 @@
       "bridge.list3__html": "Cada skill verificada vira uma <strong>ferramenta MCP</strong>, e sua receita <code>SKILL.md</code> é servida ao lado como <strong>resource</strong> MCP (com o fallback <code>get_skill_guide</code>) — o agente recebe o manual, não só o martelo. Claude, Cursor ou qualquer host MCP a lista e chama como qualquer outra ferramenta.",
       "bridge.list4__html": "Ao chamá-la, mcpwasm executa esse <code>tool.js</code> <strong>ao pé da letra</strong> dentro de um sandbox QuickJS-wasm — sem rede nem sistema de arquivos exceto as capabilities que o host concede (um <code>fetchOrigin</code> restrito de volta ao site, e busca sobre o próprio conteúdo do site). O resultado volta ao cliente.",
       "bridge.takeaway__html": "Nenhum dos lados precisa confiar na prosa do outro: mcpwasm re-deriva o hash e verifica a assinatura por conta própria. Hospedagem estática + um runtime que verifica = um servidor MCP <strong>sem servidor para rodar</strong>.",
+      "bridge.template__html": "Quer estar do lado publicador? Comece pelo <a href=\"https://github.com/MauricioPerera/llms-skills-template\">template do GitHub</a> — um publicador funcional desde o primeiro minuto (bundle de conhecimento de exemplo, skills geradas, CI de validação) que este runtime consome como está.",
 
       "ecosystem.h2": "Parte de uma spec, não só um repositório",
-      "ecosystem.lede__html": "mcpwasm é a implementação de referência de duas extensões provisórias do padrão <a href=\"https://github.com/MauricioPerera/llms-txt-skills\">llms-txt-skills</a>: <strong>Executable Skills</strong> (v0.4, com memória de origin) e <strong>Skill Attestations</strong> (v0.4). Todo MUST dessas specs é testado neste código — spec e implementação se mantêm sincronizadas.",
+      "ecosystem.lede__html": "mcpwasm é a implementação de referência de duas extensões provisórias do padrão <a href=\"https://github.com/MauricioPerera/llms-txt-skills\">llms-txt-skills</a>: <strong>Executable Skills</strong> (v0.5, com memória de origin e scopes) e <strong>Skill Attestations</strong> (v0.4). Todo MUST dessas specs é testado neste código — spec e implementação se mantêm sincronizadas.",
 
       "footer.onboard": "Cadastrar um publisher",
       "footer.license": "Licença MIT",

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mcpwasm-web — verified tools from any static site, in your browser</title>
+<meta name="description" content="Live demo: the mcpwasm runtime running entirely in your browser tab — discovery, SHA-256 verification, QuickJS-wasm sandboxing. No server, no Node.">
+<style>
+  :root { --bg:#0b0e14; --panel:#131826; --border:#232a3d; --text:#e6e9f0; --dim:#8b93a7; --acc:#4fc08d; --warn:#e0a458; --err:#e06c75; --code:#1a2032; }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f6f7fa; --panel:#ffffff; --border:#dde1ea; --text:#1a2032; --dim:#5b6478; --code:#eef1f7; }
+  }
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--text); font:15px/1.55 system-ui,-apple-system,Segoe UI,sans-serif; padding:2rem 1rem 4rem; }
+  .wrap { max-width:880px; margin:0 auto; }
+  h1 { font-size:1.5rem; margin-bottom:.4rem; }
+  .lede { color:var(--dim); margin-bottom:1.4rem; }
+  .lede a { color:var(--acc); }
+  .row { display:flex; gap:.6rem; margin-bottom:1rem; flex-wrap:wrap; }
+  input[type=url] { flex:1; min-width:260px; padding:.6rem .8rem; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text); font-size:.95rem; }
+  button { padding:.6rem 1.1rem; border-radius:8px; border:1px solid var(--acc); background:var(--acc); color:#0b0e14; font-weight:600; cursor:pointer; font-size:.95rem; }
+  button:disabled { opacity:.5; cursor:wait; }
+  button.ghost { background:transparent; color:var(--acc); }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:1rem; margin-bottom:1rem; }
+  .panel h2 { font-size:.8rem; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin-bottom:.6rem; }
+  #log { font:12.5px/1.6 ui-monospace,Consolas,monospace; white-space:pre-wrap; max-height:220px; overflow-y:auto; }
+  #log .ok { color:var(--acc); } #log .warn { color:var(--warn); } #log .err { color:var(--err); }
+  .tool { border:1px solid var(--border); border-radius:8px; padding:.7rem .9rem; margin-bottom:.6rem; }
+  .tool b { font:600 .95rem ui-monospace,Consolas,monospace; }
+  .tool .sha { color:var(--dim); font:11px ui-monospace,monospace; word-break:break-all; }
+  .tool p { color:var(--dim); font-size:.85rem; margin:.25rem 0 .5rem; }
+  .tool .call { display:flex; gap:.5rem; flex-wrap:wrap; }
+  .tool input { flex:1; min-width:180px; padding:.4rem .6rem; border-radius:6px; border:1px solid var(--border); background:var(--code); color:var(--text); font:12.5px ui-monospace,monospace; }
+  .tool button { padding:.4rem .9rem; font-size:.85rem; }
+  #result { font:12.5px/1.55 ui-monospace,Consolas,monospace; white-space:pre-wrap; max-height:340px; overflow-y:auto; background:var(--code); border-radius:8px; padding:.8rem; }
+  .foot { color:var(--dim); font-size:.8rem; margin-top:1.5rem; }
+  .foot a { color:var(--acc); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Any static site → verified tools, in <em>this tab</em></h1>
+  <p class="lede">
+    This is the <a href="https://github.com/MauricioPerera/mcpwasm">mcpwasm</a> runtime compiled
+    for the browser: it fetches a site's <code>llms.txt</code>
+    (<a href="https://mauricioperera.github.io/llms-txt-skills/">llms-txt-skills</a> standard),
+    <strong>verifies every byte against the declared SHA-256 hashes</strong>, and runs each tool
+    in a QuickJS-WebAssembly sandbox. No server on the publisher side. No Node on yours.
+    Everything below happens in your tab — watch the verification log.
+  </p>
+
+  <div class="row">
+    <input id="origin" type="url" value="https://mauricioperera.github.io" spellcheck="false">
+    <button id="connect">Discover &amp; verify</button>
+  </div>
+
+  <div class="panel"><h2>Verification log</h2><div id="log">(idle — click Discover &amp; verify)</div></div>
+  <div class="panel" id="toolsPanel" hidden><h2>Verified tools</h2><div id="tools"></div></div>
+  <div class="panel" id="resultPanel" hidden><h2>Result</h2><div id="result"></div></div>
+
+  <p class="foot">
+    The origin must serve CORS (GitHub Pages does). Publish your own in minutes with the
+    <a href="https://github.com/MauricioPerera/llms-skills-template">template</a>.
+    Same trust model as <code>npx -y @rckflr/mcpwasm &lt;origin&gt;</code> — this page just removes Node from the equation.
+  </p>
+</div>
+
+<script type="module">
+import { connectStaticSkills, minimemoryInitSync, WasmOkfIndex } from "./mcpwasm-web.js";
+
+const $ = (id) => document.getElementById(id);
+const logEl = $("log");
+let skills = null;
+
+function log(line) {
+  const div = document.createElement("div");
+  div.textContent = line;
+  if (/verificad|verified|inyectada|listo:/.test(line)) div.className = "ok";
+  else if (/rechazada|mismatch|omitida|ausente/.test(line)) div.className = "warn";
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function argHint(schema) {
+  const props = (schema && schema.properties) || {};
+  const keys = Object.keys(props);
+  if (!keys.length) return "";
+  return JSON.stringify(Object.fromEntries(keys.map((k) => [k, props[k].type === "number" ? 0 : ""])));
+}
+
+async function callTool(name, rawArgs) {
+  $("resultPanel").hidden = false;
+  $("result").textContent = "running (sandboxed)…";
+  try {
+    const args = rawArgs.trim() ? JSON.parse(rawArgs) : {};
+    const out = await skills.callTool(name, args);
+    $("result").textContent = `${name}(${rawArgs.trim() || ""}) →\n\n` + JSON.stringify(out, null, 2);
+  } catch (e) {
+    $("result").textContent = `${name} ERROR: ${e.message || e}`;
+  }
+}
+
+$("connect").addEventListener("click", async () => {
+  const btn = $("connect");
+  btn.disabled = true;
+  logEl.textContent = "";
+  $("toolsPanel").hidden = true;
+  try {
+    skills?.dispose();
+    skills = await connectStaticSkills($("origin").value.trim(), {
+      quickjsWasm: "./emscripten-module.wasm",
+      minimemoryWasm: "./minimemory_bg.wasm",
+      minimemoryInit: (bytes) => { minimemoryInitSync({ module: bytes }); return WasmOkfIndex; },
+      onLog: log,
+    });
+    const toolsEl = $("tools");
+    toolsEl.innerHTML = "";
+    for (const t of skills.tools) {
+      const d = document.createElement("div");
+      d.className = "tool";
+      const hint = argHint(t.inputSchema);
+      d.innerHTML = `<b></b> <div class="sha"></div><p></p>
+        <div class="call"><input spellcheck="false" placeholder='{"arg": "value"}'><button>Call</button></div>`;
+      d.querySelector("b").textContent = t.name;
+      d.querySelector(".sha").textContent = "tool_sha256 verified: " + t.verified_sha256;
+      d.querySelector("p").textContent = t.description;
+      const input = d.querySelector("input");
+      input.value = hint;
+      d.querySelector("button").addEventListener("click", () => callTool(t.name, input.value));
+      toolsEl.appendChild(d);
+    }
+    $("toolsPanel").hidden = false;
+  } catch (e) {
+    const div = document.createElement("div");
+    div.className = "err";
+    div.textContent = "ERROR: " + (e.message || e);
+    logEl.appendChild(div);
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

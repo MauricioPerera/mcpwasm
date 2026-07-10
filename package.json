@@ -1,6 +1,6 @@
 {
   "name": "@rckflr/mcpwasm",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Static MCP host: run untrusted MCP tool.js files sandboxed in QuickJS-wasm (Cloudflare Workers or Node), with explicit host capabilities (fetchOrigin, callInternal, extraCapabilities) and llms.txt executable-skills parsing.",
   "type": "module",
   "license": "MIT",
@@ -39,7 +39,8 @@
     "./mcp-core-async": "./mcp-core-async.mjs",
     "./llmstxt-parse": "./llmstxt-parse.mjs",
     "./sigstore-attest": "./sigstore-attest.mjs",
-    "./shim": "./shim.mjs"
+    "./shim": "./shim.mjs",
+    "./web": "./web/mcpwasm-web.mjs"
   },
   "files": [
     "CHANGELOG.md",
@@ -51,7 +52,8 @@
     "mcp-core-async.mjs",
     "llmstxt-parse.mjs",
     "sigstore-attest.mjs",
-    "shim.mjs"
+    "shim.mjs",
+    "web/mcpwasm-web.mjs"
   ],
   "publishConfig": {
     "access": "public"
@@ -64,7 +66,9 @@
     "gateway:offline": "node build-gateway.mjs && node mf-gateway.mjs --offline",
     "memspike": "node build-memsnapshot.mjs && node build-memspike.mjs && node mf-memspike.mjs",
     "local": "node test-local.mjs",
-    "validate-publisher": "node scripts/validate-publisher.mjs"
+    "validate-publisher": "node scripts/validate-publisher.mjs",
+    "build:web": "node web/build.mjs",
+    "test:web": "node test-web.mjs"
   },
   "dependencies": {
     "@jitl/quickjs-wasmfile-release-asyncify": "^0.32.0",

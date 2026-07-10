@@ -27,6 +27,8 @@ jobs:
         run: npm run gateway:offline
       - name: Run local runtime suite
         run: npm run local
+      - name: Web runtime smoke (same code the browser runs)
+        run: npm run test:web
 
   prod-integration:
     runs-on: ubuntu-latest

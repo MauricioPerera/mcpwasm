@@ -488,6 +488,44 @@ limitation of Workers, documented in
 [Sigstore](#sigstore-attestations---require-attestation-local-runtime-only)
 above).
 
+## Browser runtime (`mcpwasm-web`)
+
+> The third runtime, since 0.7.0. **Live demo:**
+> <https://mauricioperera.github.io/mcpwasm/demo/> — same trust model as the
+> local runtime, with Node removed from the equation.
+
+The whole consumer side runs in a browser tab: discovery, byte-for-byte
+SHA-256 verification (`crypto.subtle`), one QuickJS-wasm sandbox per verified
+tool, scopes, per-scope origin memory and verified SKILL.md recipes. The
+publisher only needs CORS (GitHub Pages already serves
+`Access-Control-Allow-Origin: *`).
+
+```js
+import { connectStaticSkills } from "@rckflr/mcpwasm/web";
+
+const skills = await connectStaticSkills("https://mauricioperera.github.io", {
+  quickjsWasm: "./emscripten-module.wasm",   // URL, bytes or WebAssembly.Module
+  // optional BM25 memory:
+  minimemoryWasm: "./minimemory_bg.wasm",
+  minimemoryInit: (bytes) => { initSync({ module: bytes }); return WasmOkfIndex; },
+  onLog: console.log,
+});
+skills.tools;                                  // verified, scope-renamed
+await skills.callTool("search_knowledge", { q: "how do I publish?" });
+skills.recipes;                                // verified SKILL.md per tool
+```
+
+Bundle it with any bundler (`esbuild --bundle --platform=browser`) and serve
+the two wasm files next to it — `npm run build:web` does exactly that into
+`docs/demo/`. The module is environment-agnostic: the same code runs in
+Node 20+, which is how CI smoke-tests it (`npm run test:web`, hermetic local
+publisher).
+
+This enables fully serverless agent stacks in the browser — e.g. a
+[wasm-agents](https://github.com/mozilla-ai/wasm-agents-blueprint)-style
+HTML agent whose tools are verified static skills: no server, no Node,
+nothing to install on either side.
+
 ## Scopes — multiple projects on one origin
 
 > Spec: §2.5 of

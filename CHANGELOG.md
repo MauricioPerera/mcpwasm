@@ -6,6 +6,29 @@ are the npm publish dates. Entries describe what each published tarball ships
 relative to the previous one (verified against the actual tarballs, not just
 the git log).
 
+## [Unreleased] — 0.7.0
+
+### Added
+- **Browser runtime (`mcpwasm-web`) — the THIRD runtime.** The same contract
+  as the local runtime and the gateway, running entirely in a browser tab:
+  discovery from `llms.txt`, byte-for-byte SHA-256 verification
+  (`crypto.subtle`), one QuickJS-wasm sandbox per verified tool, scopes
+  (`<scope>__<name>`), per-scope origin memory (minimemory wasm, optional)
+  and verified SKILL.md recipes. **No server on the publisher side, no Node
+  on the consumer side** — the publisher only needs CORS (GitHub Pages
+  already sends `Access-Control-Allow-Origin: *`).
+  - Importable as **`@rckflr/mcpwasm/web`** (`connectStaticSkills(origin,
+    opts)`; `quickjsWasm` accepts a URL, bytes, or a compiled
+    `WebAssembly.Module`). Environment-agnostic by construction: the exact
+    same module runs in Node 20+, which is how CI exercises it
+    (`test-web.mjs`, hermetic fake publisher, no external network).
+  - **Live demo** at `docs/demo/` (served by the project's GitHub Pages):
+    point it at any CORS-enabled origin, watch the verification log, call
+    the verified tools from the page. `npm run build:web` regenerates the
+    bundle (esbuild via npx, no permanent dependency).
+  - Memory hits keep runtime parity: `{ text, score, title, concept_id }`,
+    args as `[q, k]` or `{q, k}` — same shape as local/gateway.
+
 ## [0.6.0] — 2026-07-10
 
 ### Added

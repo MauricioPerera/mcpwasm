@@ -28,10 +28,14 @@
 // Reglas de canal: stdout es EXCLUSIVO del protocolo MCP; todo diagnostico
 // (skills cargadas/rechazadas, errores de descubrimiento) sale por stderr.
 //
-// Limites v1, explicitos:
-//  - Sin origin-memory: host.memorySearch NO se inyecta aunque el origin
-//    declare skills-memory (conforme a la spec: capability ausente => la skill
-//    que la use falla controlado dentro del sandbox, isError:true).
+// Limites, explicitos:
+//  - Origin-memory: si el origin declara skills-memory (format minimemory-okf-v1),
+//    el snapshot se descarga, se verifica sha256 contra snapshot_sha256 y, solo si
+//    coincide, se inyecta host.memorySearch en todas las skills (mismo contrato que
+//    el gateway). Mismatch / fetch fallido / format desconocido / engine ausente =>
+//    capability NO inyectada y la skill que la use falla controlado (isError:true).
+//    El engine (@rckflr/minimemory) es una optionalDependency: npx la instala por
+//    defecto; si falta, el runtime lo dice por stderr y sigue sin memoria.
 //  - Sin atestaciones: en el runtime local la decision de confianza es del
 //    usuario que ELIGE el origin; la verificacion sha256 sigue siendo MUST.
 //  - Descubrimiento UNA vez al arrancar (proceso local efimero): reiniciar el
@@ -43,6 +47,7 @@
 import { createInterface } from "node:readline";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import path from "node:path";
 import { newQuickJSAsyncWASMModuleFromVariant, newVariant } from "quickjs-emscripten-core";
@@ -57,6 +62,7 @@ const MAX_LLMS_BYTES = 262144; // 256 KB (mismos defaults que el gateway)
 const MAX_TOOL_BYTES = 1048576; // 1 MB
 const MAX_INDEX_BYTES = 262144; // 256 KB (mismo default que el gateway)
 const MAX_ATTESTATIONS_BYTES = 262144; // 256 KB (mismo default que el gateway)
+const MAX_SNAPSHOT_BYTES = 4194304; // 4 MB (mismo default que el gateway)
 const FETCH_TIMEOUT_MS = 10000;
 
 function err(msg) {
@@ -285,8 +291,82 @@ async function fetchAttestations() {
   }
 }
 
+// ---- origin memory (Executable Skills v0.4 §2.4) ---------------------------
+// Engine BM25 (@rckflr/minimemory, wasm). optionalDependency: import perezoso;
+// si no esta instalada, se degrada a "sin memoria" con aviso por stderr (la
+// capability queda ausente y las skills que la usen fallan controlado).
+async function loadMemoryEngine() {
+  try {
+    const require = createRequire(import.meta.url);
+    const mod = await import("@rckflr/minimemory");
+    mod.initSync({ module: readFileSync(require.resolve("@rckflr/minimemory/minimemory_bg.wasm")) });
+    return mod;
+  } catch (e) {
+    err("origin-memory: engine @rckflr/minimemory no disponible (" + String((e && e.message) || e).slice(0, 120) + ")");
+    return null;
+  }
+}
+
+// Puente raw-JSON asyncified (extraCapabilities de AsyncToolHost) — mismo
+// contrato que el gateway: acepta ["<q>",k] | [{q,k}] | ["<q>"] (k default 5,
+// acotado a [1,10]); devuelve {hits:[{text,score,title,concept_id}]} o {error}.
+// El indice se construye UNA vez por proceso desde el snapshot YA verificado
+// (inmutable; el proceso local es efimero, el equivalente del "per request"
+// del gateway).
+function makeMemorySearch(mem, snapshotText) {
+  let idx = null;
+  return async function memorySearch(argsJson) {
+    let q = null;
+    let k = 5;
+    try {
+      const parsed = JSON.parse(argsJson);
+      let first = parsed;
+      let second = undefined;
+      if (Array.isArray(parsed)) {
+        first = parsed[0];
+        second = parsed[1];
+      }
+      if (typeof first === "string") {
+        q = first;
+        if (typeof second === "number" && Number.isFinite(second)) k = Math.floor(second);
+      } else if (first && typeof first === "object") {
+        if (typeof first.q === "string") q = first.q;
+        if (typeof first.k === "number" && Number.isFinite(first.k)) k = Math.floor(first.k);
+        if (typeof second === "number" && Number.isFinite(second)) k = Math.floor(second);
+      }
+    } catch {
+      return JSON.stringify({ error: "memorySearch: args JSON invalido" });
+    }
+    if (typeof q !== "string" || q.trim().length === 0) {
+      return JSON.stringify({ error: "memorySearch: query (q) string obligatorio" });
+    }
+    if (k < 1) k = 1;
+    else if (k > 10) k = 10;
+    try {
+      if (!idx) {
+        idx = new mem.WasmOkfIndex();
+        idx.import_snapshot(snapshotText);
+      }
+      const hits = JSON.parse(idx.search(q, k, null));
+      const out = hits.map(function (h) {
+        return {
+          text: typeof h.snippet === "string" ? h.snippet : "",
+          score: h.score,
+          title: typeof h.title === "string" ? h.title : (typeof h.concept_id === "string" ? h.concept_id : ""),
+          concept_id: typeof h.concept_id === "string" ? h.concept_id : "",
+        };
+      });
+      return JSON.stringify({ hits: out });
+    } catch (e) {
+      return JSON.stringify({ error: "memorySearch: " + ((e && e.message) ? e.message : String(e)) });
+    }
+  };
+}
+
 // Descubrimiento: llms.txt -> skills ejecutables -> fetch + verify sha256.
 // Mismatch/HTTP != 200/cap excedido => skill rechazada (stderr), las demas cargan.
+// Devuelve { skills, snapshotText }: snapshotText es el snapshot de origin-memory
+// YA verificado contra snapshot_sha256, o null (sin memoria / verify fallo).
 async function discover() {
   const r = await fetchText(origin + "/llms.txt", MAX_LLMS_BYTES);
   if (r.status !== 200) {
@@ -307,8 +387,41 @@ async function discover() {
       : "";
     throw new Error("llms.txt sin skills ejecutables (lineas <!-- skill: {...} -->)" + proseNote);
   }
-  if (memory) {
-    err("origin declara skills-memory: NO soportada en el runtime local v1 -> host.memorySearch ausente (las skills que la usen fallan controlado)");
+  // Origin memory: descargar el snapshot y verificar sha256 contra snapshot_sha256.
+  // Solo si coincide se devuelve el texto (la capability se inyecta en start()).
+  // Mismatch / fetch fallido / HTTP != 200 / format desconocido => snapshotText
+  // null: las skills se listan igual y las que usen memorySearch fallan controlado
+  // (host.memorySearch undefined -> throw dentro del sandbox -> isError:true).
+  let snapshotText = null;
+  if (
+    memory &&
+    !memory.unsupported &&
+    typeof memory.snapshot === "string" &&
+    typeof memory.snapshot_sha256 === "string"
+  ) {
+    const snapUrl = new URL(memory.snapshot, origin).href;
+    let snapResp = null;
+    try {
+      snapResp = await fetchText(snapUrl, MAX_SNAPSHOT_BYTES);
+    } catch (e) {
+      err("origin-memory: snapshot fetch fallo: " + String((e && e.message) || e) + " -> memory NO inyectada");
+    }
+    if (snapResp && snapResp.status === 200) {
+      const snapHash = sha256Hex(snapResp.text);
+      if (snapHash === memory.snapshot_sha256) {
+        snapshotText = snapResp.text;
+      } else {
+        err(
+          "origin-memory: snapshot sha256 mismatch (declarado " +
+            memory.snapshot_sha256.slice(0, 12) + "…, obtenido " + snapHash.slice(0, 12) +
+            "…) -> memory NO inyectada (las skills se listan, memorySearch falla controlado)"
+        );
+      }
+    } else if (snapResp) {
+      err("origin-memory: snapshot HTTP " + snapResp.status + " -> memory NO inyectada");
+    }
+  } else if (memory && memory.unsupported) {
+    err("origin-memory: format desconocido '" + memory.format + "' -> memory NO inyectada");
   }
 
   const agentIndex = await fetchAgentSkillsIndex();
@@ -391,7 +504,7 @@ async function discover() {
   if (verified.length === 0) {
     throw new Error("ninguna skill verificada para " + origin);
   }
-  return verified;
+  return { skills: verified, snapshotText };
 }
 
 // Un contexto QuickJS por skill (aislamiento tool<->tool, como el gateway),
@@ -399,16 +512,21 @@ async function discover() {
 // las requests EN SERIE (cola de promesas) => nunca hay dos suspensiones
 // asyncify simultaneas sobre el mismo modulo.
 class LocalPerSkillHost {
-  constructor(quickjs, skills) {
+  constructor(quickjs, skills, extraCapabilities) {
     this._quickjs = quickjs;
     this._skills = skills;
+    this._extraCapabilities = extraCapabilities || undefined;
     this._byName = new Map();
     this._order = [];
   }
 
   async init() {
     for (const s of this._skills) {
-      const h = new AsyncToolHost({ quickjs: this._quickjs, allowedOrigin: origin });
+      const h = new AsyncToolHost({
+        quickjs: this._quickjs,
+        allowedOrigin: origin,
+        extraCapabilities: this._extraCapabilities,
+      });
       await h.init();
       h.loadToolSource(s.code);
       this._byName.set(s.name, h);
@@ -451,9 +569,22 @@ async function start() {
     err("sirviendo " + path.resolve(serveDir) + " en " + origin + " (solo 127.0.0.1, no expuesto a la red)");
   }
   err("descubriendo skills de " + origin + " …");
-  const skills = await discover();
+  const { skills, snapshotText } = await discover();
+
+  // Origin memory: con snapshot verificado, cargar el engine e inyectar
+  // host.memorySearch en TODAS las skills (misma closure, como el gateway).
+  // Engine ausente => se degrada a "sin memoria" (ya avisado por stderr).
+  let extraCaps = undefined;
+  if (snapshotText !== null) {
+    const mem = await loadMemoryEngine();
+    if (mem) {
+      extraCaps = { memorySearch: makeMemorySearch(mem, snapshotText) };
+      err("origin-memory: snapshot verificado -> host.memorySearch inyectada");
+    }
+  }
+
   const quickjs = await newQuickJSAsyncWASMModuleFromVariant(newVariant(baseAsyncifyVariant, {}));
-  host = new LocalPerSkillHost(quickjs, skills);
+  host = new LocalPerSkillHost(quickjs, skills, extraCaps);
   await host.init();
   err("listo: " + skills.length + " skill(s) verificadas y cargadas (" + skills.map((s) => s.name).join(", ") + ")");
 }

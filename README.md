@@ -54,7 +54,7 @@ other ways to use mcpwasm are for when you specifically need them: the **hosted
 gateway** (multi-tenant, on Cloudflare Workers — serves many origins behind one
 endpoint, with an onboarding step per origin) and the **embeddable library**
 (`@rckflr/mcpwasm` — for building your own host). Both are documented below;
-the local runtime above needs none of it. Its honest v1 limits and the
+the local runtime above needs none of it. Its honest limits and the
 `index.json`/attestation options are detailed under
 "[Local MCP runtime](#local-mcp-runtime--no-gateway-at-all)".
 
@@ -117,16 +117,21 @@ MCP client configuration (Claude Code, Cursor, …):
 }
 ```
 
-Honest v1 limits (stated in `bin/mcpwasm-local.mjs`): no origin memory
-(`host.memorySearch` is absent; skills that call it fail controlled, which the
-spec allows), and discovery runs once per process (restart to refresh). Hash
-verification and the sandbox model (per-skill contexts, origin-scoped
-`fetchOrigin`, resource limits) are the same as the gateway's. Trust is your
-choice of origin by default (no attestation required); Sigstore attestation
-verification is available opt-in via `--require-attestation` (below). Also
-cross-checks `tool_sha256` against `.well-known/agent-skills/index.json` when
-the origin publishes one (see "Cross-checking against index.json"). Tested by
-`npm run local` (hermetic, localhost-only; part of the CI gate).
+Honest limits (stated in `bin/mcpwasm-local.mjs`): discovery runs once per
+process (restart to refresh). Hash verification and the sandbox model
+(per-skill contexts, origin-scoped `fetchOrigin`, resource limits) are the
+same as the gateway's. **Origin memory is supported**: if the origin declares
+`skills-memory`, the snapshot is fetched, verified against `snapshot_sha256`,
+and `host.memorySearch` is injected — same contract as the gateway; on any
+mismatch (or if the optional `@rckflr/minimemory` engine is missing) the
+capability is simply absent and skills that call it fail closed in-sandbox.
+Trust is your choice of origin by default (no attestation required); Sigstore
+attestation verification is available opt-in via `--require-attestation`
+(below). Also cross-checks `tool_sha256` against
+`.well-known/agent-skills/index.json` when the origin publishes one (see
+"Cross-checking against index.json"). Tested by `npm run local` (hermetic,
+localhost-only; part of the CI gate — including verified-snapshot search and
+the tampered-snapshot fail-closed path).
 
 #### Cross-checking against `index.json`
 
@@ -148,8 +153,8 @@ a `tool_sha256` mismatch against the fetched `tool.js` itself. Absence of
 > public API. Cloudflare Workers has no filesystem, so Sigstore verification
 > **only runs in the local Node runtime** (`bin/mcpwasm-local.mjs`) — the
 > gateway's attestation model remains the pre-registered-key Ed25519 scheme
-> above, unaffected. This is the mirror image of origin memory, which is
-> gateway-only; see [Capability support by runtime](#capability-support-by-runtime).
+> above, unaffected. This is the one capability asymmetry between the two
+> runtimes; see [Capability support by runtime](#capability-support-by-runtime).
 
 The Ed25519 model (above) requires pre-registering every reviewer's public
 key — a real bottleneck (today, only the maintainer is registered). Sigstore
@@ -414,13 +419,14 @@ registerTool({
 > Spec: *origin memory* in
 > [Executable Skills v0.4](https://github.com/MauricioPerera/llms-txt-skills/blob/master/docs/ext-executable-skills.md).
 
-> **Gateway only.** Origin memory runs in the **gateway** (`worker-gateway.mjs`).
-> The **local runtime** (`bin/mcpwasm-local.mjs`) does not implement it: if an
-> origin declares a `skills-memory` line, the local runtime logs that it is
-> unsupported and leaves `host.memorySearch` **absent** — spec-conformant, a
-> skill that calls it fails closed inside the sandbox (`isError: true`), it is
-> not a crash. This mirrors the Sigstore limitation in the opposite direction
-> (Sigstore is local-only); see [Capability support by runtime](#capability-support-by-runtime).
+> **Both runtimes.** Origin memory runs in the **gateway**
+> (`worker-gateway.mjs`) and in the **local runtime** (`bin/mcpwasm-local.mjs`),
+> with the same contract: snapshot fetched, verified against `snapshot_sha256`,
+> and only then is `host.memorySearch` injected. In the local runtime the BM25
+> engine (`@rckflr/minimemory`) is an **optionalDependency** — installed by
+> default with `npx`/`npm install`; if it is missing, the runtime says so on
+> stderr and degrades to "no memory" (capability absent, skills that call it
+> fail closed in-sandbox — spec-conformant, not a crash).
 
 A publisher that wants its skills to search over its own static content (docs,
 catalog text, any corpus) declares a memory snapshot with a single HTML comment
@@ -437,19 +443,19 @@ parser):
 - `snapshot` is a path (relative to the origin) to a BM25 snapshot in the
   `minimemory-okf-v1` format (built by the [`@rckflr/minimemory`](https://www.npmjs.com/package/@rckflr/minimemory)
   engine; the wasm binary ships as `minimemory_bg.wasm`).
-- `snapshot_sha256` is the hex SHA-256 of the snapshot bytes. The gateway
-  downloads the snapshot and **verifies it against this hash before injecting
+- `snapshot_sha256` is the hex SHA-256 of the snapshot bytes. Both runtimes
+  download the snapshot and **verify it against this hash before injecting
   the capability** — same content-addressing rule as `tool.js`. On mismatch,
   fetch failure, non-200, or an unsupported `format`, the snapshot is discarded
   and **the capability is not injected**.
-- When the snapshot verifies, the gateway injects
+- When the snapshot verifies, the runtime injects
   `host.memorySearch(query, k?)` into every skill of that origin (via the
   `extraCapabilities` bridge in `AsyncToolHost`, same raw-JSON asyncify pattern
   as `host.fetchOrigin`). `k` defaults to 5 and is clamped to `[1, 10]`. It
   returns `{ hits: [{ text, score, title, concept_id }] }` (or `{ error }`).
 - Without a verified snapshot the capability is absent: a skill that calls
   `host.memorySearch` sees `undefined` and throws **inside the sandbox**,
-  surfacing as `isError: true` (controlled failure, not a gateway crash). The
+  surfacing as `isError: true` (controlled failure, not a runtime crash). The
   skills still list — only the memory capability is missing.
 
 The reference publisher is the docs-site (see "Repository layout"): it serves
@@ -459,22 +465,22 @@ documents, plus `get_doc` and `list_docs`.
 
 ### Capability support by runtime
 
-Discovery, `tool_sha256` content-addressing, sandboxed `tool.js` execution, and
-Ed25519 attestations work on **both** runtimes. Two capabilities are asymmetric
-— each supported on exactly one runtime, and each for a declared platform reason,
-not a bug. They are mirror images of each other:
+Discovery, `tool_sha256` content-addressing, sandboxed `tool.js` execution,
+origin memory (`host.memorySearch`), and Ed25519 attestations work on **both**
+runtimes. One capability remains asymmetric, for a declared platform reason,
+not a bug:
 
 | Capability | Gateway (`worker-gateway.mjs`, Workers) | Local runtime (`bin/mcpwasm-local.mjs`, Node) |
 | :--- | :---: | :---: |
-| Origin memory — `host.memorySearch` | ✅ full | ❌ not in v1 — capability absent, skills that call it fail closed in-sandbox (spec-conformant) |
+| Origin memory — `host.memorySearch` | ✅ full | ✅ full (engine is an optionalDependency; if missing, degrades to capability-absent) |
 | Sigstore (keyless) attestations | ❌ Workers has no `node:fs` for `@sigstore/tuf`'s trust-root cache | ✅ `--require-attestation` |
 
-Consequence: no single runtime provides **both** origin memory and Sigstore
-verification today. The gateway gives you memory but its attestation model is
-Ed25519-only; the local runtime gives you Sigstore but no memory. Closing either
-gap is known work, not a deep incompatibility. The reasons are documented where
-each feature is: [Sigstore](#sigstore-attestations---require-attestation-local-runtime-only)
-above, origin memory in this section.
+Consequence: the **local runtime is the full-featured reference** — memory and
+Sigstore both work there. The gateway matches it except for Sigstore
+verification, where its attestation model remains Ed25519-only (platform
+limitation of Workers, documented in
+[Sigstore](#sigstore-attestations---require-attestation-local-runtime-only)
+above).
 
 ## Skill attestations (advisory)
 

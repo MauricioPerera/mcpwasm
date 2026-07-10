@@ -21,12 +21,30 @@
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { initSync as memInit, WasmOkfIndex } from "@rckflr/minimemory";
 
 const sha = (s) => createHash("sha256").update(s, "utf8").digest("hex");
+
+// Snapshot de origin-memory REAL (BM25), construido aqui mismo con minimemory:
+// dos conceptos distinguibles para poder asertar hits relevantes vs 0 hits.
+const _require = createRequire(import.meta.url);
+memInit({ module: readFileSync(_require.resolve("@rckflr/minimemory/minimemory_bg.wasm")) });
+const _memIdx = WasmOkfIndex.with_chunk_size(800, 50);
+_memIdx.ingest_concept(
+  "returns-policy",
+  "---\ntype: docs\ntitle: Returns policy\n---\nCustomers can return any product within thirty days of purchase for a full refund. Returns require the original receipt and unused condition."
+);
+_memIdx.ingest_concept(
+  "shipping-info",
+  "---\ntype: docs\ntitle: Shipping info\n---\nStandard shipping takes five business days. Express shipping arrives in two days for an extra fee."
+);
+const MEM_SNAPSHOT = _memIdx.export_snapshot();
+const MEM_SNAPSHOT_SHA = sha(MEM_SNAPSHOT);
 
 const SUM_TOOL = `registerTool({
   name: "sum_numbers",
@@ -52,11 +70,28 @@ const CORRUPT_TOOL = `registerTool({
   handler() { return { ok: true }; }
 });`;
 
+const SEARCH_TOOL = `registerTool({
+  name: "search_mem",
+  description: "BM25 search over the origin memory snapshot.",
+  inputSchema: { type: "object", properties: { q: { type: "string" } }, required: ["q"] },
+  handler: async function (args) {
+    const r = await host.memorySearch(args.q, 5);
+    return r;
+  }
+});`;
+
+// declaredMemHash es mutable a proposito: el escenario [memory-tamper] re-usa el
+// mismo server declarando un hash FALSO para el mismo snapshot servido.
+let declaredMemHash = MEM_SNAPSHOT_SHA;
+
 function llmsTxt() {
   return (
-    "# fake publisher local\n\n## Skills\n\n" +
+    "# fake publisher local\n\n" +
+    `<!-- skills-memory: ${JSON.stringify({ snapshot: "/mem.snapshot", snapshot_sha256: declaredMemHash, format: "minimemory-okf-v1" })} -->\n\n` +
+    "## Skills\n\n" +
     `- [sum_numbers](/skills/sum_numbers/SKILL.md): Sum two numbers. <!-- skill: ${JSON.stringify({ version: "1.0.0", tool: "/skills/sum_numbers/tool.js", tool_sha256: sha(SUM_TOOL) })} -->\n` +
     `- [origin_time](/skills/origin_time/SKILL.md): Origin time. <!-- skill: ${JSON.stringify({ version: "1.0.0", tool: "/skills/origin_time/tool.js", tool_sha256: sha(TIME_TOOL) })} -->\n` +
+    `- [search_mem](/skills/search_mem/SKILL.md): Search origin memory. <!-- skill: ${JSON.stringify({ version: "1.0.0", tool: "/skills/search_mem/tool.js", tool_sha256: sha(SEARCH_TOOL) })} -->\n` +
     `- [corrupt](/skills/corrupt/SKILL.md): Hash roto a proposito. <!-- skill: ${JSON.stringify({ version: "1.0.0", tool: "/skills/corrupt/tool.js", tool_sha256: "0".repeat(64) })} -->\n`
   );
 }
@@ -70,7 +105,9 @@ const server = createServer((req, res) => {
   if (u.pathname === "/llms.txt") return send(200, llmsTxt());
   if (u.pathname === "/skills/sum_numbers/tool.js") return send(200, SUM_TOOL, "application/javascript");
   if (u.pathname === "/skills/origin_time/tool.js") return send(200, TIME_TOOL, "application/javascript");
+  if (u.pathname === "/skills/search_mem/tool.js") return send(200, SEARCH_TOOL, "application/javascript");
   if (u.pathname === "/skills/corrupt/tool.js") return send(200, CORRUPT_TOOL, "application/javascript");
+  if (u.pathname === "/mem.snapshot") return send(200, MEM_SNAPSHOT, "application/json");
   if (u.pathname === "/api/time") return send(200, JSON.stringify({ epoch: 1788254400000 }), "application/json");
   return send(404, "not found");
 });
@@ -170,6 +207,24 @@ try {
   const nope = JSON.parse(await nextLine());
   console.log("[6] tool inexistente ->", JSON.stringify(nope).slice(0, 160));
   check(nope.result && nope.result.isError === true, "tool inexistente -> isError:true (error de tool, no crash)");
+
+  // 7) origin-memory: snapshot verificado -> host.memorySearch inyectada.
+  check(stderrLines.some((l) => /origin-memory: snapshot verificado/.test(l)),
+    "stderr confirma snapshot verificado + memorySearch inyectada");
+  send({ jsonrpc: "2.0", id: 6, method: "tools/call", params: { name: "search_mem", arguments: { q: "refund returns thirty days" } } });
+  const mem = JSON.parse(await nextLine());
+  console.log("[7] search_mem(refund) ->", JSON.stringify(mem).slice(0, 200));
+  const memHits = mem.result && mem.result.structuredContent && mem.result.structuredContent.hits;
+  check(Array.isArray(memHits) && memHits.length > 0, "search_mem: query relevante -> hits no vacios");
+  check(memHits && memHits[0] && typeof memHits[0].score === "number" && /return|refund/i.test(memHits[0].text || ""),
+    "search_mem: top hit con score numerico y texto del concepto correcto (returns-policy)");
+
+  // 8) origin-memory: query sin relacion -> 0 hits (BM25 real, no eco).
+  send({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "search_mem", arguments: { q: "receta de paella valenciana" } } });
+  const memMiss = JSON.parse(await nextLine());
+  console.log("[8] search_mem(paella) ->", JSON.stringify(memMiss).slice(0, 160));
+  const missHits = memMiss.result && memMiss.result.structuredContent && memMiss.result.structuredContent.hits;
+  check(Array.isArray(missHits) && missHits.length === 0, "search_mem: query sin relacion -> 0 hits");
 } catch (e) {
   console.error("ERROR en test-local:", e && e.stack ? e.stack : e);
   failures++;
@@ -177,7 +232,68 @@ try {
   child.stdin.end();
   const exitCode = await new Promise((r) => child.on("exit", (code) => r(code)));
   check(exitCode === 0, "el proceso termina con exit code 0 (sin --serve)");
-  server.close();
+}
+
+// ---------------------------------------------------------------------------
+// [memory-tamper] mismo server, hash del snapshot DECLARADO falso: la memoria
+// NO debe inyectarse (fail-closed), search_mem falla controlado (isError:true)
+// y el resto de las skills sigue funcionando.
+console.log("\n[memory-tamper] snapshot con sha256 declarado falso:");
+declaredMemHash = "0".repeat(64);
+{
+  const child2 = spawn(process.execPath, [binPath, ORIGIN], { stdio: ["pipe", "pipe", "pipe"] });
+  const stderr2 = [];
+  child2.stderr.on("data", (d) => {
+    for (const l of String(d).split(/\r?\n/)) if (l.trim()) stderr2.push(l);
+  });
+  const pending2 = [];
+  const waiting2 = [];
+  let buf2 = "";
+  child2.stdout.on("data", (d) => {
+    buf2 += String(d);
+    let i;
+    while ((i = buf2.indexOf("\n")) !== -1) {
+      const line = buf2.slice(0, i).trim();
+      buf2 = buf2.slice(i + 1);
+      if (!line) continue;
+      const w = waiting2.shift();
+      if (w) w(line);
+      else pending2.push(line);
+    }
+  });
+  const nextLine2 = (timeoutMs = 60000) => {
+    if (pending2.length > 0) return Promise.resolve(pending2.shift());
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("timeout (memory-tamper)")), timeoutMs);
+      waiting2.push((l) => {
+        clearTimeout(t);
+        resolve(l);
+      });
+    });
+  };
+  try {
+    child2.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_mem", arguments: { q: "refund" } } }) + "\n");
+    const tampered = JSON.parse(await nextLine2());
+    console.log("[tamper] search_mem ->", JSON.stringify(tampered).slice(0, 200));
+    check(tampered.result && tampered.result.isError === true,
+      "memory-tamper: search_mem -> isError:true (capability ausente, fallo controlado, no crash)");
+    check(stderr2.some((l) => /origin-memory: snapshot sha256 mismatch/.test(l)),
+      "memory-tamper: stderr registra el sha256 mismatch del snapshot");
+    check(!stderr2.some((l) => /snapshot verificado/.test(l)),
+      "memory-tamper: la capability NO se reporta como inyectada");
+
+    child2.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "sum_numbers", arguments: { a: 20, b: 22 } } }) + "\n");
+    const sum2 = JSON.parse(await nextLine2());
+    check(sum2.result && sum2.result.structuredContent && sum2.result.structuredContent.result === 42,
+      "memory-tamper: el resto de las skills sigue funcionando (sum_numbers -> 42)");
+  } catch (e) {
+    console.error("ERROR en memory-tamper:", e && e.stack ? e.stack : e);
+    failures++;
+  } finally {
+    child2.stdin.end();
+    await new Promise((r) => child2.on("exit", () => r()));
+    server.close();
+  }
 }
 
 // ---------------------------------------------------------------------------

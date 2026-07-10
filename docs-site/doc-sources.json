@@ -6,7 +6,7 @@
     "branch": "master",
     "path": "docs/rfc-skills-in-llms-txt.md",
     "url": "https://raw.githubusercontent.com/MauricioPerera/llms-txt-skills/master/docs/rfc-skills-in-llms-txt.md",
-    "commit": "2429f1c5676b9d842f62ab82bf3a64d01a9a68e9"
+    "commit": "b60580ebe55fa196a91450950333d874b87d778b"
   },
   {
     "name": "ext-executable-skills",
@@ -15,7 +15,7 @@
     "branch": "master",
     "path": "docs/ext-executable-skills.md",
     "url": "https://raw.githubusercontent.com/MauricioPerera/llms-txt-skills/master/docs/ext-executable-skills.md",
-    "commit": "2429f1c5676b9d842f62ab82bf3a64d01a9a68e9"
+    "commit": "b60580ebe55fa196a91450950333d874b87d778b"
   },
   {
     "name": "ext-skill-attestations",
@@ -24,7 +24,7 @@
     "branch": "master",
     "path": "docs/ext-skill-attestations.md",
     "url": "https://raw.githubusercontent.com/MauricioPerera/llms-txt-skills/master/docs/ext-skill-attestations.md",
-    "commit": "2429f1c5676b9d842f62ab82bf3a64d01a9a68e9"
+    "commit": "b60580ebe55fa196a91450950333d874b87d778b"
   },
   {
     "name": "mcpwasm-readme",

@@ -1,7 +1,7 @@
 # Extension: Skill Attestations
 
-**Status:** Draft (v0.3)
-**Date:** 2026-07-02
+**Status:** Draft (v0.4)
+**Date:** 2026-07-09
 **Extends:** [Extension: Executable Skills](./ext-executable-skills.md) (v0.4)
 **Design donor:** the three-layer knowledge-governance PoC in [ccdd/examples/okf-integration](https://github.com/MauricioPerera/ccdd/tree/main/examples/okf-integration) (working Ed25519 attestation + freshness tooling), adapted here to executable skills.
 
@@ -115,6 +115,32 @@ Attestations are published by the origin as a static JSON array at:
 
 (consistent with the core RFC's `/.well-known/agent-skills/index.json` metadata layer). Multiple attestations per skill (different reviewers) are allowed and encouraged. Third-party reviewers MAY additionally publish their attestations on their own domain; how runtimes discover those is an open question (§6).
 
+### 2.4 Choosing an attester type (normative guidance)
+
+Both attester types are normative and fully supported. This section only sets
+the **default recommendation**, so adopters face one decision instead of two
+parallel models:
+
+- **Sigstore (`sigstore:`) is RECOMMENDED for new deployments.** It scales
+  without per-reviewer key registration (the bottleneck §5 names), binds
+  attestations to auditable OIDC *identities* rather than bearer keys, and
+  removes the private-key management burden entirely (Fulcio issues
+  short-lived certificates per signing operation). This is the core RFC §4.6
+  recommendation applied to this extension.
+- **Pre-registered Ed25519 (`human:`) is the profile for constrained
+  environments.** Choose it when verification must run on a platform without
+  outbound network or filesystem access at verification time (confirmed:
+  Cloudflare Workers, §4), in air-gapped or offline review workflows, or when
+  a deployment deliberately avoids depending on external trust infrastructure
+  (Fulcio/Rekor availability).
+
+Decision rule: **if your runtime can reach Sigstore's public trust
+infrastructure at verification time, use `sigstore:`; otherwise use
+`human:` Ed25519.** A registry MAY contain both types simultaneously (§3);
+runtimes evaluate each entry per its own type. Publishers do not choose —
+attester type is a property of who reviews and where verification runs, not
+of the published skill.
+
 ## 3. Reviewer registry (trust anchor)
 
 Verification requires knowing reviewers' public keys. The registry is **runtime-side configuration**, not publisher data — the publisher hosting the keys that vouch for the publisher would be circular:
@@ -181,6 +207,7 @@ filesystem access Cloudflare Workers does not have (§4).
 
 ## 7. Changelog
 
+- **v0.4 (2026-07-09):** Added §2.4 (normative guidance): Sigstore is the RECOMMENDED default attester type for new deployments; pre-registered Ed25519 becomes the explicit profile for constrained environments (no network/filesystem at verification time, air-gapped review, no external trust-infrastructure dependency). Converges the two parallel models into one decision rule; no wire-format or verification-semantics change — v0.3 registries and attestations remain valid as-is.
 - **v0.3 (2026-07-09):** Added §2.1b: Sigstore (keyless) attestations as a second, optional attester type alongside Ed25519 — closes the "only pre-registered reviewers scale" bottleneck (§5) by trusting OIDC identities instead of pre-shared keys. Updated §3 (reviewer registry entry shape for `sigstore:` attesters) and §4 (network-access exception, platform-support fallback to UNKNOWN-ATTESTER). Added §8 pointing at the reference implementation.
 - **v0.2 (2026-07-02):** Review fixes: base64 encoding for signatures/keys (aligned with core RFC tooling), canonical-origin and date normalization rules for the signing payload, inclusive-end UTC expiry semantics, and explicit verdict precedence (invalid dominates).
 - **v0.1 (2026-07-02):** Initial draft, adapted from the ccdd okf-integration PoC (Ed25519 attestations + freshness windows + key registry), with origin-binding added for the cross-site skill context.

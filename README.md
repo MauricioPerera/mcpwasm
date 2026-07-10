@@ -22,7 +22,7 @@ capability the host injects. No capability, no access.
 
 This repo integrates with the [llms-txt-skills](https://github.com/MauricioPerera/llms-txt-skills)
 standard via two provisional extensions adopted in the spec: **executable
-skills** (v0.4, with *origin memory*) and **skill attestations** (v0.3). See
+skills** (v0.4, with *origin memory*) and **skill attestations** (v0.4). See
 the dedicated sections below.
 
 ## Use it now — any static site → an MCP server
@@ -155,6 +155,10 @@ a `tool_sha256` mismatch against the fetched `tool.js` itself. Absence of
 > gateway's attestation model remains the pre-registered-key Ed25519 scheme
 > above, unaffected. This is the one capability asymmetry between the two
 > runtimes; see [Capability support by runtime](#capability-support-by-runtime).
+> The spec (v0.4 §2.4) now names this profile explicitly: Sigstore is the
+> RECOMMENDED default where verification can reach Sigstore's trust
+> infrastructure; pre-registered Ed25519 is the profile for platforms — like
+> Workers — where it cannot.
 
 The Ed25519 model (above) requires pre-registering every reviewer's public
 key — a real bottleneck (today, only the maintainer is registered). Sigstore
@@ -484,7 +488,7 @@ above).
 
 ## Skill attestations (advisory)
 
-> Spec: [Skill Attestations v0.3](https://github.com/MauricioPerera/llms-txt-skills/blob/master/docs/ext-skill-attestations.md).
+> Spec: [Skill Attestations v0.4](https://github.com/MauricioPerera/llms-txt-skills/blob/master/docs/ext-skill-attestations.md).
 
 This section describes the **gateway's** model: Ed25519 signatures from a
 runtime-side pre-registered `REVIEWERS` key registry. The **local runtime**
@@ -645,7 +649,7 @@ What it guarantees:
   it against the `tool_sha256` declared in `llms.txt` before loading. Mismatched or
   corrupt content is rejected and not cached. The same rule applies to the
   origin-memory snapshot (`snapshot_sha256`): unverified → capability not injected.
-- **Skill attestations (third trust ring, spec `ext-skill-attestations` v0.3).**
+- **Skill attestations (third trust ring, spec `ext-skill-attestations` v0.4).**
   See the dedicated section. Publishers may serve signed reviewer attestations;
   the gateway verifies them via WebCrypto against the runtime-side `REVIEWERS`
   registry and exposes per-skill verdicts (`attested`/`expired`/`invalid`/

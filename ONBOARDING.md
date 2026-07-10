@@ -30,7 +30,7 @@ A publisher site is eligible when all of the following hold:
   read; the publisher must stay under the caps.
 - `attestations.json` published at
   `/.well-known/agent-skills/attestations.json` (Ed25519 reviewer attestations,
-  spec `ext-skill-attestations` v0.3). In the deployed `enforcing` mode, a skill
+  spec `ext-skill-attestations` v0.4). In the deployed `enforcing` mode, a skill
   with no valid attestation does not load, so this file is what makes the skills
   usable, not cosmetic.
 - The onboarding lint passes green:

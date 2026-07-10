@@ -120,7 +120,7 @@
       "bridge.takeaway__html": "Neither side has to trust the other's prose: mcpwasm re-derives the hash and checks the signature itself. Static hosting + a verifying runtime = an MCP server with <strong>no server to run</strong>.",
 
       "ecosystem.h2": "Part of a spec, not just a repo",
-      "ecosystem.lede__html": "mcpwasm is the reference implementation of two provisional extensions to the <a href=\"https://github.com/MauricioPerera/llms-txt-skills\">llms-txt-skills</a> standard: <strong>Executable Skills</strong> (v0.4, with origin memory) and <strong>Skill Attestations</strong> (v0.3). Every MUST in those specs is field-tested in this code — spec and implementation are kept in sync.",
+      "ecosystem.lede__html": "mcpwasm is the reference implementation of two provisional extensions to the <a href=\"https://github.com/MauricioPerera/llms-txt-skills\">llms-txt-skills</a> standard: <strong>Executable Skills</strong> (v0.4, with origin memory) and <strong>Skill Attestations</strong> (v0.4). Every MUST in those specs is field-tested in this code — spec and implementation are kept in sync.",
 
       "footer.onboard": "Onboard a publisher",
       "footer.license": "MIT License",
@@ -226,7 +226,7 @@
       "bridge.takeaway__html": "Ninguna de las dos partes tiene que confiar en la prosa de la otra: mcpwasm re-deriva el hash y verifica la firma por sí mismo. Hosting estático + un runtime que verifica = un servidor MCP <strong>sin servidor que correr</strong>.",
 
       "ecosystem.h2": "Parte de una spec, no solo un repo",
-      "ecosystem.lede__html": "mcpwasm es la implementación de referencia de dos extensiones provisionales del estándar <a href=\"https://github.com/MauricioPerera/llms-txt-skills\">llms-txt-skills</a>: <strong>Executable Skills</strong> (v0.4, con memoria de origin) y <strong>Skill Attestations</strong> (v0.3). Cada MUST de esas specs está probado en este código — spec e implementación se mantienen sincronizadas.",
+      "ecosystem.lede__html": "mcpwasm es la implementación de referencia de dos extensiones provisionales del estándar <a href=\"https://github.com/MauricioPerera/llms-txt-skills\">llms-txt-skills</a>: <strong>Executable Skills</strong> (v0.4, con memoria de origin) y <strong>Skill Attestations</strong> (v0.4). Cada MUST de esas specs está probado en este código — spec e implementación se mantienen sincronizadas.",
 
       "footer.onboard": "Sumar un publisher",
       "footer.license": "Licencia MIT",
@@ -332,7 +332,7 @@
       "bridge.takeaway__html": "Nenhum dos lados precisa confiar na prosa do outro: mcpwasm re-deriva o hash e verifica a assinatura por conta própria. Hospedagem estática + um runtime que verifica = um servidor MCP <strong>sem servidor para rodar</strong>.",
 
       "ecosystem.h2": "Parte de uma spec, não só um repositório",
-      "ecosystem.lede__html": "mcpwasm é a implementação de referência de duas extensões provisórias do padrão <a href=\"https://github.com/MauricioPerera/llms-txt-skills\">llms-txt-skills</a>: <strong>Executable Skills</strong> (v0.4, com memória de origin) e <strong>Skill Attestations</strong> (v0.3). Todo MUST dessas specs é testado neste código — spec e implementação se mantêm sincronizadas.",
+      "ecosystem.lede__html": "mcpwasm é a implementação de referência de duas extensões provisórias do padrão <a href=\"https://github.com/MauricioPerera/llms-txt-skills\">llms-txt-skills</a>: <strong>Executable Skills</strong> (v0.4, com memória de origin) e <strong>Skill Attestations</strong> (v0.4). Todo MUST dessas specs é testado neste código — spec e implementação se mantêm sincronizadas.",
 
       "footer.onboard": "Cadastrar um publisher",
       "footer.license": "Licença MIT",

@@ -58,6 +58,36 @@ the local runtime above needs none of it. Its honest limits and the
 `index.json`/attestation options are detailed under
 "[Local MCP runtime](#local-mcp-runtime--no-gateway-at-all)".
 
+## Add it to your MCP client
+
+The runtime is a standard MCP stdio server, so every MCP host can use it.
+Replace the origin with any publisher (find more in the
+[registry](https://github.com/MauricioPerera/llms-skills-registry)); add
+`--lock skills.lock` for pin-on-first-use.
+
+**Claude Code** (one command):
+
+```bash
+claude mcp add static-skills -- npx -y @rckflr/mcpwasm https://mauricioperera.github.io
+```
+
+**Claude Desktop** (`claude_desktop_config.json`) / **Cursor**
+(`.cursor/mcp.json`) / **project-scoped `.mcp.json`** — same JSON shape:
+
+```json
+{
+  "mcpServers": {
+    "static-skills": {
+      "command": "npx",
+      "args": ["-y", "@rckflr/mcpwasm", "https://mauricioperera.github.io", "--lock", "skills.lock"]
+    }
+  }
+}
+```
+
+Restart the session and the origin's verified tools (plus their SKILL.md
+recipes as resources) appear like any other MCP server's.
+
 ## Use as a library (npm)
 
 The embeddable host — what the gateway itself builds on — ships as

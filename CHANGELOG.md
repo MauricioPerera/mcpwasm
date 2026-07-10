@@ -6,7 +6,7 @@ are the npm publish dates. Entries describe what each published tarball ships
 relative to the previous one (verified against the actual tarballs, not just
 the git log).
 
-## [Unreleased] — 0.6.0
+## [0.6.0] — 2026-07-10
 
 ### Added
 - **Scopes: multiple projects on one origin — both runtimes.** Implements

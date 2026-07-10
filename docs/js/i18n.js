@@ -66,7 +66,7 @@
       "ways.gatewayTag": "turnkey MCP server",
       "ways.gatewayP": "Point any MCP client at the deployed gateway. It discovers, verifies, and sandboxes a publisher's skills on every request.",
       "ways.localTag": "zero infra, both sides",
-      "ways.localP": "Run any origin's skills locally over stdio. No gateway, no server, on either end.",
+      "ways.localP": "Run any origin's skills locally over stdio — including origin memory (verified BM25 search over the site's own content, new in 0.4.0). No gateway, no server, on either end.",
       "ways.libraryTag": "embed the sandbox",
       "ways.libraryP": "Build your own platform host with the exact isolation the gateway uses.",
 
@@ -77,7 +77,7 @@
       "trust.card2H3": "Sandbox isolation",
       "trust.card2P__html": "Each skill runs in its own QuickJS-wasm context: no <code>fetch</code>, no <code>process</code>, no disk. The only bridge out is an explicit, origin-scoped <code>host.fetchOrigin</code>.",
       "trust.card3H3": "Signed attestations",
-      "trust.card3P__html": "Ed25519-signed human review with an expiry window. <strong>Honest today:</strong> one registered reviewer. The mechanism scales; the reviewer network hasn't yet.",
+      "trust.card3P__html": "Signed human review with an expiry window — pre-registered Ed25519 keys or keyless <strong>Sigstore</strong> identities (the spec's recommended default since v0.4). <strong>Honest today:</strong> one registered reviewer. The mechanism scales; the reviewer network hasn't yet.",
 
       "benchmark.h2": "What it costs",
       "benchmark.lede": "Real numbers from the deployed gateway, not synthetic estimates.",
@@ -172,7 +172,7 @@
       "ways.gatewayTag": "servidor MCP listo para usar",
       "ways.gatewayP": "Apuntá cualquier cliente MCP al gateway desplegado. Descubre, verifica, y sandboxea las skills de un publisher en cada request.",
       "ways.localTag": "cero infra, en ambos lados",
-      "ways.localP": "Corré las skills de cualquier origin localmente por stdio. Sin gateway, sin servidor, en ningún lado.",
+      "ways.localP": "Corré las skills de cualquier origin localmente por stdio — incluida la memoria de origin (búsqueda BM25 verificada sobre el contenido del propio sitio, nueva en 0.4.0). Sin gateway, sin servidor, en ningún lado.",
       "ways.libraryTag": "embebé el sandbox",
       "ways.libraryP": "Construí tu propio host de plataforma con el mismo aislamiento que usa el gateway.",
 
@@ -183,7 +183,7 @@
       "trust.card2H3": "Aislamiento del sandbox",
       "trust.card2P__html": "Cada skill corre en su propio contexto QuickJS-wasm: sin <code>fetch</code>, sin <code>process</code>, sin disco. El único puente hacia afuera es un <code>host.fetchOrigin</code> explícito, restringido al origin.",
       "trust.card3H3": "Atestaciones firmadas",
-      "trust.card3P__html": "Revisión humana firmada con Ed25519, con ventana de vencimiento. <strong>Honesto hoy:</strong> un solo revisor registrado. El mecanismo escala; la red de revisores todavía no.",
+      "trust.card3P__html": "Revisión humana firmada con ventana de vencimiento — claves Ed25519 pre-registradas o identidades <strong>Sigstore</strong> keyless (el default recomendado por la spec desde v0.4). <strong>Honesto hoy:</strong> un solo revisor registrado. El mecanismo escala; la red de revisores todavía no.",
 
       "benchmark.h2": "Lo que cuesta",
       "benchmark.lede": "Números reales del gateway desplegado, no estimaciones sintéticas.",
@@ -278,7 +278,7 @@
       "ways.gatewayTag": "servidor MCP pronto para uso",
       "ways.gatewayP": "Aponte qualquer cliente MCP para o gateway em produção. Ele descobre, verifica, e isola as skills de um publisher a cada requisição.",
       "ways.localTag": "zero infra, dos dois lados",
-      "ways.localP": "Rode as skills de qualquer origin localmente via stdio. Sem gateway, sem servidor, em nenhum dos lados.",
+      "ways.localP": "Rode as skills de qualquer origin localmente via stdio — incluindo a memória de origin (busca BM25 verificada sobre o conteúdo do próprio site, nova na 0.4.0). Sem gateway, sem servidor, em nenhum dos lados.",
       "ways.libraryTag": "embuta o sandbox",
       "ways.libraryP": "Construa seu próprio host de plataforma com o mesmo isolamento que o gateway usa.",
 
@@ -289,7 +289,7 @@
       "trust.card2H3": "Isolamento do sandbox",
       "trust.card2P__html": "Cada skill roda em seu próprio contexto QuickJS-wasm: sem <code>fetch</code>, sem <code>process</code>, sem disco. A única ponte para fora é um <code>host.fetchOrigin</code> explícito, restrito à origin.",
       "trust.card3H3": "Atestações assinadas",
-      "trust.card3P__html": "Revisão humana assinada com Ed25519, com janela de validade. <strong>Honesto hoje:</strong> um único revisor registrado. O mecanismo escala; a rede de revisores ainda não.",
+      "trust.card3P__html": "Revisão humana assinada com janela de validade — chaves Ed25519 pré-registradas ou identidades <strong>Sigstore</strong> keyless (o padrão recomendado pela spec desde a v0.4). <strong>Honesto hoje:</strong> um único revisor registrado. O mecanismo escala; a rede de revisores ainda não.",
 
       "benchmark.h2": "Quanto custa",
       "benchmark.lede": "Números reais do gateway em produção, não estimativas sintéticas.",

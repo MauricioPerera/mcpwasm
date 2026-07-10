@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The full-stack agent demo — discover, verify, execute, know. In one tab.</title>
+<meta name="description" content="An AI agent running entirely in your browser: it discovers publishers in the registry, verifies every tool by hash, executes them in a wasm sandbox, and searches verified knowledge. No server, no install.">
+<style>
+  :root { --bg:#0b0e14; --panel:#131826; --border:#232a3d; --text:#e6e9f0; --dim:#8b93a7; --acc:#4fc08d; --acc2:#6d9ce6; --warn:#e0a458; --err:#e06c75; --code:#1a2032; }
+  /* tema oscuro fijo — linea de diseño del ecosistema */
+  * { box-sizing:border-box; margin:0; }
+  body { background:var(--bg); color:var(--text); font:15px/1.55 system-ui,-apple-system,Segoe UI,sans-serif; padding:2rem 1rem 4rem; }
+  .wrap { max-width:920px; margin:0 auto; }
+  .langs { display:flex; gap:.4rem; justify-content:flex-end; margin-bottom:.8rem; }
+  .langs button { padding:.25rem .6rem; font-size:.75rem; background:transparent; color:var(--dim); border:1px solid var(--border); border-radius:6px; cursor:pointer; }
+  .langs button.on { color:var(--acc); border-color:var(--acc); }
+  h1 { font-size:1.5rem; margin-bottom:.4rem; }
+  .lede { color:var(--dim); margin-bottom:1.2rem; max-width:780px; }
+  .lede a { color:var(--acc); }
+  .cfg { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:.5rem; margin-bottom:.8rem; }
+  input { padding:.55rem .7rem; border-radius:8px; border:1px solid var(--border); background:var(--panel); color:var(--text); font-size:.88rem; width:100%; }
+  button.primary { padding:.55rem 1.1rem; border-radius:8px; border:1px solid var(--acc); background:var(--acc); color:#0b0e14; font-weight:600; cursor:pointer; }
+  button.primary:disabled { opacity:.5; cursor:wait; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:1rem; margin-bottom:.9rem; }
+  .panel h2 { font-size:.78rem; text-transform:uppercase; letter-spacing:.08em; color:var(--dim); margin-bottom:.55rem; }
+  #vlog { font:12px/1.55 ui-monospace,Consolas,monospace; white-space:pre-wrap; max-height:150px; overflow-y:auto; color:var(--dim); }
+  #trace { max-height:420px; overflow-y:auto; }
+  .step { border-left:3px solid var(--border); padding:.4rem .8rem; margin-bottom:.55rem; font-size:.87rem; }
+  .step.tool { border-color:var(--acc2); }
+  .step.answer { border-color:var(--acc); }
+  .step .k { color:var(--acc2); font:600 12.5px ui-monospace,monospace; }
+  .step .sha { color:var(--dim); font:10.5px ui-monospace,monospace; word-break:break-all; }
+  .step pre { background:var(--code); border-radius:6px; padding:.45rem .6rem; margin:.3rem 0; font:11.5px/1.5 ui-monospace,monospace; white-space:pre-wrap; max-height:130px; overflow-y:auto; }
+  .ask { display:flex; gap:.5rem; margin-top:.4rem; }
+  .foot { color:var(--dim); font-size:.8rem; margin-top:1.4rem; max-width:780px; }
+  .foot a { color:var(--acc); }
+  .pill { display:inline-block; font-size:.68rem; padding:.1rem .55rem; border-radius:99px; border:1px solid var(--acc); color:var(--acc); margin-left:.4rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="langs"><button data-lang="en">EN</button><button data-lang="es">ES</button><button data-lang="pt">PT</button></div>
+  <h1 data-i18n="h1__html">The full-stack agent — in <em>this tab</em></h1>
+  <p class="lede" data-i18n="lede__html"></p>
+
+  <div class="cfg">
+    <input id="endpoint" value="http://localhost:11434/v1" spellcheck="false" title="OpenAI-compatible endpoint">
+    <input id="model" value="glm-5.2:cloud" spellcheck="false" title="model">
+    <input id="apikey" placeholder="API key (optional)" type="password" title="API key — stays in this tab">
+    <input id="origin" value="https://mauricioperera.github.io" spellcheck="false" title="publisher origin">
+  </div>
+  <button class="primary" id="connect" data-i18n="connect">Connect &amp; verify tools</button>
+
+  <div class="panel" style="margin-top:.9rem"><h2 data-i18n="vlogH">Verification log</h2><div id="vlog" data-i18n="idle">(idle)</div></div>
+
+  <div class="panel" id="chatPanel" hidden>
+    <h2><span data-i18n="traceH">Agent trace</span> <span id="toolCount" class="pill"></span></h2>
+    <div id="trace"></div>
+    <div class="ask">
+      <input id="q" data-i18n-ph="ask" placeholder="Ask something that needs the ecosystem…" spellcheck="false">
+      <button class="primary" id="run" data-i18n="run">Run agent</button>
+    </div>
+  </div>
+
+  <p class="foot" data-i18n="foot__html"></p>
+</div>
+
+<script type="module">
+import { connectStaticSkills, minimemoryInitSync, WasmOkfIndex } from "../demo/mcpwasm-web.js";
+
+const I18N = {
+  en: {
+    "h1__html": "The full-stack agent — in <em>this tab</em>",
+    "lede__html": 'An AI agent whose entire infrastructure is <strong>static files + your browser</strong>: it discovers publishers in the <a href="https://mauricioperera.github.io/llms-skills-registry/">registry</a>, <strong>verifies every tool byte-by-byte</strong> against its published SHA-256, executes them in a QuickJS-wasm sandbox, and searches hash-pinned knowledge — all client-side via <a href="https://github.com/MauricioPerera/mcpwasm">mcpwasm-web</a>. You bring the model: any OpenAI-compatible endpoint (local Ollama, OpenRouter…). The key never leaves this tab.',
+    connect: "Connect & verify tools", vlogH: "Verification log", idle: "(idle)",
+    traceH: "Agent trace", ask: "Ask something that needs the ecosystem…", run: "Run agent",
+    thinking: "thinking…", calling: "calling", verifiedSha: "verified sha256: ",
+    answer: "Answer", errNoTools: "Connect first", tools: "verified tools",
+    "foot__html": 'Suggested asks: <em>"Which publisher serves a payments demo? Search the registry."</em> · <em>"What is the trust model of llms-txt-skills?"</em> · <em>"List the KDD concepts about contracts."</em> — The learning leg (shared agent memory) runs locally via <a href="https://github.com/MauricioPerera/cq-git-template">cq-git</a>; a browser page cannot write to your commons, and that is the correct trust boundary. Local Ollama note: Chrome may require enabling insecure-private-network access for a public page to reach localhost — or serve this page locally.'
+  },
+  es: {
+    "h1__html": "El agente full-stack — en <em>esta pestaña</em>",
+    "lede__html": 'Un agente de IA cuya infraestructura completa es <strong>archivos estáticos + tu navegador</strong>: descubre publicadores en el <a href="https://mauricioperera.github.io/llms-skills-registry/">registro</a>, <strong>verifica cada tool byte a byte</strong> contra su SHA-256 publicado, las ejecuta en un sandbox QuickJS-wasm y busca en conocimiento fijado por hash — todo del lado del cliente vía <a href="https://github.com/MauricioPerera/mcpwasm">mcpwasm-web</a>. El modelo lo ponés vos: cualquier endpoint OpenAI-compatible (Ollama local, OpenRouter…). La key jamás sale de esta pestaña.',
+    connect: "Conectar y verificar tools", vlogH: "Log de verificación", idle: "(en espera)",
+    traceH: "Traza del agente", ask: "Pedí algo que necesite el ecosistema…", run: "Correr agente",
+    thinking: "pensando…", calling: "llamando", verifiedSha: "sha256 verificado: ",
+    answer: "Respuesta", errNoTools: "Conectá primero", tools: "tools verificadas",
+    "foot__html": 'Pedidos sugeridos: <em>"¿Qué publicador sirve una demo de pagos? Buscá en el registro."</em> · <em>"¿Cuál es el modelo de confianza de llms-txt-skills?"</em> · <em>"Listá los conceptos de KDD sobre contratos."</em> — La pata de aprendizaje (memoria compartida) corre local vía <a href="https://github.com/MauricioPerera/cq-git-template">cq-git</a>; una página no puede escribir en tu commons, y ese es el límite de confianza correcto. Nota Ollama local: Chrome puede exigir permitir acceso a red privada para que una página pública llegue a localhost — o serví esta página localmente.'
+  },
+  pt: {
+    "h1__html": "O agente full-stack — <em>nesta aba</em>",
+    "lede__html": 'Um agente de IA cuja infraestrutura completa é <strong>arquivos estáticos + seu navegador</strong>: descobre publicadores no <a href="https://mauricioperera.github.io/llms-skills-registry/">registro</a>, <strong>verifica cada tool byte a byte</strong> contra seu SHA-256 publicado, executa num sandbox QuickJS-wasm e pesquisa conhecimento fixado por hash — tudo client-side via <a href="https://github.com/MauricioPerera/mcpwasm">mcpwasm-web</a>. O modelo é seu: qualquer endpoint compatível com OpenAI (Ollama local, OpenRouter…). A key nunca sai desta aba.',
+    connect: "Conectar e verificar tools", vlogH: "Log de verificação", idle: "(em espera)",
+    traceH: "Traço do agente", ask: "Peça algo que precise do ecossistema…", run: "Rodar agente",
+    thinking: "pensando…", calling: "chamando", verifiedSha: "sha256 verificado: ",
+    answer: "Resposta", errNoTools: "Conecte primeiro", tools: "tools verificadas",
+    "foot__html": 'Pedidos sugeridos: <em>"Qual publicador serve uma demo de pagamentos? Pesquise no registro."</em> · <em>"Qual é o modelo de confiança do llms-txt-skills?"</em> · <em>"Liste os conceitos do KDD sobre contratos."</em> — A perna de aprendizado (memória compartilhada) roda local via <a href="https://github.com/MauricioPerera/cq-git-template">cq-git</a>; uma página não pode escrever no seu commons, e esse é o limite de confiança correto. Nota Ollama local: o Chrome pode exigir liberar acesso à rede privada para uma página pública alcançar localhost — ou sirva esta página localmente.'
+  }
+};
+let LANG = localStorage.getItem("agent-lang") || (navigator.language || "en").slice(0, 2).replace(/^(?!es|pt).*$/, "en");
+const t = (k) => (I18N[LANG] && I18N[LANG][k]) || I18N.en[k] || k;
+function applyLang(lang) {
+  LANG = I18N[lang] ? lang : "en";
+  localStorage.setItem("agent-lang", LANG);
+  document.documentElement.lang = LANG;
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    const key = el.getAttribute("data-i18n");
+    if (key.endsWith("__html")) el.innerHTML = t(key);
+    else el.textContent = t(key);
+  });
+  document.querySelectorAll("[data-i18n-ph]").forEach((el) => { el.placeholder = t(el.getAttribute("data-i18n-ph")); });
+  document.querySelectorAll(".langs button").forEach((b) => b.classList.toggle("on", b.dataset.lang === LANG));
+}
+document.querySelectorAll(".langs button").forEach((b) => b.addEventListener("click", () => applyLang(b.dataset.lang)));
+applyLang(LANG);
+
+const $ = (id) => document.getElementById(id);
+let skills = null;
+let shaByTool = {};
+
+function vlog(line) {
+  const el = $("vlog");
+  if (el.getAttribute("data-i18n")) { el.removeAttribute("data-i18n"); el.textContent = ""; }
+  el.textContent += line + "\n";
+  el.scrollTop = el.scrollHeight;
+}
+function step(cls, html) {
+  const d = document.createElement("div");
+  d.className = "step " + cls;
+  d.innerHTML = html;
+  $("trace").appendChild(d);
+  $("trace").scrollTop = $("trace").scrollHeight;
+  return d;
+}
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+$("connect").addEventListener("click", async () => {
+  $("connect").disabled = true;
+  $("vlog").textContent = "";
+  try {
+    skills?.dispose();
+    skills = await connectStaticSkills($("origin").value.trim(), {
+      quickjsWasm: "../demo/emscripten-module.wasm",
+      minimemoryWasm: "../demo/minimemory_bg.wasm",
+      minimemoryInit: (bytes) => { minimemoryInitSync({ module: bytes }); return WasmOkfIndex; },
+      onLog: vlog,
+    });
+    shaByTool = Object.fromEntries(skills.tools.map((x) => [x.name, x.verified_sha256]));
+    $("toolCount").textContent = skills.tools.length + " " + t("tools");
+    $("chatPanel").hidden = false;
+  } catch (e) {
+    vlog("ERROR: " + (e.message || e));
+  } finally {
+    $("connect").disabled = false;
+  }
+});
+
+function toOpenAITools() {
+  return skills.tools.map((x) => ({
+    type: "function",
+    function: { name: x.name, description: (x.description || "").slice(0, 500), parameters: x.inputSchema || { type: "object" } },
+  }));
+}
+
+async function chat(messages) {
+  const headers = { "Content-Type": "application/json" };
+  const key = $("apikey").value.trim();
+  if (key) headers.Authorization = "Bearer " + key;
+  const res = await fetch($("endpoint").value.trim().replace(/\/$/, "") + "/chat/completions", {
+    method: "POST", headers,
+    body: JSON.stringify({ model: $("model").value.trim(), messages, tools: toOpenAITools(), tool_choice: "auto" }),
+  });
+  if (!res.ok) throw new Error("LLM HTTP " + res.status + ": " + (await res.text()).slice(0, 200));
+  return (await res.json()).choices[0].message;
+}
+
+const SYSTEM = `You are an agent whose only tools come from verified static publishers (llms-txt-skills ecosystem).
+Workflow: to find WHERE a capability or knowledge lives, search the publisher registry (registry__search_knowledge / registry__list_concepts). To answer questions about the llms-txt-skills standard use search_knowledge; about the KDD methodology use kdd__search_knowledge. Read get_skill_guide when unsure how to use a tool. Always ground answers in tool results and mention which publisher/concept they came from. Be concise.`;
+
+$("run").addEventListener("click", async () => {
+  if (!skills) { alert(t("errNoTools")); return; }
+  const q = $("q").value.trim();
+  if (!q) return;
+  $("run").disabled = true;
+  step("user", "<b>&gt; " + esc(q) + "</b>");
+  const messages = [{ role: "system", content: SYSTEM }, { role: "user", content: q }];
+  try {
+    for (let turn = 0; turn < 8; turn++) {
+      const thinking = step("", "<span class='k'>" + t("thinking") + "</span>");
+      const msg = await chat(messages);
+      thinking.remove();
+      messages.push(msg);
+      if (msg.tool_calls && msg.tool_calls.length) {
+        for (const call of msg.tool_calls) {
+          const name = call.function.name;
+          let args = {};
+          try { args = JSON.parse(call.function.arguments || "{}"); } catch { /* args vacios */ }
+          const el = step("tool",
+            "<span class='k'>" + t("calling") + " " + esc(name) + "</span>(" + esc(JSON.stringify(args)) + ")" +
+            (shaByTool[name] ? "<div class='sha'>" + t("verifiedSha") + shaByTool[name] + "</div>" : "") +
+            "<pre>…</pre>");
+          let result;
+          try { result = await skills.callTool(name, args); }
+          catch (e) { result = { error: String(e.message || e) }; }
+          el.querySelector("pre").textContent = JSON.stringify(result, null, 1).slice(0, 1200);
+          messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(result).slice(0, 6000) });
+        }
+        continue;
+      }
+      step("answer", "<span class='k'>" + t("answer") + "</span><br>" + esc(msg.content || "").replace(/\n/g, "<br>"));
+      break;
+    }
+  } catch (e) {
+    step("answer", "<span class='k' style='color:var(--err)'>ERROR</span> " + esc(e.message || e));
+  } finally {
+    $("run").disabled = false;
+  }
+});
+</script>
+</body>
+</html>

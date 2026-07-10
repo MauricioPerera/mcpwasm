@@ -385,7 +385,7 @@ Pieces live in:
 
 ## The executable-skill line in `llms.txt`
 
-> **Status: Draft v0.4, adopted.** This format is specified by the
+> **Status: Draft v0.5, adopted.** This format is specified by the
 > [Executable Skills extension](https://github.com/MauricioPerera/llms-txt-skills/blob/master/docs/ext-executable-skills.md)
 > of the [llms-txt-skills](https://github.com/MauricioPerera/llms-txt-skills)
 > standard. This repo is its reference implementation; the spec and this code
@@ -423,7 +423,7 @@ registerTool({
 ## Origin memory (search over static content)
 
 > Spec: *origin memory* in
-> [Executable Skills v0.4](https://github.com/MauricioPerera/llms-txt-skills/blob/master/docs/ext-executable-skills.md).
+> [Executable Skills v0.5](https://github.com/MauricioPerera/llms-txt-skills/blob/master/docs/ext-executable-skills.md).
 
 > **Both runtimes.** Origin memory runs in the **gateway**
 > (`worker-gateway.mjs`) and in the **local runtime** (`bin/mcpwasm-local.mjs`),
@@ -487,6 +487,41 @@ verification, where its attestation model remains Ed25519-only (platform
 limitation of Workers, documented in
 [Sigstore](#sigstore-attestations---require-attestation-local-runtime-only)
 above).
+
+## Scopes — multiple projects on one origin
+
+> Spec: §2.5 of
+> [Executable Skills v0.5](https://github.com/MauricioPerera/llms-txt-skills/blob/master/docs/ext-executable-skills.md)
+> (resolves RFC v0.10 Open Question 6). Both runtimes, since 0.6.0.
+
+One origin (e.g. a GitHub Pages root site) can aggregate skills from several
+projects. Without namespacing, two projects that both publish a
+`search_knowledge` tool collide, and only one `skills-memory` line can exist
+per origin. Scopes fix both:
+
+```
+<!-- skills-memory: {"snapshot":"/KDD/skills-index.snapshot","snapshot_sha256":"…","format":"minimemory-okf-v1","scope":"kdd"} -->
+
+## Skills
+
+- [search_knowledge](/KDD/skills/search_knowledge/SKILL.md): … <!-- skill: {"version":"1.0.0","tool":"/KDD/skills/search_knowledge/tool.js","tool_sha256":"…","scope":"kdd"} -->
+```
+
+- `scope` (optional, pattern `^[a-z][a-z0-9_-]*$`) declares the project
+  namespace of a skill line. The runtime exposes the tool under the public
+  name **`<scope>__<toolName>`** (`kdd__search_knowledge`); the rename happens
+  at the **host boundary only** — the published `tool.js` bytes, its
+  `tool_sha256`, and any attestations are untouched. This preserves the
+  universal-template property: the same `tool.js` can be served by every
+  publisher under different scopes with one ecosystem-wide hash.
+- One `skills-memory` line **per scope** (at most one without `scope`). Each
+  skill gets `host.memorySearch` bound to **its own scope's** verified
+  snapshot — memories are isolated per project.
+- An invalid `scope` value makes the line non-executable (reported, not
+  loaded). A public-name collision (two lines mapping to the same public
+  name) keeps the first and skips the rest with a diagnostic.
+- Skill recipes follow the public name: `skill://kdd__search_knowledge`.
+- Fully backward compatible: no `scope` ⇒ exactly the pre-0.6.0 behavior.
 
 ## Skill recipes (SKILL.md) as MCP resources
 

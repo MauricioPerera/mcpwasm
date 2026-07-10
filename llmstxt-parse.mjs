@@ -46,10 +46,11 @@ const MEMORY_RE =
   /^\s*<!--\s*skills-memory:\s*(\{.*?\})\s*-->\s*$/;
 
 export function parseLlmsTxt(text) {
-  if (typeof text !== "string") return { skills: [], nonExecutable: [], memory: null };
+  if (typeof text !== "string") return { skills: [], nonExecutable: [], memory: null, memories: [] };
   const skills = [];
   const nonExecutable = [];
-  let memory = null;
+  const memories = []; // ext v0.5: una entrada por scope (scope undefined = default)
+  let memory = null; // legado: la primera entrada SIN scope (back-compat)
   let inSkillsSection = false;
 
   for (const rawLine of text.split(/\r?\n/)) {
@@ -83,7 +84,8 @@ export function parseLlmsTxt(text) {
           meta &&
           typeof meta === "object" &&
           typeof meta.tool === "string" &&
-          typeof meta.tool_sha256 === "string"
+          typeof meta.tool_sha256 === "string" &&
+          (meta.scope === undefined || (typeof meta.scope === "string" && /^[a-z][a-z0-9_-]*$/.test(meta.scope)))
         ) {
           skills.push({
             name,
@@ -96,6 +98,9 @@ export function parseLlmsTxt(text) {
             // Los runtimes la exponen como MCP resource (resources/*).
             skillPath: url,
             skillSha256: typeof meta.sha256 === "string" ? meta.sha256 : undefined,
+            // Scope (ext v0.5 SS2.5): namespace declarativo para origins
+            // multi-proyecto; el runtime expone <scope>__<name>.
+            scope: typeof meta.scope === "string" ? meta.scope : undefined,
           });
         } else {
           let reason;
@@ -103,6 +108,8 @@ export function parseLlmsTxt(text) {
             reason = "sin metadata inline (skill de prosa, solo enlace)";
           } else if (metaError) {
             reason = "metadata JSON invalida";
+          } else if (meta && meta.scope !== undefined && !(typeof meta.scope === "string" && /^[a-z][a-z0-9_-]*$/.test(meta.scope))) {
+            reason = "scope invalido (patron ^[a-z][a-z0-9_-]*$, ext v0.5 SS2.5)";
           } else {
             reason = "no declara 'tool'/'tool_sha256' (skill de prosa, ver SKILL.md)";
           }
@@ -112,9 +119,11 @@ export function parseLlmsTxt(text) {
       }
     }
 
-    // Linea de memoria (a nivel origin, puede estar fuera de ## Skills).
-    // Solo la primera valida se toma.
-    if (memory === null) {
+    // Lineas de memoria (a nivel origin, pueden estar fuera de ## Skills).
+    // ext v0.5 SS2.5: una linea POR scope (clave "scope" opcional; a lo sumo
+    // una sin scope). Se ignoran duplicados del mismo scope (gana la primera).
+    // `memory` (legado) sigue siendo la primera SIN scope, o null.
+    {
       const mm = rawLine.match(MEMORY_RE);
       if (mm) {
         let memMeta;
@@ -128,18 +137,25 @@ export function parseLlmsTxt(text) {
           typeof memMeta === "object" &&
           typeof memMeta.snapshot === "string" &&
           typeof memMeta.snapshot_sha256 === "string" &&
-          typeof memMeta.format === "string"
+          typeof memMeta.format === "string" &&
+          (memMeta.scope === undefined || (typeof memMeta.scope === "string" && /^[a-z][a-z0-9_-]*$/.test(memMeta.scope)))
         ) {
-          memory = {
-            snapshot: memMeta.snapshot,
-            snapshot_sha256: memMeta.snapshot_sha256,
-            format: memMeta.format,
-            unsupported: memMeta.format !== "minimemory-okf-v1",
-          };
+          const scopeKey = typeof memMeta.scope === "string" ? memMeta.scope : "";
+          if (!memories.some((m) => (m.scope || "") === scopeKey)) {
+            const entry = {
+              snapshot: memMeta.snapshot,
+              snapshot_sha256: memMeta.snapshot_sha256,
+              format: memMeta.format,
+              unsupported: memMeta.format !== "minimemory-okf-v1",
+              scope: memMeta.scope,
+            };
+            memories.push(entry);
+            if (memory === null && memMeta.scope === undefined) memory = entry;
+          }
         }
         // Si faltan campos -> memory queda null (ignorado silenciosamente).
       }
     }
   }
-  return { skills, nonExecutable, memory };
+  return { skills, nonExecutable, memory, memories };
 }

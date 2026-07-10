@@ -363,6 +363,138 @@ declaredMemHash = "0".repeat(64);
 }
 
 // ---------------------------------------------------------------------------
+// [scopes] ext v0.5 SS2.5: origin multi-proyecto. Dos scopes (alpha/beta) con
+// el MISMO nombre interno de tool (search_mem) y una memoria POR scope; el
+// runtime debe exponer alpha__search_mem / beta__search_mem, enrutar cada una
+// a SU snapshot, saltar colisiones de nombre publico con diagnostico, y servir
+// la receta como skill://alpha__search_mem.
+console.log("\n[scopes] namespacing multi-proyecto (ext v0.5 SS2.5):");
+{
+  // Un snapshot POR scope, con contenido distinguible (para asertar cruce).
+  const idxA = WasmOkfIndex.with_chunk_size(800, 50);
+  idxA.ingest_concept(
+    "returns-policy",
+    "---\ntype: docs\ntitle: Returns policy\n---\nCustomers can return any product within thirty days of purchase for a full refund."
+  );
+  const SNAP_A = idxA.export_snapshot();
+  const idxB = WasmOkfIndex.with_chunk_size(800, 50);
+  idxB.ingest_concept(
+    "shipping-info",
+    "---\ntype: docs\ntitle: Shipping info\n---\nStandard shipping takes five business days. Express shipping arrives in two days."
+  );
+  const SNAP_B = idxB.export_snapshot();
+
+  // Mismo nombre interno en ambos scopes; bytes distintos (description).
+  const TOOL_A = SEARCH_TOOL;
+  const TOOL_B = SEARCH_TOOL.replace("BM25 search over the origin memory snapshot.", "BM25 search (beta scope).");
+  const SKILL_A = "---\nname: search_mem\n---\n\n# search_mem (alpha)\n\nSearch alpha knowledge before answering.\n";
+
+  const scopedServer = createServer((req, res) => {
+    const u = new URL(req.url, "http://127.0.0.1");
+    const send = (status, body, ct = "text/plain; charset=utf-8") => {
+      res.writeHead(status, { "content-type": ct });
+      res.end(body);
+    };
+    if (u.pathname === "/llms.txt")
+      return send(
+        200,
+        "# fake publisher multi-proyecto\n\n" +
+          `<!-- skills-memory: ${JSON.stringify({ snapshot: "/alpha/mem.snapshot", snapshot_sha256: sha(SNAP_A), format: "minimemory-okf-v1", scope: "alpha" })} -->\n` +
+          `<!-- skills-memory: ${JSON.stringify({ snapshot: "/beta/mem.snapshot", snapshot_sha256: sha(SNAP_B), format: "minimemory-okf-v1", scope: "beta" })} -->\n\n` +
+          "## Skills\n\n" +
+          `- [search_mem](/alpha/SKILL.md): Search alpha memory. <!-- skill: ${JSON.stringify({ version: "1.0.0", sha256: sha(SKILL_A), tool: "/alpha/tool.js", tool_sha256: sha(TOOL_A), scope: "alpha" })} -->\n` +
+          `- [search_mem](/beta/SKILL.md): Search beta memory. <!-- skill: ${JSON.stringify({ version: "1.0.0", tool: "/beta/tool.js", tool_sha256: sha(TOOL_B), scope: "beta" })} -->\n` +
+          // Colision DELIBERADA: mismo scope+name que la primera linea -> el
+          // runtime debe saltarla con diagnostico (gana la primera).
+          `- [search_mem](/beta/SKILL.md): Colision a proposito. <!-- skill: ${JSON.stringify({ version: "1.0.0", tool: "/beta/tool.js", tool_sha256: sha(TOOL_B), scope: "alpha" })} -->\n`
+      );
+    if (u.pathname === "/alpha/tool.js") return send(200, TOOL_A, "application/javascript");
+    if (u.pathname === "/beta/tool.js") return send(200, TOOL_B, "application/javascript");
+    if (u.pathname === "/alpha/SKILL.md") return send(200, SKILL_A, "text/markdown");
+    if (u.pathname === "/alpha/mem.snapshot") return send(200, SNAP_A, "application/json");
+    if (u.pathname === "/beta/mem.snapshot") return send(200, SNAP_B, "application/json");
+    return send(404, "not found");
+  });
+  await new Promise((r) => scopedServer.listen(0, "127.0.0.1", r));
+  const scopedOrigin = "http://127.0.0.1:" + scopedServer.address().port;
+
+  const child3 = spawn(process.execPath, [binPath, scopedOrigin], { stdio: ["pipe", "pipe", "pipe"] });
+  const stderr3 = [];
+  child3.stderr.on("data", (d) => {
+    for (const l of String(d).split(/\r?\n/)) if (l.trim()) stderr3.push(l);
+  });
+  const pending3 = [];
+  const waiting3 = [];
+  let buf3 = "";
+  child3.stdout.on("data", (d) => {
+    buf3 += String(d);
+    let i;
+    while ((i = buf3.indexOf("\n")) !== -1) {
+      const line = buf3.slice(0, i).trim();
+      buf3 = buf3.slice(i + 1);
+      if (!line) continue;
+      const w = waiting3.shift();
+      if (w) w(line);
+      else pending3.push(line);
+    }
+  });
+  const nextLine3 = (timeoutMs = 60000) => {
+    if (pending3.length > 0) return Promise.resolve(pending3.shift());
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("timeout (scopes)")), timeoutMs);
+      waiting3.push((l) => {
+        clearTimeout(t);
+        resolve(l);
+      });
+    });
+  };
+  const send3 = (obj) => child3.stdin.write(JSON.stringify(obj) + "\n");
+  try {
+    send3({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const list3 = JSON.parse(await nextLine3());
+    const names3 = (list3.result && list3.result.tools ? list3.result.tools : []).map((t) => t.name);
+    check(names3.includes("alpha__search_mem") && names3.includes("beta__search_mem"),
+      "scopes: tools/list expone alpha__search_mem y beta__search_mem");
+    check(!names3.includes("search_mem"),
+      "scopes: el nombre interno 'search_mem' NO se expone sin prefijo");
+    check(stderr3.some((l) => /colision/.test(l) && /alpha__search_mem/.test(l)),
+      "scopes: la colision de nombre publico se salta con diagnostico en stderr");
+
+    send3({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "alpha__search_mem", arguments: { q: "refund" } } });
+    const hitA = JSON.parse(await nextLine3());
+    const hitsA = hitA.result && hitA.result.structuredContent && hitA.result.structuredContent.hits;
+    check(Array.isArray(hitsA) && hitsA.length > 0 && /return|refund/i.test(hitsA[0].text || ""),
+      "scopes: alpha__search_mem('refund') pega en el snapshot de ALPHA");
+
+    send3({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "beta__search_mem", arguments: { q: "shipping express" } } });
+    const hitB = JSON.parse(await nextLine3());
+    const hitsB = hitB.result && hitB.result.structuredContent && hitB.result.structuredContent.hits;
+    check(Array.isArray(hitsB) && hitsB.length > 0 && /shipping|express/i.test(hitsB[0].text || ""),
+      "scopes: beta__search_mem('shipping express') pega en el snapshot de BETA");
+
+    // Cruce: la memoria de alpha NO sabe de shipping -> 0 hits (aislamiento por scope)
+    send3({ jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "alpha__search_mem", arguments: { q: "shipping express" } } });
+    const cross = JSON.parse(await nextLine3());
+    const crossHits = cross.result && cross.result.structuredContent && cross.result.structuredContent.hits;
+    check(Array.isArray(crossHits) && crossHits.length === 0,
+      "scopes: alpha__search_mem('shipping express') -> 0 hits (memorias aisladas por scope)");
+
+    send3({ jsonrpc: "2.0", id: 5, method: "resources/list" });
+    const res3 = JSON.parse(await nextLine3());
+    const uris3 = (res3.result && res3.result.resources ? res3.result.resources : []).map((r) => r.uri);
+    check(uris3.includes("skill://alpha__search_mem"),
+      "scopes: la receta se sirve como skill://alpha__search_mem (URI con nombre publico)");
+  } catch (e) {
+    console.error("ERROR en scopes:", e && e.stack ? e.stack : e);
+    failures++;
+  } finally {
+    child3.stdin.end();
+    await new Promise((r) => child3.on("exit", () => r()));
+    scopedServer.close();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // [--serve] directorio real en disco (simula un git clone) + file server
 // interno del runtime + defensa contra directory traversal.
 console.log("\n[--serve] directorio local -> file server interno -> MCP:");

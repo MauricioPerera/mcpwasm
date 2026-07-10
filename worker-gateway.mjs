@@ -211,7 +211,7 @@ function isolateCacheGet(origin) {
   return e;
 }
 
-function isolateCachePut(origin, skills, rejected, snapshotText, verdicts, docs) {
+function isolateCachePut(origin, skills, rejected, snapshots, verdicts, docs) {
   if (isolateCache.size >= ISOLATE_MAX_ENTRIES) {
     const oldest = isolateCache.keys().next().value; // evict FIFO (primera clave)
     if (oldest !== undefined) isolateCache.delete(oldest);
@@ -219,7 +219,7 @@ function isolateCachePut(origin, skills, rejected, snapshotText, verdicts, docs)
   isolateCache.set(origin, {
     skills,
     rejected,
-    snapshotText: snapshotText || null,
+    snapshots: snapshots || {}, // ext v0.5: { "<scope|''>": snapshotText } verificados
     verdicts: verdicts || null, // {verdicts, counts} o null (modo off)
     docs: docs || [], // recetas (SKILL.md verificado) -> resources
     expiresAt: Date.now() + ISOLATE_TTL_MS,
@@ -638,13 +638,13 @@ function attestHeaderStr(counts) {
 // defensivo. code (tool.js) ya esta verificado por sha256 al poblar => el L2
 // cachea contenido post-verificacion; no se re-verifica al hidratar (igual que la
 // capa 1, que tampoco re-verifica en hit).
-function serializeDiscL2(skills, rejected, snapshotText, verdicts, docs) {
+function serializeDiscL2(skills, rejected, snapshots, verdicts, docs) {
   return JSON.stringify({
     kind: "gw-disc",
     v: 1,
     skills,
     rejected,
-    snapshotText: snapshotText || null,
+    snapshots: snapshots || {},
     verdicts: verdicts || null,
     docs: docs || [],
   });
@@ -684,13 +684,22 @@ function parseDiscL2(raw) {
       if (!o.verdicts.counts || typeof o.verdicts.counts !== "object") return null;
       verdicts = { verdicts: o.verdicts.verdicts, counts: o.verdicts.counts };
     }
-    const snapshotText = typeof o.snapshotText === "string" ? o.snapshotText : null;
+    // snapshots (ext v0.5): objeto scope->texto. Back-compat: entradas L2
+    // previas traen snapshotText string -> se hidrata como scope default "".
+    let snapshots = {};
+    if (o.snapshots && typeof o.snapshots === "object" && !Array.isArray(o.snapshots)) {
+      for (const k of Object.keys(o.snapshots)) {
+        if (typeof o.snapshots[k] === "string") snapshots[k] = o.snapshots[k];
+      }
+    } else if (typeof o.snapshotText === "string") {
+      snapshots = { "": o.snapshotText };
+    }
     // docs: tolerante — entradas L2 previas a esta version no lo traen => [].
     const docs = Array.isArray(o.docs)
       ? o.docs.filter((d) => d && typeof d === "object" && typeof d.name === "string" && typeof d.text === "string")
           .map((d) => ({ name: d.name, description: typeof d.description === "string" ? d.description : "", text: d.text }))
       : [];
-    return { skills, rejected, snapshotText, verdicts, docs };
+    return { skills, rejected, snapshots, verdicts, docs };
   } catch {
     return null;
   }
@@ -712,7 +721,7 @@ async function discoverSkills(origin, fetchImpl, attestCtx, caps) {
     return {
       skills: cached.skills,
       rejected: cached.rejected,
-      snapshotText: cached.snapshotText,
+      snapshots: cached.snapshots || {},
       verdicts: cached.verdicts,
       docs: cached.docs || [],
       discovery: "hit",
@@ -734,7 +743,7 @@ async function discoverSkills(origin, fetchImpl, attestCtx, caps) {
       return {
         skills: nowCached.skills,
         rejected: nowCached.rejected,
-        snapshotText: nowCached.snapshotText,
+        snapshots: nowCached.snapshots || {},
         verdicts: nowCached.verdicts,
         docs: nowCached.docs || [],
         discovery: "hit",
@@ -769,12 +778,12 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
   if (l2Raw !== null) {
     const hydrated = parseDiscL2(l2Raw);
     if (hydrated) {
-      isolateCachePut(origin, hydrated.skills, hydrated.rejected, hydrated.snapshotText, hydrated.verdicts, hydrated.docs);
+      isolateCachePut(origin, hydrated.skills, hydrated.rejected, hydrated.snapshots, hydrated.verdicts, hydrated.docs);
       return {
         skills: hydrated.skills,
         rejected: hydrated.rejected,
         discovery: "l2",
-        snapshotText: hydrated.snapshotText,
+        snapshots: hydrated.snapshots,
         verdicts: hydrated.verdicts,
         docs: hydrated.docs,
       };
@@ -813,7 +822,7 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
 
   const parsed = parseLlmsTxt(llmsText);
   const parsedSkills = parsed.skills;
-  const memory = parsed.memory;
+  const memories = parsed.memories || [];
 
   // Skills de prosa (core llms-txt-skills spec, sin tool/tool_sha256): este
   // gateway no las ejecuta, pero reportarlas evita que un origin con SOLO
@@ -905,8 +914,16 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
 
     // Cache inmutable (key incluye el sha => contenido addressable).
     await cachePut(toolKey, src, 0);
+    // ext v0.5: nombre publico con scope; colision -> skill rejected (gana la primera).
+    const publicName = s.scope ? s.scope + "__" + s.name : s.name;
+    if (skills.some((k) => k.publicName === publicName)) {
+      rejected.push({ name: s.name, reason: "nombre publico '" + publicName + "' ya cargado (colision; ext v0.5 SS2.5)" });
+      continue;
+    }
     skills.push({
       name: s.name,
+      publicName,
+      scope: s.scope,
       description: s.description,
       inputSchema: undefined, // se extrae del contexto QuickJS en runtime
       code: src,
@@ -936,7 +953,7 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
             );
           }
         }
-        if (docOk) docs.push({ name: s.name, description: s.description, text: dr.text });
+        if (docOk) docs.push({ name: (s.scope ? s.scope + "__" + s.name : s.name), description: s.description, text: dr.text });
       } else if (dr) {
         console.warn("[gateway] receta omitida: " + s.name + " -> SKILL.md HTTP " + dr.status);
       }
@@ -949,44 +966,43 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
   // mismatch/fetch fallido/HTTP no-200/unsupported => snapshotText null: skills se
   // listan pero memorySearch NO se inyecta => las skills que la usen fallan controlado
   // (host.memorySearch undefined -> throw -> isError:true). No se cachea snapshot corrupto.
-  let snapshotText = null;
-  if (
-    memory &&
-    !memory.unsupported &&
-    typeof memory.snapshot === "string" &&
-    typeof memory.snapshot_sha256 === "string"
-  ) {
-    const snapUrl = new URL(memory.snapshot, origin).href;
+  // ext v0.5: un snapshot POR scope. snapshots = { "<scope|''>": texto } con
+  // los VERIFICADOS; fallo por entrada -> esa memoria se omite, el resto sigue.
+  const snapshots = {};
+  for (const mem of memories) {
+    const scopeKey = mem.scope || "";
+    const label = "[gateway] origin-memory" + (mem.scope ? "[" + mem.scope + "]" : "");
+    if (mem.unsupported) {
+      console.warn(label + ": format unsupported '" + mem.format + "' -> memory NO inyectada");
+      continue;
+    }
     let snapResp = null;
     try {
-      snapResp = await fetchText(snapUrl, FETCH_TIMEOUT_MS, caps.snapshot, fetchImpl);
+      snapResp = await fetchText(new URL(mem.snapshot, origin).href, FETCH_TIMEOUT_MS, caps.snapshot, fetchImpl);
     } catch (e) {
-      console.warn("[gateway] snapshot fetch fallo: " + String((e && e.message) || e) + " -> memory NO inyectada");
-      snapResp = null;
+      console.warn(label + ": snapshot fetch fallo: " + String((e && e.message) || e) + " -> memory NO inyectada");
+      continue;
     }
-    if (snapResp && snapResp.status === 200) {
-      let snapHash;
-      try {
-        snapHash = await sha256Hex(snapResp.text);
-      } catch (e) {
-        snapHash = null;
-        console.warn("[gateway] snapshot sha256 fallo: " + String((e && e.message) || e) + " -> memory NO inyectada");
-      }
-      if (snapHash && snapHash === memory.snapshot_sha256) {
-        snapshotText = snapResp.text;
-      } else if (snapHash) {
-        console.warn(
-          "[gateway] snapshot sha256 mismatch (declarado " +
-            memory.snapshot_sha256.slice(0, 12) + "…, obtenido " + snapHash.slice(0, 12) +
-            "…) -> memory NO inyectada (skills se listan, memorySearch falla controlado)"
-        );
-        // NO cachear snapshot corrupto.
-      }
-    } else if (snapResp) {
-      console.warn("[gateway] snapshot HTTP " + snapResp.status + " -> memory NO inyectada");
+    if (snapResp.status !== 200) {
+      console.warn(label + ": snapshot HTTP " + snapResp.status + " -> memory NO inyectada");
+      continue;
     }
-  } else if (memory && memory.unsupported) {
-    console.warn("[gateway] skills-memory format unsupported: '" + memory.format + "' -> memory NO inyectada");
+    let snapHash = null;
+    try {
+      snapHash = await sha256Hex(snapResp.text);
+    } catch (e) {
+      console.warn(label + ": snapshot sha256 fallo: " + String((e && e.message) || e) + " -> memory NO inyectada");
+      continue;
+    }
+    if (snapHash === mem.snapshot_sha256) {
+      snapshots[scopeKey] = snapResp.text;
+    } else {
+      console.warn(
+        label + ": snapshot sha256 mismatch (declarado " +
+          mem.snapshot_sha256.slice(0, 12) + "…, obtenido " + snapHash.slice(0, 12) +
+          "…) -> memory NO inyectada (skills se listan, memorySearch falla controlado)"
+      );
+    }
   }
 
   // Modo off: no se fetchea. advisory/enforcing: descargar el array, computar
@@ -1001,15 +1017,15 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
 
   // Poblar capa 1 aunque algunas skills se hayan rechazado: las rechazadas no se
   // re-intentan en cada request caliente; el TTL refresca.
-  isolateCachePut(origin, skills, rejected, snapshotText, verdicts, docs);
+  isolateCachePut(origin, skills, rejected, snapshots, verdicts, docs);
 
   // T40: escribir el RESULTADO post-verificacion en el L2 (cross-isolate). Un
   // nuevo isolate (mismo deploy, misma config, mismo dia) hidrata la capa 1 desde
   // aqui y responde "l2" sin fetchar ni re-verificar. TTL 60s (mismo que capa 1).
   // El L2 nunca puede tumbar un request: cachePut ya traga errores (bypass).
-  await cachePut(l2Key, serializeDiscL2(skills, rejected, snapshotText, verdicts, docs), DISC_L2_TTL_MS);
+  await cachePut(l2Key, serializeDiscL2(skills, rejected, snapshots, verdicts, docs), DISC_L2_TTL_MS);
 
-  return { skills, rejected, discovery: "miss", snapshotText, verdicts, docs };
+  return { skills, rejected, discovery: "miss", snapshots, verdicts, docs };
 }
 
 // Cada skill se carga en su PROPIO contexto QuickJS (newContext propio => runtime
@@ -1021,46 +1037,57 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
 const GUIDE_TOOL_NAME = "get_skill_guide";
 
 class PerSkillHost {
-  constructor({ quickjs, allowedOrigin, fetchImpl, skills, snapshotText, docs }) {
+  constructor({ quickjs, allowedOrigin, fetchImpl, skills, snapshots, docs }) {
     this._quickjs = quickjs;
     this._allowedOrigin = allowedOrigin;
     this._fetchImpl = fetchImpl;
-    this._skills = skills; // [{name, code, ...}]
-    this._snapshotText = snapshotText || null; // snapshot verificado o null
-    this._docs = new Map((docs || []).map((d) => [d.name, d])); // recetas verificadas
-    this._byName = new Map(); // name -> AsyncToolHost
-    this._order = []; // names en orden de carga
+    this._skills = skills; // [{name, publicName?, scope?, code, ...}]
+    this._snapshots = snapshots || {}; // ext v0.5: { "<scope|''>": texto verificado }
+    this._docs = new Map((docs || []).map((d) => [d.name, d])); // recetas (clave = publicName)
+    this._byName = new Map(); // publicName de la SKILL -> AsyncToolHost
+    this._routes = new Map(); // publicName de cada TOOL -> { host, internal }
+    this._order = []; // publicNames de tools en orden de carga
   }
 
   async init() {
-    // Si hay snapshot verificado, se inyecta host.memorySearch en TODAS las skills
-    // via extraCapabilities (puente raw-JSON asyncified). Misma closure a cada
-    // skill => una sola instancia WasmOkfIndex por request (sin estado compartido
-    // entre requests: la closure se crea por request aqui). Sin snapshot ->
-    // extraCapabilities null => comportamiento byte-identico al previo.
-    const extraCaps = this._snapshotText
-      ? { memorySearch: makeMemorySearch(this._snapshotText) }
-      : null;
+    // ext v0.5: un closure memorySearch POR scope con snapshot verificado; cada
+    // skill recibe el de SU scope. Las closures se crean por request aqui (una
+    // instancia WasmOkfIndex por scope por request, sin estado compartido).
+    const scopedCaps = {};
+    for (const k of Object.keys(this._snapshots)) {
+      scopedCaps[k] = { memorySearch: makeMemorySearch(this._snapshots[k]) };
+    }
     for (const s of this._skills) {
       const h = new AsyncToolHost({
         quickjs: this._quickjs,
         allowedOrigin: this._allowedOrigin,
         fetchImpl: this._fetchImpl,
-        extraCapabilities: extraCaps,
+        extraCapabilities: scopedCaps[s.scope || ""] || null,
       });
       await h.init();
       h.loadToolSource(s.code);
-      this._byName.set(s.name, h);
-      this._order.push(s.name);
+      const skillPublic = s.publicName || s.name;
+      this._byName.set(skillPublic, h);
+      // Rutas publicas por TOOL registrada (<scope>__<name>).
+      for (const t of h.listTools()) {
+        const pub = s.scope ? s.scope + "__" + t.name : t.name;
+        if (this._routes.has(pub)) {
+          console.warn("[gateway] tool omitida: '" + pub + "' ya registrada (colision de nombre publico)");
+          continue;
+        }
+        this._routes.set(pub, { host: h, internal: t.name });
+        this._order.push(pub);
+      }
     }
   }
 
   // tools/list: agrega los schemas de todos los contextos.
   listTools() {
     const all = [];
-    for (const name of this._order) {
-      const tools = this._byName.get(name).listTools();
-      for (const t of tools) all.push(t);
+    for (const pub of this._order) {
+      const r = this._routes.get(pub);
+      const t = r.host.listTools().find((x) => x.name === r.internal);
+      if (t) all.push({ ...t, name: pub });
     }
     if (this._docs.size > 0) {
       // Tool sintetica del gateway (no sandboxeada): fallback universal para
@@ -1088,9 +1115,9 @@ class PerSkillHost {
       if (!doc) throw new Error("skill sin receta disponible: " + ((args && args.name) || "(sin nombre)") + " — disponibles: " + [...this._docs.keys()].join(", "));
       return { name: doc.name, guide: doc.text };
     }
-    const h = this._byName.get(name);
-    if (!h) throw new Error("tool no encontrada: " + name);
-    return await h.callTool(name, args);
+    const r = this._routes.get(name);
+    if (!r) throw new Error("tool no encontrada: " + name);
+    return await r.host.callTool(r.internal, args);
   }
 
   // MCP resources: la receta (SKILL.md verificado en discovery) de cada skill.
@@ -1527,14 +1554,14 @@ export default {
     const caps = parseSizeCaps(env);
 
     let skills;
-    let snapshotText = null;
+    let snapshots = {};
     let discovery = "none";
     let verdicts = null; // {verdicts, counts} o null (modo off)
     let docs = []; // recetas (SKILL.md verificado) -> resources + get_skill_guide
     try {
       const discovered = await discoverSkills(origin, fetchImpl, attestCtx, caps);
       skills = discovered.skills;
-      snapshotText = discovered.snapshotText || null;
+      snapshots = discovered.snapshots || {};
       discovery = discovered.discovery;
       verdicts = discovered.verdicts || null;
       docs = discovered.docs || [];
@@ -1608,7 +1635,7 @@ export default {
         pool.discard(slot);
         throw e;
       }
-      const host = new PerSkillHost({ quickjs, allowedOrigin: origin, fetchImpl, skills, snapshotText, docs });
+      const host = new PerSkillHost({ quickjs, allowedOrigin: origin, fetchImpl, skills, snapshots, docs });
       try {
         await host.init();
         response = await handleMcpMessageAsync(host, msg);

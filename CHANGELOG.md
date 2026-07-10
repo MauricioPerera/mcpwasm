@@ -6,7 +6,41 @@ are the npm publish dates. Entries describe what each published tarball ships
 relative to the previous one (verified against the actual tarballs, not just
 the git log).
 
-## [Unreleased] — 0.5.0
+## [Unreleased] — 0.6.0
+
+### Added
+- **Scopes: multiple projects on one origin — both runtimes.** Implements
+  §2.5 of the Executable Skills extension **v0.5** (resolves core RFC v0.10
+  Open Question 6). A skill line may declare `"scope":"<name>"`
+  (pattern `^[a-z][a-z0-9_-]*$`); the runtime exposes the tool under the
+  public name **`<scope>__<toolName>`** (e.g. `kdd__search_knowledge`). The
+  rename happens at the **host boundary only**: published `tool.js` bytes,
+  `tool_sha256` verification, and attestations are untouched — the
+  universal-template property (one ecosystem-wide hash for the generated
+  `search_knowledge`) is preserved.
+- **One `skills-memory` line per scope** (at most one unscoped). Each scope's
+  snapshot is fetched and sha256-verified independently; every skill gets
+  `host.memorySearch` bound to **its own scope's** snapshot — per-project
+  memory isolation on a shared origin. `parseLlmsTxt()` now returns
+  `memories` (array, one entry per scope); the legacy `memory` field remains
+  the first unscoped entry (additive, backward compatible).
+- Skill recipes follow the public name: `skill://<scope>__<name>` in
+  `resources/list`/`read`, and `get_skill_guide` takes public names.
+- New local-suite scenario: two scopes sharing the same internal tool name,
+  per-scope memory isolation (cross-scope query ⇒ 0 hits), public-name
+  collision skipped with a diagnostic, and scoped resource URIs.
+
+### Changed
+- Invalid `scope` values make the line non-executable (reported in
+  `nonExecutable` with a reason, not loaded). Public-name collisions keep the
+  first line and skip the rest with a diagnostic (stderr locally, `rejected`
+  in the gateway).
+- Gateway L2 discovery cache format: `snapshotText` (single) → `snapshots`
+  (per-scope map). Old cached entries are hydrated transparently
+  (`snapshotText` ⇒ `{"": text}`); no cache flush needed.
+- No `scope` anywhere ⇒ behavior identical to 0.5.0.
+
+## [0.5.0] — 2026-07-10
 
 ### Added
 - **Skill recipes (SKILL.md) as MCP resources — both runtimes.** An executable

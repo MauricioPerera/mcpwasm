@@ -575,6 +575,42 @@ console.log("\n[lockfile] pin-on-first-use contra publicador que cambia (--lock)
 }
 
 // ---------------------------------------------------------------------------
+// [discovery-fail] origin sin skills verificables: los requests MCP deben
+// recibir un error JSON-RPC CONTROLADO con la razon del fallo de discovery
+// (antes: "Cannot read properties of null (reading 'listTools')").
+console.log("\n[discovery-fail] respuestas controladas con host nulo:");
+{
+  const BAD_TOOL = `registerTool({ name: "x", description: "x", inputSchema: { type: "object" }, handler() { return 1; } });`;
+  const badSrv = createServer((req, res) => {
+    const u = new URL(req.url, "http://x");
+    const send = (s, b) => { res.writeHead(s, { "content-type": "text/plain" }); res.end(b); };
+    if (u.pathname === "/llms.txt")
+      return send(200, `# bad\n\n## Skills\n\n- [x](/x/SKILL.md): x. <!-- skill: {"version":"1.0.0","tool":"/x/tool.js","tool_sha256":"${"0".repeat(64)}"} -->\n`);
+    if (u.pathname === "/x/tool.js") return send(200, BAD_TOOL);
+    return send(404, "nf");
+  });
+  await new Promise((r) => badSrv.listen(0, "127.0.0.1", r));
+  const badOrigin = "http://127.0.0.1:" + badSrv.address().port;
+  const c = spawn(process.execPath, [binPath, badOrigin], { stdio: ["pipe", "pipe", "pipe"] });
+  let outBuf = "";
+  c.stdout.on("data", (d) => { outBuf += String(d); });
+  c.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }) + "\n");
+  c.stdin.end();
+  await new Promise((r) => { const t = setTimeout(() => { c.kill(); r(); }, 60000); c.on("exit", () => { clearTimeout(t); r(); }); });
+  badSrv.close();
+  try {
+    const resp = JSON.parse(outBuf.split("\n").find((l) => l.trim().startsWith("{")));
+    check(resp.error && resp.error.code === -32002 && /descubrimiento fallo/.test(resp.error.message),
+      "discovery-fail: tools/list -> error -32002 con la razon (no crash de null)");
+    check(!/Cannot read properties/.test(outBuf),
+      "discovery-fail: el mensaje feo de null ya no aparece");
+  } catch (e) {
+    console.error("ERROR en discovery-fail:", e && e.message);
+    failures++;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // [--serve] directorio real en disco (simula un git clone) + file server
 // interno del runtime + defensa contra directory traversal.
 console.log("\n[--serve] directorio local -> file server interno -> MCP:");

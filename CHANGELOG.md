@@ -6,6 +6,15 @@ are the npm publish dates. Entries describe what each published tarball ships
 relative to the previous one (verified against the actual tarballs, not just
 the git log).
 
+## [Unreleased]
+
+### Fixed
+- Local runtime: when discovery fails entirely (no verifiable skills), MCP
+  requests now receive a controlled JSON-RPC error (`-32002`,
+  "descubrimiento fallo: <reason>") instead of an internal
+  "Cannot read properties of null" — found dogfooding `--lock` when the
+  lockfile rejected an origin's only skill.
+
 ## [0.8.0] — 2026-07-10
 
 ### Added

@@ -755,6 +755,7 @@ class LocalPerSkillHost {
 }
 
 let host = null;
+let discoveryError = null; // razon del fallo de descubrimiento (respuestas MCP controladas)
 
 async function start() {
   if (serveDir) {
@@ -800,6 +801,16 @@ async function handleLine(line) {
     return;
   }
   let resp;
+  // Descubrimiento fallido => host nulo: responder un error JSON-RPC claro y
+  // estable (antes: "Cannot read properties of null" del core al tocar host).
+  if (host === null && msg && msg.method && !msg.method.startsWith("notifications/")) {
+    out({
+      jsonrpc: "2.0",
+      id: msg.id !== undefined ? msg.id : null,
+      error: { code: -32002, message: "descubrimiento fallo: " + (discoveryError || "sin skills verificadas") },
+    });
+    return;
+  }
   try {
     resp = await handleMcpMessageAsync(host, msg);
   } catch (e) {
@@ -823,7 +834,8 @@ async function handleLine(line) {
 // una suspension a la vez sobre el modulo compartido). Un mensaje que falle no
 // envenena la cola (handleLine captura y responde error JSON-RPC).
 const startP = start().catch(async (e) => {
-  err("descubrimiento fallo: " + String((e && e.message) || e));
+  discoveryError = String((e && e.message) || e);
+  err("descubrimiento fallo: " + discoveryError);
   // NO process.exit() aca: la misma condicion de carrera documentada en
   // rl.on("close") mas abajo (forzar la salida mientras el server interno de
   // --serve y/o el readline de stdin todavia estan liberando sus handles

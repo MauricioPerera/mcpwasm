@@ -35,12 +35,16 @@
   #result { font:12.5px/1.55 ui-monospace,Consolas,monospace; white-space:pre-wrap; max-height:340px; overflow-y:auto; background:var(--code); border-radius:8px; padding:.8rem; }
   .foot { color:var(--dim); font-size:.8rem; margin-top:1.5rem; }
   .foot a { color:var(--acc); }
+  .langs { display:flex; gap:.4rem; justify-content:flex-end; margin-bottom:.8rem; }
+  .langs button { padding:.25rem .6rem; font-size:.75rem; background:transparent; color:var(--dim); border:1px solid var(--border); }
+  .langs button.on { color:var(--acc); border-color:var(--acc); }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Any static site → verified tools, in <em>this tab</em></h1>
-  <p class="lede">
+  <div class="langs"><button data-lang="en">EN</button><button data-lang="es">ES</button><button data-lang="pt">PT</button></div>
+  <h1 data-i18n="h1__html">Any static site → verified tools, in <em>this tab</em></h1>
+  <p class="lede" data-i18n="lede__html">
     This is the <a href="https://github.com/MauricioPerera/mcpwasm">mcpwasm</a> runtime compiled
     for the browser: it fetches a site's <code>llms.txt</code>
     (<a href="https://mauricioperera.github.io/llms-txt-skills/">llms-txt-skills</a> standard),
@@ -51,20 +55,77 @@
 
   <div class="row">
     <input id="origin" type="url" value="https://mauricioperera.github.io" spellcheck="false">
-    <button id="connect">Discover &amp; verify</button>
+    <button id="connect" data-i18n="connect">Discover &amp; verify</button>
   </div>
 
-  <div class="panel"><h2>Verification log</h2><div id="log">(idle — click Discover &amp; verify)</div></div>
-  <div class="panel" id="toolsPanel" hidden><h2>Verified tools</h2><div id="tools"></div></div>
-  <div class="panel" id="resultPanel" hidden><h2>Result</h2><div id="result"></div></div>
+  <div class="panel"><h2 data-i18n="logH">Verification log</h2><div id="log" data-i18n="idle">(idle — click Discover &amp; verify)</div></div>
+  <div class="panel" id="toolsPanel" hidden><h2 data-i18n="toolsH">Verified tools</h2><div id="tools"></div></div>
+  <div class="panel" id="resultPanel" hidden><h2 data-i18n="resultH">Result</h2><div id="result"></div></div>
 
-  <p class="foot">
+  <p class="foot" data-i18n="foot__html">
     The origin must serve CORS (GitHub Pages does). Publish your own in minutes with the
     <a href="https://github.com/MauricioPerera/llms-skills-template">template</a>.
     Same trust model as <code>npx -y @rckflr/mcpwasm &lt;origin&gt;</code> — this page just removes Node from the equation.
   </p>
 </div>
 
+
+<script>
+const I18N = {
+  en: {
+    "h1__html": "Any static site → verified tools, in <em>this tab</em>",
+    "lede__html": 'This is the <a href="https://github.com/MauricioPerera/mcpwasm">mcpwasm</a> runtime compiled for the browser: it fetches a site\u2019s <code>llms.txt</code> (<a href="https://mauricioperera.github.io/llms-txt-skills/">llms-txt-skills</a> standard), <strong>verifies every byte against the declared SHA-256 hashes</strong>, and runs each tool in a QuickJS-WebAssembly sandbox. No server on the publisher side. No Node on yours. Everything below happens in your tab — watch the verification log.',
+    "connect": "Discover & verify",
+    "logH": "Verification log",
+    "idle": "(idle — click Discover & verify)",
+    "toolsH": "Verified tools",
+    "resultH": "Result",
+    "running": "running (sandboxed)…",
+    "shaLabel": "tool_sha256 verified: ",
+    "foot__html": 'The origin must serve CORS (GitHub Pages does). Publish your own in minutes with the <a href="https://github.com/MauricioPerera/llms-skills-template">template</a>. Same trust model as <code>npx -y @rckflr/mcpwasm &lt;origin&gt;</code> — this page just removes Node from the equation.'
+  },
+  es: {
+    "h1__html": "Cualquier sitio estático → tools verificadas, en <em>esta pestaña</em>",
+    "lede__html": 'Este es el runtime <a href="https://github.com/MauricioPerera/mcpwasm">mcpwasm</a> compilado para el navegador: descarga el <code>llms.txt</code> del sitio (estándar <a href="https://mauricioperera.github.io/llms-txt-skills/">llms-txt-skills</a>), <strong>verifica cada byte contra los hashes SHA-256 declarados</strong> y ejecuta cada tool en un sandbox QuickJS-WebAssembly. Sin servidor del lado del publicador. Sin Node del tuyo. Todo lo de abajo pasa en tu pestaña — mirá el log de verificación.',
+    "connect": "Descubrir y verificar",
+    "logH": "Log de verificación",
+    "idle": "(en espera — click en Descubrir y verificar)",
+    "toolsH": "Tools verificadas",
+    "resultH": "Resultado",
+    "running": "ejecutando (en sandbox)…",
+    "shaLabel": "tool_sha256 verificado: ",
+    "foot__html": 'El origin debe servir CORS (GitHub Pages lo hace). Publicá el tuyo en minutos con la <a href="https://github.com/MauricioPerera/llms-skills-template">plantilla</a>. Mismo modelo de confianza que <code>npx -y @rckflr/mcpwasm &lt;origin&gt;</code> — esta página solo saca a Node de la ecuación.'
+  },
+  pt: {
+    "h1__html": "Qualquer site estático → tools verificadas, <em>nesta aba</em>",
+    "lede__html": 'Este é o runtime <a href="https://github.com/MauricioPerera/mcpwasm">mcpwasm</a> compilado para o navegador: ele baixa o <code>llms.txt</code> do site (padrão <a href="https://mauricioperera.github.io/llms-txt-skills/">llms-txt-skills</a>), <strong>verifica cada byte contra os hashes SHA-256 declarados</strong> e executa cada tool num sandbox QuickJS-WebAssembly. Sem servidor do lado do publicador. Sem Node do seu. Tudo abaixo acontece na sua aba — acompanhe o log de verificação.',
+    "connect": "Descobrir e verificar",
+    "logH": "Log de verificação",
+    "idle": "(em espera — clique em Descobrir e verificar)",
+    "toolsH": "Tools verificadas",
+    "resultH": "Resultado",
+    "running": "executando (em sandbox)…",
+    "shaLabel": "tool_sha256 verificado: ",
+    "foot__html": 'A origin deve servir CORS (o GitHub Pages serve). Publique a sua em minutos com o <a href="https://github.com/MauricioPerera/llms-skills-template">template</a>. Mesmo modelo de confiança que <code>npx -y @rckflr/mcpwasm &lt;origin&gt;</code> — esta página só tira o Node da equação.'
+  }
+};
+let LANG = localStorage.getItem("mcpwasm-demo-lang") ||
+  (navigator.language || "en").slice(0, 2).replace(/^(?!es|pt).*$/, "en");
+function t(key) { return (I18N[LANG] && I18N[LANG][key]) || I18N.en[key] || key; }
+function applyLang(lang) {
+  LANG = I18N[lang] ? lang : "en";
+  localStorage.setItem("mcpwasm-demo-lang", LANG);
+  document.documentElement.lang = LANG;
+  document.querySelectorAll("[data-i18n]").forEach((el) => {
+    const key = el.getAttribute("data-i18n");
+    if (key.endsWith("__html")) el.innerHTML = t(key);
+    else el.textContent = t(key);
+  });
+  document.querySelectorAll(".langs button").forEach((b) => b.classList.toggle("on", b.dataset.lang === LANG));
+}
+document.querySelectorAll(".langs button").forEach((b) => b.addEventListener("click", () => applyLang(b.dataset.lang)));
+applyLang(LANG);
+</script>
 <script type="module">
 import { connectStaticSkills, minimemoryInitSync, WasmOkfIndex } from "./mcpwasm-web.js";
 
@@ -90,7 +151,7 @@ function argHint(schema) {
 
 async function callTool(name, rawArgs) {
   $("resultPanel").hidden = false;
-  $("result").textContent = "running (sandboxed)…";
+  $("result").textContent = t("running");
   try {
     const args = rawArgs.trim() ? JSON.parse(rawArgs) : {};
     const out = await skills.callTool(name, args);
@@ -122,7 +183,7 @@ $("connect").addEventListener("click", async () => {
       d.innerHTML = `<b></b> <div class="sha"></div><p></p>
         <div class="call"><input spellcheck="false" placeholder='{"arg": "value"}'><button>Call</button></div>`;
       d.querySelector("b").textContent = t.name;
-      d.querySelector(".sha").textContent = "tool_sha256 verified: " + t.verified_sha256;
+      d.querySelector(".sha").textContent = window.t("shaLabel") + t.verified_sha256;
       d.querySelector("p").textContent = t.description;
       const input = d.querySelector("input");
       input.value = hint;

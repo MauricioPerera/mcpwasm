@@ -42,6 +42,7 @@
     "./shim": "./shim.mjs"
   },
   "files": [
+    "CHANGELOG.md",
     "bin/mcpwasm-local.mjs",
     "index.mjs",
     "host.mjs",

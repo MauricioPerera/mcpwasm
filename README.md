@@ -765,6 +765,7 @@ What it does **not** guarantee:
 
 | File / dir | Purpose |
 |---|---|
+| `CHANGELOG.md` | Per-release changes of the published npm package (verified against the actual tarballs). |
 | `host.mjs` | Synchronous `ToolHost`: loads `tool.js` into QuickJS-wasm, injects the `host.callInternal` capability. |
 | `host-async.mjs` | `AsyncToolHost`: asyncify variant, async handlers, `host.fetchOrigin` capability, the `extraCapabilities` bridge (`host.memorySearch`), mem/stack/gas hardening. |
 | `mcp-core.mjs` | Sync MCP JSON-RPC 2.0 core (`initialize`, `tools/list`, `tools/call`, `ping`). Transport-agnostic. |

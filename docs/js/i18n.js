@@ -70,6 +70,7 @@
       "ways.browserTag": "no Node either",
       "ways.browserP": "The whole runtime in a browser tab (new in 0.7.0): discovery, byte-for-byte SHA-256 verification, one QuickJS-wasm sandbox per tool, scopes and per-scope memory. The publisher only needs CORS — GitHub Pages already sends it. No server on their side, no Node on yours.",
       "ways.browserDemo": "Open the live demo",
+      "ways.browserAgent": "Full-stack agent demo",
       "ways.libraryTag": "embed the sandbox",
       "ways.libraryP": "Build your own platform host with the exact isolation the gateway uses.",
 
@@ -180,6 +181,7 @@
       "ways.browserTag": "tampoco Node",
       "ways.browserP": "El runtime completo en una pestaña del navegador (nuevo en 0.7.0): descubrimiento, verificación SHA-256 byte a byte, un sandbox QuickJS-wasm por tool, scopes y memoria por scope. El publicador solo necesita CORS — GitHub Pages ya lo manda. Sin servidor de su lado, sin Node del tuyo.",
       "ways.browserDemo": "Abrir la demo en vivo",
+      "ways.browserAgent": "Demo del agente full-stack",
       "ways.libraryTag": "embebé el sandbox",
       "ways.libraryP": "Construí tu propio host de plataforma con el mismo aislamiento que usa el gateway.",
 
@@ -290,6 +292,7 @@
       "ways.browserTag": "nem Node",
       "ways.browserP": "O runtime completo numa aba do navegador (novo na 0.7.0): descoberta, verificação SHA-256 byte a byte, um sandbox QuickJS-wasm por tool, scopes e memória por scope. O publicador só precisa de CORS — o GitHub Pages já o envia. Sem servidor do lado dele, sem Node do seu.",
       "ways.browserDemo": "Abrir a demo ao vivo",
+      "ways.browserAgent": "Demo do agente full-stack",
       "ways.libraryTag": "embuta o sandbox",
       "ways.libraryP": "Construa seu próprio host de plataforma com o mesmo isolamento que o gateway usa.",
 

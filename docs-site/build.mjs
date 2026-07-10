@@ -64,7 +64,7 @@ const DOC_SOURCES = [
 ];
 
 const COMMIT_BY_BRANCH = {
-  master: "3531a941c2d3cd69be2971e76e394fa64617c98e",
+  master: "1dfc85471b1ea5f57dd0836c39d912a44fccb5a0",
   "ext-skill-attestations": "abc8898a1d126e9bd0b46d13ae61b09547d4ec39",
 };
 

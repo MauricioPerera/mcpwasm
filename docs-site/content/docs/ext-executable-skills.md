@@ -1,8 +1,8 @@
 # Extension: Executable Skills
 
-**Status:** Draft (v0.4)
-**Date:** 2026-07-02
-**Extends:** [RFC: Publishing Agent Skills through `llms.txt`](./rfc-skills-in-llms-txt.md) (v0.8)
+**Status:** Draft (v0.5)
+**Date:** 2026-07-10
+**Extends:** [RFC: Publishing Agent Skills through `llms.txt`](./rfc-skills-in-llms-txt.md) (v0.9)
 
 ---
 
@@ -36,6 +36,7 @@ An executable skill is declared with two additional keys in the skill entry's JS
 | `version`| string | inherited from core RFC | Human-readable hint. |
 | `tool`   | string | REQUIRED for executable skills | Path to the executable artifact. MUST be a same-origin path (relative or absolute path, never a full URL to another origin). |
 | `tool_sha256` | string | REQUIRED when `tool` is present | Lowercase hex SHA-256 of the exact bytes served at `tool`. |
+| `scope`  | string | OPTIONAL | Namespace for multi-project origins (§2.5). Pattern `^[a-z][a-z0-9_-]*$`. When present, runtimes MUST expose this skill's tools under `<scope>__<tool-name>`. |
 
 The key is deliberately **not** `sha256`: the core RFC already uses `sha256` (inline and in `/.well-known/agent-skills/index.json`) for the hash of the fetched `SKILL.md`. The two keys MAY appear on the same skill line and verify different files; runtimes MUST NOT conflate them.
 
@@ -89,6 +90,53 @@ When a supported snapshot is declared, verified, and loaded, the runtime injects
 
 Updating content means re-exporting the snapshot and updating `snapshot_sha256` — same lifecycle as `tool_sha256` (§2.3).
 
+An `llms.txt` MAY declare **multiple** `skills-memory` lines when each carries a distinct `scope` key (§2.5); at most ONE line may omit `scope` (the default/unscoped memory). Without scopes, exactly one line is allowed — the pre-v0.5 behavior, unchanged.
+
+### 2.5 Scopes: multi-project origins
+
+Resolves core RFC Open Question 6. An origin that aggregates skills from
+MULTIPLE projects — e.g. a GitHub user/org ROOT site bridging several project
+pages, since a URL's origin strips the path — collides on two axes: tool
+names must be unique per MCP server, and (pre-v0.5) only one `skills-memory`
+line existed per origin. `scope` resolves both **declaratively, at the
+aggregation layer, without touching published bytes** — which is mandatory,
+because content-addressing binds hashes to bytes: renaming inside a `tool.js`
+would destroy the universal-template property (one stable `tool_sha256`
+ecosystem-wide for shared tools like `search_knowledge`).
+
+Semantics:
+
+- `scope` (optional, per skill line, pattern `^[a-z][a-z0-9_-]*$`). When
+  present, the runtime MUST expose every tool registered by that skill's
+  `tool.js` under the public name `<scope>__<registered-name>` (double
+  underscore separator), and route calls back to the unmodified sandbox
+  context. The `tool.js` bytes, its `tool_sha256`, and the names it registers
+  internally are UNCHANGED — prefixing is a host-boundary rename only.
+- Skill recipes exposed as MCP resources follow the public name
+  (`skill://<scope>__<name>`), as does any recipe-fallback tool parameter.
+- A `skills-memory` line with `scope` binds its snapshot to the skills of
+  that scope only: the runtime injects each scope's `host.memorySearch` from
+  its own verified snapshot. Skills without `scope` get the unscoped memory
+  (if any). A skill whose scope has no memory line simply lacks the
+  capability (fails closed in-sandbox, as ever).
+- Two skill lines MUST NOT expose the same public tool name. Runtimes MUST
+  reject (skip, with a diagnostic) any skill whose public names collide with
+  an already-loaded one — first line wins, matching top-to-bottom document
+  order.
+- Attestations (ext-skill-attestations) are UNAFFECTED: they bind
+  `origin + skill + tool_sha256` as published by the ORIGINAL project;
+  `scope` is an aggregation-layer concern and does not enter signed payloads.
+- Backward compatibility: an `llms.txt` with no `scope` keys behaves exactly
+  as under v0.4.
+
+Aggregation recipe (informative): to republish another project's skills from
+a root origin, copy each skill line verbatim, re-root its `url`/`tool` paths
+(`/project/...`), add `scope`, and add the project's `skills-memory` line
+with the same `scope` and re-rooted `snapshot` path. All hashes remain valid
+because the served bytes are identical. Beware tools with baked root-relative
+fetch paths (e.g. a generated `get_concept`): they only work on the origin
+they were built for and SHOULD be omitted from aggregation.
+
 ## 3. Runtime requirements
 
 A runtime that executes skills published under this extension (a *gateway*, an agent-embedded engine, etc.):
@@ -129,6 +177,7 @@ The gateway demonstrates: discovery from `llms.txt`, per-skill SHA-256 verificat
 
 ## 7. Changelog
 
+- **v0.5 (2026-07-10):** Scopes for multi-project origins (SS2.5, resolves core RFC OQ6): optional `scope` key per skill line -> runtime-side tool prefixing `<scope>__<name>` (published bytes and hashes untouched, preserving the universal-template property); multiple `skills-memory` lines, one per scope, each binding its snapshot to its scope's skills; public-name collision -> skip with diagnostic (first wins); attestations unaffected. Fully backward compatible: no `scope` -> v0.4 behavior.
 - **v0.4 (2026-07-02):** Origin memory (§2.4): hash-pinned search snapshots (`skills-memory` line, `snapshot_sha256`, pluggable `format`) and the origin-scoped `host.memorySearch` capability; runtime requirement for snapshot integrity. Field-tested: the reference gateway serves BM25 search over the spec's own docs published as a static snapshot (`minimemory-okf-v1`).
 - **v0.3 (2026-07-02):** Lessons from a realistic field test (D1-backed bookstore + unmodified MCP client): explicit sandbox-globals note (ECMAScript only, no WHATWG APIs); `fetchOrigin` extended with optional `{method, body, contentType}` (GET/POST only) enabling write skills; resource budgets SHOULD be deterministic gas, not wall-clock (frozen clocks in Workers); MCP exposure MUST wrap non-object results in `structuredContent`.
 - **v0.2 (2026-07-02):** Rename `sha256` -> `tool_sha256` to avoid collision with the core RFC's `sha256` (hash of the fetched `SKILL.md`), per review feedback.

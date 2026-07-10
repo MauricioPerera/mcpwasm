@@ -1,6 +1,6 @@
 # RFC: Publishing Agent Skills through `llms.txt`
 
-- **Status:** Draft (v0.9)
+- **Status:** Draft (v0.10)
 - **Date:** 2026-06-02
 - **Author:** automators.work
 - **Depends on:** [llmstxt.org](https://llmstxt.org/) spec, [Agent Skills](https://agentskills.io) (`SKILL.md`)
@@ -404,7 +404,7 @@ The agent:
 
    URLs in `## Skills` MAY mirror those already declared in `.well-known/agent-skills/index.json`, reusing the same artifacts without duplication. Agents that support both get redundant coverage at zero extra cost for publishers.
 
-6. **Multi-project origins (namespacing).** An origin that aggregates skills for MULTIPLE projects — e.g. a GitHub user/org ROOT site bridging several project pages, since project-page origins are not directly consumable (a URL's origin strips the path) — hits two hard limits, found empirically while aggregating two real publishers on one origin (2026-07-10):
+6. **Multi-project origins (namespacing).** Resolved (Executable Skills extension v0.5 SS2.5): an optional per-skill `scope` key -> runtime-side tool prefixing `<scope>__<name>` (published bytes and hashes untouched, preserving content-addressing and the universal-template property), plus one `skills-memory` line per scope binding each snapshot to its scope's skills. Public-name collisions are skipped with a diagnostic (first wins); attestations unaffected. Original problem statement, kept for the record: an origin that aggregates skills for MULTIPLE projects — e.g. a GitHub user/org ROOT site bridging several project pages, since project-page origins are not directly consumable (a URL's origin strips the path) — hits two hard limits, found empirically while aggregating two real publishers on one origin (2026-07-10):
    - **Skill-name uniqueness.** MCP tool names must be unique per server, and runtimes key skills by name. Two projects publishing the standard knowledge skills (`search_knowledge`, `get_concept`, `list_concepts` — deliberately universal templates) collide on any shared origin.
    - **One `skills-memory` per origin.** The origin-memory declaration is a single line per `llms.txt`, so a second project's knowledge snapshot has nowhere to go.
 
@@ -427,6 +427,7 @@ The agent:
 
 ## 10. Changelog
 
+- **v0.10 (2026-07-10):** Open Question 6 RESOLVED by Executable Skills extension v0.5 SS2.5 (scopes: declarative per-skill `scope` -> runtime-side `<scope>__<name>` prefixing + scoped `skills-memory` lines). The OQ entry records the resolution and keeps the original problem statement for provenance. No core-RFC normative change.
 - **v0.9 (2026-07-10):** Added Open Question 6 (multi-project origins / namespacing), from field experience aggregating two real publishers (llms-txt-skills, KDD) on one GitHub Pages root origin: skill-name uniqueness per origin and the single `skills-memory` line make same-origin multi-project aggregation collide today; candidate directions listed, unresolved. No normative change.
 - **v0.8 (2026-06-02):** Extended §3.3 with the `n8n-skills-sdk` companion experiment — reproducing the n8n MCP's build path entirely with a published skill + `@n8n/workflow-sdk` (local parse/validate) + the REST API (no MCP): a local model builds+validates+creates the same workflows in ~3 tool calls (vs the MCP's 6–7), validation preserved, 3 tool defs in context; cross-model (8–9B succeed, 3B hits a code-writing floor).
 - **v0.7 (2026-06-02):** Added §3.3 "Skills as the recipe layer over tool discovery" positioning this RFC against tool-bloat work (Anthropic Tool Search / `defer_loading`, MCP progressive-disclosure SEP #1888, tool RAG) as the publisher-side, recipe-bearing layer those consumer/server-side mechanisms need a catalog for; added a reference POC (`evals/poc_orchestration/`) driving a live n8n MCP (25 tools) through five arms (25→1 tool defs in context), with demoshop as the simple-capability anchor.

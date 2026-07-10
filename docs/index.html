@@ -193,7 +193,7 @@
 
         <article class="card card--accent">
           <h3>Local runtime <span class="tag" data-i18n="ways.localTag">zero infra, both sides</span></h3>
-          <p data-i18n="ways.localP">Run any origin's skills locally over stdio — including origin memory (verified BM25 search over the site's own content, new in 0.4.0). No gateway, no server, on either end.</p>
+          <p data-i18n="ways.localP">Run any origin's skills locally over stdio — including origin memory (verified BM25 search, 0.4.0) and each skill's SKILL.md recipe served as an MCP resource (new in 0.5.0). No gateway, no server, on either end.</p>
           <div class="code-block">
             <div class="code-head"><span>bash</span><button class="copy-btn" type="button" data-i18n="common.copy">Copy</button></div>
             <pre><code><span class="tok-kw">npx</span> -y @rckflr/mcpwasm https://usuario.github.io</code></pre>
@@ -398,7 +398,7 @@ host.dispose();</code></pre>
         <ol class="diagram-steps-text">
           <li data-i18n="bridge.list1__html">A publisher serves an <code>llms.txt</code> whose <code>## Skills</code> section lists each executable skill with its <code>tool.js</code> and <code>tool_sha256</code> — mirrored in <code>/.well-known/agent-skills/index.json</code> and signed in <code>attestations.json</code>. Optionally, a hash-pinned BM25 snapshot (one <code>llms-skills memory</code> command over an OKF bundle) adds serverless search over the site's own knowledge. This is exactly what the llms-txt-skills spec defines.</li>
           <li data-i18n="bridge.list2__html">mcpwasm points at that origin, fetches the <code>llms.txt</code>, and verifies every <code>tool.js</code> against its <code>tool_sha256</code> and its attestation — rejecting any mismatch <em>before</em> loading it.</li>
-          <li data-i18n="bridge.list3__html">Each verified skill becomes an <strong>MCP tool</strong>. Your MCP client — Claude, Cursor, any host — lists and calls it like any other tool.</li>
+          <li data-i18n="bridge.list3__html">Each verified skill becomes an <strong>MCP tool</strong>, and its <code>SKILL.md</code> recipe is served alongside as an MCP <strong>resource</strong> (with a <code>get_skill_guide</code> fallback) — the agent gets the manual, not just the hammer. Claude, Cursor, any MCP host list and call it like any other tool.</li>
           <li data-i18n="bridge.list4__html">On a call, mcpwasm executes that <code>tool.js</code> <strong>verbatim</strong> inside a QuickJS-wasm sandbox — no network or filesystem except the host capabilities it grants (a scoped <code>fetchOrigin</code> back to the site, and search over the site's own content). The result returns to the client.</li>
         </ol>
       </div>

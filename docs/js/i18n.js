@@ -66,7 +66,7 @@
       "ways.gatewayTag": "turnkey MCP server",
       "ways.gatewayP": "Point any MCP client at the deployed gateway. It discovers, verifies, and sandboxes a publisher's skills on every request.",
       "ways.localTag": "zero infra, both sides",
-      "ways.localP": "Run any origin's skills locally over stdio — including origin memory (verified BM25 search over the site's own content, new in 0.4.0). No gateway, no server, on either end.",
+      "ways.localP": "Run any origin's skills locally over stdio — including origin memory (verified BM25 search, 0.4.0) and each skill's SKILL.md recipe served as an MCP resource (new in 0.5.0). No gateway, no server, on either end.",
       "ways.libraryTag": "embed the sandbox",
       "ways.libraryP": "Build your own platform host with the exact isolation the gateway uses.",
 
@@ -115,7 +115,7 @@
       "bridge.step4": "sandboxed tool.js",
       "bridge.list1__html": "A publisher serves an <code>llms.txt</code> whose <code>## Skills</code> section lists each executable skill with its <code>tool.js</code> and <code>tool_sha256</code> — mirrored in <code>/.well-known/agent-skills/index.json</code> and signed in <code>attestations.json</code>. Optionally, a hash-pinned BM25 snapshot (one <code>llms-skills memory</code> command over an OKF bundle) adds serverless search over the site's own knowledge. This is exactly what the llms-txt-skills spec defines.",
       "bridge.list2__html": "mcpwasm points at that origin, fetches the <code>llms.txt</code>, and verifies every <code>tool.js</code> against its <code>tool_sha256</code> and its attestation — rejecting any mismatch <em>before</em> loading it.",
-      "bridge.list3__html": "Each verified skill becomes an <strong>MCP tool</strong>. Your MCP client — Claude, Cursor, any host — lists and calls it like any other tool.",
+      "bridge.list3__html": "Each verified skill becomes an <strong>MCP tool</strong>, and its <code>SKILL.md</code> recipe is served alongside as an MCP <strong>resource</strong> (with a <code>get_skill_guide</code> fallback) — the agent gets the manual, not just the hammer. Claude, Cursor, any MCP host list and call it like any other tool.",
       "bridge.list4__html": "On a call, mcpwasm executes that <code>tool.js</code> <strong>verbatim</strong> inside a QuickJS-wasm sandbox — no network or filesystem except the host capabilities it grants (a scoped <code>fetchOrigin</code> back to the site, and search over the site's own content). The result returns to the client.",
       "bridge.takeaway__html": "Neither side has to trust the other's prose: mcpwasm re-derives the hash and checks the signature itself. Static hosting + a verifying runtime = an MCP server with <strong>no server to run</strong>.",
 
@@ -172,7 +172,7 @@
       "ways.gatewayTag": "servidor MCP listo para usar",
       "ways.gatewayP": "Apuntá cualquier cliente MCP al gateway desplegado. Descubre, verifica, y sandboxea las skills de un publisher en cada request.",
       "ways.localTag": "cero infra, en ambos lados",
-      "ways.localP": "Corré las skills de cualquier origin localmente por stdio — incluida la memoria de origin (búsqueda BM25 verificada sobre el contenido del propio sitio, nueva en 0.4.0). Sin gateway, sin servidor, en ningún lado.",
+      "ways.localP": "Corré las skills de cualquier origin localmente por stdio — incluidas la memoria de origin (búsqueda BM25 verificada, 0.4.0) y la receta SKILL.md de cada skill servida como resource MCP (nueva en 0.5.0). Sin gateway, sin servidor, en ningún lado.",
       "ways.libraryTag": "embebé el sandbox",
       "ways.libraryP": "Construí tu propio host de plataforma con el mismo aislamiento que usa el gateway.",
 
@@ -221,7 +221,7 @@
       "bridge.step4": "tool.js sandboxeado",
       "bridge.list1__html": "Un publicador sirve un <code>llms.txt</code> cuya sección <code>## Skills</code> lista cada skill ejecutable con su <code>tool.js</code> y su <code>tool_sha256</code> — reflejado en <code>/.well-known/agent-skills/index.json</code> y firmado en <code>attestations.json</code>. Opcionalmente, un snapshot BM25 fijado por hash (un solo comando <code>llms-skills memory</code> sobre un bundle OKF) agrega búsqueda sin servidor sobre el conocimiento del propio sitio. Esto es exactamente lo que define la spec llms-txt-skills.",
       "bridge.list2__html": "mcpwasm apunta a ese origen, descarga el <code>llms.txt</code> y verifica cada <code>tool.js</code> contra su <code>tool_sha256</code> y su atestación — rechazando cualquier discrepancia <em>antes</em> de cargarlo.",
-      "bridge.list3__html": "Cada skill verificada se vuelve una <strong>herramienta MCP</strong>. Tu cliente MCP — Claude, Cursor, cualquier host — la lista e invoca como cualquier otra herramienta.",
+      "bridge.list3__html": "Cada skill verificada se vuelve una <strong>herramienta MCP</strong>, y su receta <code>SKILL.md</code> se sirve al lado como <strong>resource</strong> MCP (con el fallback <code>get_skill_guide</code>) — el agente recibe el manual, no solo el martillo. Claude, Cursor o cualquier host MCP la lista e invoca como cualquier otra herramienta.",
       "bridge.list4__html": "Al invocarla, mcpwasm ejecuta ese <code>tool.js</code> <strong>al pie de la letra</strong> dentro de un sandbox QuickJS-wasm — sin red ni sistema de archivos salvo las capabilities que le concede el host (un <code>fetchOrigin</code> acotado de vuelta al sitio, y búsqueda sobre el propio contenido del sitio). El resultado vuelve al cliente.",
       "bridge.takeaway__html": "Ninguna de las dos partes tiene que confiar en la prosa de la otra: mcpwasm re-deriva el hash y verifica la firma por sí mismo. Hosting estático + un runtime que verifica = un servidor MCP <strong>sin servidor que correr</strong>.",
 
@@ -278,7 +278,7 @@
       "ways.gatewayTag": "servidor MCP pronto para uso",
       "ways.gatewayP": "Aponte qualquer cliente MCP para o gateway em produção. Ele descobre, verifica, e isola as skills de um publisher a cada requisição.",
       "ways.localTag": "zero infra, dos dois lados",
-      "ways.localP": "Rode as skills de qualquer origin localmente via stdio — incluindo a memória de origin (busca BM25 verificada sobre o conteúdo do próprio site, nova na 0.4.0). Sem gateway, sem servidor, em nenhum dos lados.",
+      "ways.localP": "Rode as skills de qualquer origin localmente via stdio — incluindo a memória de origin (busca BM25 verificada, 0.4.0) e a receita SKILL.md de cada skill servida como resource MCP (nova na 0.5.0). Sem gateway, sem servidor, em nenhum dos lados.",
       "ways.libraryTag": "embuta o sandbox",
       "ways.libraryP": "Construa seu próprio host de plataforma com o mesmo isolamento que o gateway usa.",
 
@@ -327,7 +327,7 @@
       "bridge.step4": "tool.js isolado",
       "bridge.list1__html": "Um publicador serve um <code>llms.txt</code> cuja seção <code>## Skills</code> lista cada skill executável com seu <code>tool.js</code> e seu <code>tool_sha256</code> — espelhado em <code>/.well-known/agent-skills/index.json</code> e assinado em <code>attestations.json</code>. Opcionalmente, um snapshot BM25 fixado por hash (um único comando <code>llms-skills memory</code> sobre um bundle OKF) adiciona busca sem servidor sobre o conhecimento do próprio site. É exatamente o que a spec llms-txt-skills define.",
       "bridge.list2__html": "mcpwasm aponta para essa origem, baixa o <code>llms.txt</code> e verifica cada <code>tool.js</code> contra seu <code>tool_sha256</code> e sua atestação — rejeitando qualquer divergência <em>antes</em> de carregá-lo.",
-      "bridge.list3__html": "Cada skill verificada vira uma <strong>ferramenta MCP</strong>. Seu cliente MCP — Claude, Cursor, qualquer host — a lista e chama como qualquer outra ferramenta.",
+      "bridge.list3__html": "Cada skill verificada vira uma <strong>ferramenta MCP</strong>, e sua receita <code>SKILL.md</code> é servida ao lado como <strong>resource</strong> MCP (com o fallback <code>get_skill_guide</code>) — o agente recebe o manual, não só o martelo. Claude, Cursor ou qualquer host MCP a lista e chama como qualquer outra ferramenta.",
       "bridge.list4__html": "Ao chamá-la, mcpwasm executa esse <code>tool.js</code> <strong>ao pé da letra</strong> dentro de um sandbox QuickJS-wasm — sem rede nem sistema de arquivos exceto as capabilities que o host concede (um <code>fetchOrigin</code> restrito de volta ao site, e busca sobre o próprio conteúdo do site). O resultado volta ao cliente.",
       "bridge.takeaway__html": "Nenhum dos lados precisa confiar na prosa do outro: mcpwasm re-deriva o hash e verifica a assinatura por conta própria. Hospedagem estática + um runtime que verifica = um servidor MCP <strong>sem servidor para rodar</strong>.",
 

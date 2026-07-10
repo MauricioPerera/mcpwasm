@@ -6,7 +6,7 @@ are the npm publish dates. Entries describe what each published tarball ships
 relative to the previous one (verified against the actual tarballs, not just
 the git log).
 
-## [Unreleased] — 0.7.0
+## [0.7.0] — 2026-07-10
 
 ### Added
 - **Browser runtime (`mcpwasm-web`) — the THIRD runtime.** The same contract

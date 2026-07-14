@@ -432,10 +432,15 @@ function parseReviewers(env) {
   }
 }
 
-// Origin canonico: lowercase, sin trailing slash, sin puerto default (new URL(...).origin).
+// Origin canonico para comparacion de atestaciones (verdictForSkill): conserva
+// el path (sin trailing slash) ademas de scheme+host+port -- new URL(...).origin
+// solo lo descarta, lo que rompe la comparacion para un publisher de GitHub
+// Pages de PROYECTO (https://user.github.io/REPO/). Debe coincidir exactamente
+// con el canonicalOrigin de scripts/attest.mjs (mismo criterio, misma salida).
 function canonicalOrigin(s) {
   try {
-  return new URL(s).origin;
+  const u = new URL(s);
+  return (u.origin + u.pathname).replace(/\/+$/, "");
   } catch {
     return null;
   }

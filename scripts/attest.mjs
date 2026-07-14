@@ -44,7 +44,15 @@ function todayUtcStr() {
 }
 
 function canonicalOrigin(s) {
-  return new URL(s).origin;
+  // new URL(s).origin keeps only scheme+host+port and silently drops any
+  // path. That is correct for a root-domain publisher, but wrong for a
+  // GitHub Pages PROJECT site (https://user.github.io/REPO/), where the
+  // published llms.txt lives under /REPO/, not at the domain root -- this
+  // function was fetching (and signing against) a completely different
+  // origin's llms.txt without any error. Keep the path (sans trailing
+  // slash) as part of the canonical origin.
+  const u = new URL(s);
+  return (u.origin + u.pathname).replace(/\/+$/, "");
 }
 
 // Extrae el tool_sha256 declarado en llms.txt para la skill <skill>.

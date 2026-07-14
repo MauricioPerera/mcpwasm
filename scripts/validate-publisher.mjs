@@ -102,8 +102,14 @@ async function sha256Hex(text) {
 }
 
 function canonicalOrigin(s) {
+  // Keeps the path (sans trailing slash): new URL(s).origin alone drops it,
+  // which is wrong for a GitHub Pages PROJECT site (https://user.github.io/REPO/)
+  // -- see scripts/attest.mjs's canonicalOrigin for the full rationale. Must
+  // match that function's output exactly, or attestations signed against a
+  // project-site origin fail verification here.
   try {
-    return new URL(s).origin;
+    const u = new URL(s);
+    return (u.origin + u.pathname).replace(/\/+$/, "");
   } catch {
     return null;
   }

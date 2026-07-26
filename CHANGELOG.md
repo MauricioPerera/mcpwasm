@@ -9,6 +9,19 @@ the git log).
 ## [Unreleased]
 
 ### Fixed
+- **A slow origin no longer kills the tool that calls it** (#22). The 2000 ms
+  interrupt budget was set once on entering `callTool`, so the time the stack
+  spent **suspended** waiting for `fetchOrigin` counted against it: after a fetch
+  slower than the budget, the first interrupt-handler invocation on resume killed
+  the tool — with the same bare `interrupted` the anti-`while(true)` gas cutoff
+  produces, so a slow publisher was diagnosed as a runaway tool. Measured: after a
+  3 s fetch, ~5000 loop iterations were enough to die, while the same compute
+  without a preceding fetch passed comfortably. The budget now measures
+  **execution time** (segments are closed on suspend and reopened on resume), so
+  waiting is excluded while total CPU stays bounded — two heavy segments either
+  side of a fetch are still cut at 2000 ms. Network waits keep their own per-fetch
+  limit. The error also says which cutoff fired ("gas agotado" vs "presupuesto de
+  EJECUCION agotado") instead of a bare `interrupted`.
 - **The `tool.js` cache actually caches now** (#24). Entries were written with
   `cachePut(toolKey, src, 0)`; a falsy `ttlMs` emits no `cache-control` and
   workerd discards the entry, so the "immutable content-addressed cache" the

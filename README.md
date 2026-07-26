@@ -832,8 +832,14 @@ What it guarantees:
     pure `while(true){}` never advances the clock. The gas counter does not
     depend on the clock — it counts how many times QuickJS invoked the handler
     (calibrated ~100× over the heaviest legitimate skill; see TAREA12B).
-  - wall-clock interrupt deadline: 2000 ms per `callTool` / `loadToolSource`
-    (a cheap backstop where the clock does advance — Node/tests).
+  - execution budget: 2000 ms per `callTool` / `loadToolSource` (a cheap backstop
+    where the clock does advance — Node/tests). It measures **execution**, not
+    wall clock: time the stack spends suspended waiting for a host capability
+    (`fetchOrigin`, `memorySearch`) does not count against it, so a slow origin
+    no longer kills a tool that then tries to process the response. Network waits
+    are bounded separately, per fetch, by the outbound deadline below. When either
+    cutoff fires the error says which one ("gas agotado" vs "presupuesto de
+    EJECUCION agotado") — they used to be the same bare "interrupted".
   - response body cap: 4096 **bytes** per `host.fetchOrigin` (`maxResponseBytes`).
     The cap is enforced on bytes, so it bounds host memory regardless of encoding.
     Truncation is **observable**: the tool receives

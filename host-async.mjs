@@ -117,7 +117,27 @@ export class AsyncToolHost {
     // restaura al salir. _interruptCount se resetea al inicio de cada uno.
     this._interruptCount = 0;
     this._interruptActive = false;
+    // Contabilidad del presupuesto de EJECUCION (ver el interrupt handler):
+    // _execStart marca el inicio del segmento en curso, _execAccum acumula los
+    // cerrados. Las suspensiones asyncify cierran un segmento y abren otro al
+    // reanudar, asi que la espera queda fuera del presupuesto.
+    this._execStart = 0;
+    this._execAccum = 0;
+    // Que mecanismo disparo la ultima interrupcion ("gas" | "deadline"): un
+    // "interrupted" a secas no distinguia un bucle infinito de un presupuesto
+    // agotado, y ambos llegan al cliente como isError:true.
+    this._interruptReason = null;
     this._vm = null;
+  }
+
+  // Cierran/reabren el segmento de ejecucion. Los llama un puente alrededor del
+  // await que suspende la pila del sandbox. Fuera de callTool/loadToolSource
+  // (_interruptActive false) no hay nada que contabilizar.
+  _suspendExec() {
+    if (this._interruptActive) this._execAccum += Date.now() - this._execStart;
+  }
+  _resumeExec() {
+    if (this._interruptActive) this._execStart = Date.now();
   }
 
   // Construye (si hace falta) y cachea el modulo asyncify. En Workers el caller pasa
@@ -154,14 +174,36 @@ export class AsyncToolHost {
     try {
       // Handler true => interrumpe. Dos mecanismos: (1) contador determinista,
       // independiente del reloj, salva contra while(true){} en Workers (reloj
-      // congelado); (2) deadline wall-clock (si interruptDeadlineMs > 0), backstop
-      // barato donde el reloj avanza.
+      // congelado); (2) presupuesto wall-clock (si interruptDeadlineMs > 0).
+      //
+      // El presupuesto mide TIEMPO DE EJECUCION, no tiempo de pared: el rato que
+      // la pila pasa SUSPENDIDA esperando una capability del host (fetchOrigin,
+      // memorySearch) no cuenta. Antes si contaba, porque el deadline se fijaba
+      // una sola vez al entrar a callTool: un origin mas lento que el presupuesto
+      // dejaba a la tool sin margen y la primera invocacion del handler tras
+      // reanudar la mataba -- con el MISMO mensaje "interrupted" que produce el
+      // corte anti-while(true), asi que un publicador lento se diagnosticaba como
+      // una tool en bucle infinito. Medido: con un fetch de 3s bastaban ~5000
+      // iteraciones posteriores para morir, mientras el mismo computo sin fetch
+      // previo pasaba de sobra.
+      //
+      // Se acumula el tiempo de cada SEGMENTO de ejecucion (_execAccum) mas el
+      // segmento en curso (desde _execStart): el presupuesto total de EJECUCION
+      // sigue acotado; lo que ya no acota es la espera de red, que tiene su
+      // propio limite por fetch (fetchTimeoutMs).
       const host = this;
       vm.runtime.setInterruptHandler(() => {
         if (!host._interruptActive) return false;
         host._interruptCount = (host._interruptCount + 1) >>> 0;
-        if (host._interruptCount > host._interruptMaxInvocations) return true;
-        if (host._interruptDeadlineMs > 0 && Date.now() > host._deadline) return true;
+        if (host._interruptCount > host._interruptMaxInvocations) {
+          host._interruptReason = "gas";
+          return true;
+        }
+        if (host._interruptDeadlineMs > 0 &&
+            host._execAccum + (Date.now() - host._execStart) > host._interruptDeadlineMs) {
+          host._interruptReason = "deadline";
+          return true;
+        }
         return false;
       });
     } catch (e) {
@@ -179,7 +221,12 @@ export class AsyncToolHost {
     const fetchTimeoutMs = this._fetchTimeoutMs;
     const maxResponseBytes = this._maxResponseBytes;
     const MAX_BODY_BYTES = 16 * 1024;
+    const self = this;
     const cap = vm.newFunction("__fetchOriginRaw", async (pathH, optsH) => {
+      // La pila del sandbox queda suspendida durante todo este handler: su
+      // duracion NO debe consumir el presupuesto de ejecucion de la tool.
+      self._suspendExec();
+      try {
       const path = vm.getString(pathH);
       const optsRaw = vm.getString(optsH);
       let opts = {};
@@ -323,6 +370,9 @@ export class AsyncToolHost {
         }
       }
       return vm.newString(JSON.stringify({ status: resp.status, body: respBody, truncated, bytes: received, contentLength }));
+      } finally {
+        self._resumeExec();
+      }
     });
     vm.setProp(vm.global, "__fetchOriginRaw", cap);
     cap.dispose();
@@ -340,7 +390,13 @@ export class AsyncToolHost {
         const rawName = "__" + name + "Raw";
         const ecap = vm.newFunction(rawName, async (argsH) => {
           const argsJson = vm.getString(argsH);
-          const resultJson = await fn(argsJson);
+          self._suspendExec(); // misma regla que fetchOrigin: la espera no cuenta
+          let resultJson;
+          try {
+            resultJson = await fn(argsJson);
+          } finally {
+            self._resumeExec();
+          }
           // resultJson debe ser string (contrato del puente); si no, serializar.
           return vm.newString(
             typeof resultJson === "string" ? resultJson : JSON.stringify(resultJson === undefined ? null : resultJson)
@@ -388,15 +444,18 @@ export class AsyncToolHost {
     const vm = this._vm;
     const prevDeadline = this._deadline;
     const prevActive = this._interruptActive;
-    this._deadline = Date.now() + this._interruptDeadlineMs;
+    this._deadline = Date.now() + this._interruptDeadlineMs; // legado: ya no se consulta
     this._interruptCount = 0;
+    this._execAccum = 0;
+    this._execStart = Date.now();
+    this._interruptReason = null;
     this._interruptActive = true;
     try {
       const res = vm.evalCode(sourceText);
       if (res.error) {
         const msg = vm.dump(res.error);
         res.error.dispose();
-        throw new Error("fallo al cargar tool.js: " + JSON.stringify(msg));
+        throw new Error(this._qualifyInterrupt("fallo al cargar tool.js: " + JSON.stringify(msg)));
       }
       res.value.dispose();
     } finally {
@@ -429,8 +488,11 @@ export class AsyncToolHost {
     // Activar el interrupt para ESTA llamada (handler no confiable).
     const prevDeadline = this._deadline;
     const prevActive = this._interruptActive;
-    this._deadline = Date.now() + this._interruptDeadlineMs;
+    this._deadline = Date.now() + this._interruptDeadlineMs; // legado: ya no se consulta
     this._interruptCount = 0;
+    this._execAccum = 0;
+    this._execStart = Date.now();
+    this._interruptReason = null;
     this._interruptActive = true;
     try {
       return await this._callToolInner(name, args);
@@ -438,6 +500,23 @@ export class AsyncToolHost {
       this._interruptActive = prevActive;
       this._deadline = prevDeadline;
     }
+  }
+
+  // QuickJS lanza "interrupted" sin decir CUAL de los dos mecanismos corto. Con
+  // _interruptReason se cualifica el mensaje, que es lo que finalmente ve el
+  // cliente MCP como isError:true. Sin esto, "gas agotado por un bucle infinito"
+  // y "presupuesto de ejecucion agotado" son el mismo texto.
+  _qualifyInterrupt(message) {
+    if (!/interrupted/i.test(String(message || ""))) return message;
+    if (this._interruptReason === "gas") {
+      return message + " (gas agotado: " + this._interruptMaxInvocations +
+        " invocaciones del interrupt handler; tipico de un bucle sin fin)";
+    }
+    if (this._interruptReason === "deadline") {
+      return message + " (presupuesto de EJECUCION agotado: " + this._interruptDeadlineMs +
+        "ms de CPU en el sandbox; la espera de fetchOrigin no cuenta)";
+    }
+    return message;
   }
 
   async _callToolInner(name, args) {
@@ -458,7 +537,7 @@ export class AsyncToolHost {
           : typeof dumped === "string"
           ? dumped
           : JSON.stringify(dumped);
-      throw new Error(message);
+      throw new Error(this._qualifyInterrupt(message));
     }
     let st = vm.getPromiseState(res.value);
     let guard = 0;
@@ -479,7 +558,7 @@ export class AsyncToolHost {
           : typeof dumped === "string"
           ? dumped
           : JSON.stringify(dumped);
-      throw new Error(message);
+      throw new Error(this._qualifyInterrupt(message));
     }
     if (st.type !== "fulfilled") {
       res.value.dispose();

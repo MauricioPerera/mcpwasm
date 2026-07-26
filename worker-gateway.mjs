@@ -239,6 +239,16 @@ const LLMS_TTL_MS = 60_000;
 // tool.js. Medido: tras un descubrimiento real, `gw:llms` y `gw:disc` (ambos con
 // max-age) quedaban en caches.default y `gw:tool` no.
 const TOOL_TTL_MS = 86_400_000; // 24 h
+// Receta (SKILL.md): cacheable con la MISMA regla que tool.js -- SOLO cuando el
+// publicador declara su sha256 en la linea de llms.txt (campo del core RFC). Con
+// hash, la key es content-addressable (`gw:skillmd:<url>#<sha>`) y la entrada es
+// inmutable: un cambio del publicador cambia la key. SIN hash la receta se sirve
+// sin verificar, asi que no se cachea: guardar contenido no verificable bajo una
+// key que solo depende del URL es justo lo que no queremos.
+const SKILLMD_TTL_MS = 86_400_000; // 24 h
+// index.json no tiene hash y es metadata que cambia legitimamente: mismo patron
+// que llms.txt (TTL corto con timestamp propio).
+const INDEX_TTL_MS = 60_000;
 const FETCH_TIMEOUT_MS = 5000;
 
 // T42: caps de tamano para TODOS los fetches de descubrimiento (env con defaults
@@ -546,6 +556,26 @@ async function fetchAttestations(origin, fetchImpl, maxBytes) {
 // error de descubrimiento -- el gateway simplemente no cruza nada y confia solo
 // en llms.txt, como hacia antes de este cambio.
 async function fetchAgentSkillsIndex(origin, fetchImpl, maxBytes) {
+  // Cache de insumo (TTL corto, con timestamp propio como gw:llms). Sin esto,
+  // CADA descubrimiento frio pedia index.json al origin aunque el resto ya
+  // viniera de cache.
+  const idxKey = "gw:index:" + origin;
+  const cachedIdx = await cacheGet(idxKey);
+  if (cachedIdx !== null) {
+    try {
+      const obj = JSON.parse(cachedIdx);
+      if (obj && typeof obj.text === "string" && Date.now() - obj.ts < INDEX_TTL_MS) {
+        try {
+          const parsed = JSON.parse(obj.text);
+          return parsed && typeof parsed === "object" ? parsed : null;
+        } catch {
+          return null; // se cacheo un 404/no-json: nada que cruzar, sin refetch
+        }
+      }
+    } catch {
+      /* entrada malformada: seguir al fetch */
+    }
+  }
   let r = null;
   for (const url of wellKnownCandidates(origin, "/.well-known/agent-skills/index.json")) {
     try {
@@ -559,14 +589,23 @@ async function fetchAgentSkillsIndex(origin, fetchImpl, maxBytes) {
     if (r.status === 200) break;
   }
   if (!r) return null;
-  if (r.status === 404) return null; // esperado: el origin no publica index.json
+  if (r.status === 404) {
+    // Ausencia cacheada tambien: un origin sin index.json no debe costar un
+    // fetch por descubrimiento. Se guarda "" (no-JSON) => se lee como "sin cruce".
+    await cachePut(idxKey, JSON.stringify({ text: "", ts: Date.now() }), INDEX_TTL_MS);
+    return null; // esperado: el origin no publica index.json
+  }
   if (r.status !== 200) {
     console.warn("[gateway] agent-skills index.json HTTP " + r.status + " -> sin cruce de metadata");
     return null;
   }
   try {
     const obj = JSON.parse(r.text);
-    return obj && typeof obj === "object" ? obj : null;
+    if (obj && typeof obj === "object") {
+      await cachePut(idxKey, JSON.stringify({ text: r.text, ts: Date.now() }), INDEX_TTL_MS);
+      return obj;
+    }
+    return null;
   } catch {
     console.warn("[gateway] agent-skills index.json invalido -> sin cruce de metadata");
     return null;
@@ -986,11 +1025,21 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
     // Fallo/mismatch => la RECETA se omite con warn; la TOOL (ya verificada por
     // tool_sha256) carga igual — fallo controlado, mitades independientes.
     if (typeof s.skillPath === "string" && s.skillPath !== "") {
-      let dr = null;
-      try {
-        dr = await fetchText(resolveFromBase(origin, s.skillPath), FETCH_TIMEOUT_MS, caps.skillmd, fetchImpl);
-      } catch (e) {
-        console.warn("[gateway] receta omitida: " + s.name + " -> fetch SKILL.md fallo: " + String((e && e.message) || e));
+      const mdUrl = resolveFromBase(origin, s.skillPath);
+      // Cache SOLO con sha declarado: la key lo incluye => inmutable por
+      // contenido, igual que gw:tool. Sin sha la receta no es verificable y no se
+      // cachea (ver SKILLMD_TTL_MS). El sha se re-verifica SIEMPRE, tambien en
+      // hit: es barato y es lo que impide que una entrada alterada se sirva.
+      const mdKey = s.skillSha256 ? "gw:skillmd:" + mdUrl + "#" + s.skillSha256 : null;
+      let mdText = mdKey ? await cacheGet(mdKey) : null;
+      let dr = mdText !== null ? { status: 200, text: mdText } : null;
+      const fromCache = dr !== null;
+      if (dr === null) {
+        try {
+          dr = await fetchText(mdUrl, FETCH_TIMEOUT_MS, caps.skillmd, fetchImpl);
+        } catch (e) {
+          console.warn("[gateway] receta omitida: " + s.name + " -> fetch SKILL.md fallo: " + String((e && e.message) || e));
+        }
       }
       if (dr && dr.status === 200) {
         let docOk = true;
@@ -1004,6 +1053,8 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
             );
           }
         }
+        // Solo se cachea contenido ya verificado, y nunca lo que vino del cache.
+        if (docOk && mdKey && !fromCache) await cachePut(mdKey, dr.text, SKILLMD_TTL_MS);
         if (docOk) docs.push({ name: (s.scope ? s.scope + "__" + s.name : s.name), description: s.description, text: dr.text });
       } else if (dr) {
         console.warn("[gateway] receta omitida: " + s.name + " -> SKILL.md HTTP " + dr.status);

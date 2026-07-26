@@ -2,7 +2,7 @@
 //
 // Mismo contrato que el runtime local (bin/mcpwasm-local.mjs) y el gateway
 // (worker-gateway.mjs): descubre skills en el llms.txt de un origin, verifica
-// CADA byte contra su sha256 declarado (CRLF->LF normalizado, crypto.subtle),
+// CADA byte contra su sha256 declarado (bytes EXACTOS, sin normalizar, crypto.subtle),
 // carga cada tool verificada en su propio sandbox QuickJS-wasm y expone
 // listTools/callTool/recipes — sin servidor, sin Node: todo corre en la
 // pestana del usuario. Scopes (ext v0.5 SS2.5) y origin-memory por scope
@@ -31,9 +31,19 @@ const MAX_TOOL_BYTES = 256 * 1024;
 const MAX_SKILLMD_BYTES = 256 * 1024;
 const MAX_SNAPSHOT_BYTES = 4 * 1024 * 1024;
 
-async function sha256Normalized(text) {
-  const bytes = new TextEncoder().encode(text.replace(/\r\n/g, "\n"));
-  const buf = await crypto.subtle.digest("SHA-256", bytes);
+// SHA-256 de los bytes EXACTOS recibidos, sin normalizar nada.
+//
+// Esta funcion normalizaba CRLF -> LF antes de digerir, mientras el runtime
+// local, el gateway y el build de los publicadores hashean los bytes tal cual
+// llegan. Resultado: para un publicador que sirviera CRLF los veredictos se
+// INVERTIAN entre runtimes -- declarando el hash de los bytes crudos, el web
+// rechazaba y los otros dos aceptaban; declarando el del texto normalizado, al
+// reves (y en el runtime local, si era la unica skill del origin, el origin
+// entero quedaba inutilizable). El spec no deja margen: ext-executable-skills
+// SS4.1 exige "compute SHA-256 over the exact received bytes", asi que el que se
+// desviaba era este.
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
@@ -141,7 +151,7 @@ export async function connectStaticSkills(origin, options = {}) {
     }
     try {
       const snapText = await fetchText(resolvePath(allowedOrigin, mem.snapshot), MAX_SNAPSHOT_BYTES, label);
-      const actual = await sha256Normalized(snapText);
+      const actual = await sha256Hex(snapText);
       if (actual !== mem.snapshot_sha256) {
         log(`${label}: snapshot sha256 mismatch — capability NO inyectada`);
         continue;
@@ -176,7 +186,7 @@ export async function connectStaticSkills(origin, options = {}) {
       log(`skill rechazada: ${s.name} — ${e.message}`);
       continue;
     }
-    const actual = await sha256Normalized(code);
+    const actual = await sha256Hex(code);
     if (actual !== s.sha256) {
       rejected.push({ name: s.name, reason: "tool_sha256 mismatch" });
       log(`skill rechazada: ${s.name} — tool_sha256 mismatch (declarado ${s.sha256.slice(0, 12)}..., real ${actual.slice(0, 12)}...)`);
@@ -214,7 +224,7 @@ export async function connectStaticSkills(origin, options = {}) {
     if (s.skillPath && s.skillSha256) {
       try {
         const md = await fetchText(resolvePath(allowedOrigin, s.skillPath), MAX_SKILLMD_BYTES, `SKILL.md de ${s.name}`);
-        if ((await sha256Normalized(md)) === s.skillSha256) {
+        if ((await sha256Hex(md)) === s.skillSha256) {
           recipes[publicName] = md;
         } else {
           log(`receta omitida: ${publicName} — SKILL.md sha256 mismatch (la tool carga igual)`);

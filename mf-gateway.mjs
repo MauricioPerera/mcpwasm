@@ -1569,6 +1569,78 @@ try {
     await t40Cache2.dispose();
   }
 
+  // (g) Recetas (SKILL.md) e index.json cacheados como insumos.
+  // Antes NO se cacheaban en ninguna capa: con tool.js ya servido de cache, un
+  // descubrimiento frio seguia pidiendo al origin index.json + un SKILL.md por
+  // skill (N+1 requests evitables). La receta solo se cachea cuando el publicador
+  // declara su sha256 (key content-addressable, se re-verifica en cada lectura);
+  // sin sha no se cachea, porque seria guardar contenido no verificable.
+  const t40gDir = mkdtempSync(path.join(tmpdir(), "mf-t40g-"));
+  const gTool = 'registerTool({ name: "g_tool", description: "d", inputSchema: { type: "object" }, handler(){ return 7; } });';
+  const gMd = ["---", "name: g_tool", "---", "", "# g_tool", "", "Recipe con sha declarado.", ""].join("\n");
+  const gSha = (x) => createHash("sha256").update(x, "utf8").digest("hex");
+  const gLlms = ["# g", "", "## Skills", "", ""].join("\n") +
+    '- [g_tool](/g/SKILL.md): d. <!-- skill: ' +
+    JSON.stringify({ version: "1.0.0", sha256: gSha(gMd), tool: "/g/tool.js", tool_sha256: gSha(gTool) }) + " -->\n";
+  const gIndex = JSON.stringify({ skills: [{ name: "g_tool", tool_sha256: gSha(gTool) }] });
+  let gPaths = [];
+  const gHandler = (request) => {
+    const u = new URL(request.url);
+    gPaths.push(u.pathname);
+    const routes = {
+      "/llms.txt": [gLlms, "text/plain"],
+      "/g/tool.js": [gTool, "application/javascript"],
+      "/g/SKILL.md": [gMd, "text/markdown"],
+      "/.well-known/agent-skills/index.json": [gIndex, "application/json"],
+    };
+    const hit = routes[u.pathname];
+    if (!hit) return new Response("nf", { status: 404 });
+    return new Response(hit[0], { status: 200, headers: { "content-type": hit[1] } });
+  };
+  const gMf = () => gwMiniflare({
+    bindings: { ALLOWED_ORIGINS: DEMO_ORIGIN },
+    serviceBindings: { DEMO: gHandler },
+    cachePersist: t40gDir,
+  });
+  try {
+    const g1 = gMf();
+    gPaths = [];
+    const r1 = await rpcT40(g1, t40Base, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const p1 = [...new Set(gPaths)];
+    const n1 = (r1.body && r1.body.result && r1.body.result.tools || []).map((t) => t.name);
+    console.log("[T40.g] 1er isolate -> tools=" + n1.join(",") + " paths=" + p1.join(" "));
+    check(n1.includes("g_tool") && n1.includes("get_skill_guide"),
+      "T40.g: la receta con sha declarado verifica y expone get_skill_guide");
+    check(p1.includes("/g/SKILL.md") && p1.includes("/.well-known/agent-skills/index.json"),
+      "T40.g: el 1er descubrimiento SI pide SKILL.md e index.json (precondicion)");
+    await g1.dispose();
+
+    // Isolate nuevo con el MISMO cachePersist, pero sin la capa de resultado:
+    // fuerza descubrimiento completo y deja ver que insumos se re-piden.
+    const gDel = new Miniflare({
+      modules: true, cachePersist: t40gDir, compatibilityDate: "2026-06-01",
+      script: `export default { async fetch(r){ const {keys}=await r.json(); for (const k of keys) await caches.default.delete(new Request(k)); return new Response("ok"); } }`,
+    });
+    const gFp = createHash("sha256").update(JSON.stringify({ mode: "off", reviewers: "", date: new Date().toISOString().slice(0, 10) }), "utf8").digest("hex");
+    await gDel.dispatchFetch("http://localhost/", { method: "POST", body: JSON.stringify({ keys: ["https://cache.local/gw:disc:" + DEMO_ORIGIN + ":" + gFp] }) });
+    await gDel.dispose();
+
+    const g2 = gMf();
+    gPaths = [];
+    const r2 = await rpcT40(g2, t40Base, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const p2 = [...new Set(gPaths)];
+    const n2 = (r2.body && r2.body.result && r2.body.result.tools || []).map((t) => t.name);
+    console.log("[T40.g] 2do isolate (gw:disc borrada) -> tools=" + n2.join(",") + " paths=" + (p2.join(" ") || "NINGUNO"));
+    check(n2.includes("g_tool") && n2.includes("get_skill_guide"),
+      "T40.g: tras el descubrimiento completo la receta sigue sirviendose (desde cache)");
+    check(!p2.includes("/g/SKILL.md"), "T40.g: NO se vuelve a pedir el SKILL.md al origin");
+    check(!p2.includes("/.well-known/agent-skills/index.json"), "T40.g: NO se vuelve a pedir index.json al origin");
+    check(p2.length === 0, "T40.g: descubrimiento frio SIN un solo request al origin (llms+tool+receta+index cacheados)");
+    await g2.dispose();
+  } finally {
+    try { rmSync(t40gDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+  }
+
   // Limpieza del dir temporal de cache (SQLite del CacheObject).
   try { rmSync(t40CacheDir, { recursive: true, force: true }); } catch { /* best-effort */ }
 

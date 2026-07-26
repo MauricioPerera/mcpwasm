@@ -73,7 +73,8 @@
     "build:web": "node web/build.mjs",
     "test:web": "node test-web.mjs",
     "test:bundle": "node smoke-bundle.mjs",
-    "test:attest": "node build-gateway.mjs && node t-attest-offline.mjs"
+    "test:attest": "node build-gateway.mjs && node t-attest-offline.mjs",
+    "check:bundle": "node scripts/check-bundle-fresh.mjs"
   },
   "dependencies": {
     "@jitl/quickjs-wasmfile-release-asyncify": "^0.32.0",

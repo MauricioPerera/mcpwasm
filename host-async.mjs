@@ -63,6 +63,9 @@ const DEFAULT_INTERRUPT_DEADLINE_MS = 2000; // deadline wall-clock por callTool
 // vacio agota N en ~1s (Node) / ~4s (workerd), muy por debajo del limite de plataforma.
 const DEFAULT_INTERRUPT_MAX_INVOCATIONS = 20000;
 const DEFAULT_FETCH_TIMEOUT_MS = 10000; // timeout wall-clock por fetch de fetchOrigin
+// Cap del cuerpo de respuesta que cruza al sandbox, en BYTES. Configurable por
+// host (maxResponseBytes), como el resto de los limites.
+const DEFAULT_MAX_RESPONSE_BYTES = 4096;
 
 export class AsyncToolHost {
   // Opciones: quickjs (modulo asyncify ya construido; recomendado en Workers para
@@ -73,9 +76,10 @@ export class AsyncToolHost {
   // interruptMaxInvocations (gas determinista; salva contra while(true){}
   // en Workers), fetchImpl (default global fetch; el gateway inyecta uno que enruta
   // origins same-account via service binding, bypass del error 1042 worker-to-worker),
-  // fetchTimeoutMs (el gas acota CPU pero no esperas de red), extraCapabilities
+  // fetchTimeoutMs (el gas acota CPU pero no esperas de red), maxResponseBytes
+  // (cap EN BYTES del cuerpo que ve la tool; default 4096), extraCapabilities
   // (mapa nombre->async(argsJson)=>resultJson inyectado como host.<nombre>).
-  constructor({ quickjs, quickjsModule, allowedOrigin, memoryLimitBytes, maxStackSizeBytes, interruptDeadlineMs, interruptMaxInvocations, fetchImpl, fetchTimeoutMs, extraCapabilities }) {
+  constructor({ quickjs, quickjsModule, allowedOrigin, memoryLimitBytes, maxStackSizeBytes, interruptDeadlineMs, interruptMaxInvocations, fetchImpl, fetchTimeoutMs, maxResponseBytes, extraCapabilities }) {
     if (typeof allowedOrigin !== "string" || !allowedOrigin) {
       throw new Error("AsyncToolHost requiere allowedOrigin");
     }
@@ -94,6 +98,8 @@ export class AsyncToolHost {
     this._extraCapabilities = extraCapabilities || null;
     this._fetchTimeoutMs =
       typeof fetchTimeoutMs === "number" && fetchTimeoutMs > 0 ? fetchTimeoutMs : DEFAULT_FETCH_TIMEOUT_MS;
+    this._maxResponseBytes =
+      typeof maxResponseBytes === "number" && maxResponseBytes > 0 ? Math.floor(maxResponseBytes) : DEFAULT_MAX_RESPONSE_BYTES;
     this._memoryLimitBytes =
       typeof memoryLimitBytes === "number" ? memoryLimitBytes : DEFAULT_MEMORY_LIMIT_BYTES;
     this._maxStackSizeBytes =
@@ -171,6 +177,7 @@ export class AsyncToolHost {
     const allowedOrigin = this._allowedOrigin;
     const fetchImpl = this._fetchImpl;
     const fetchTimeoutMs = this._fetchTimeoutMs;
+    const maxResponseBytes = this._maxResponseBytes;
     const MAX_BODY_BYTES = 16 * 1024;
     const cap = vm.newFunction("__fetchOriginRaw", async (pathH, optsH) => {
       const path = vm.getString(pathH);
@@ -250,38 +257,72 @@ export class AsyncToolHost {
       } finally {
         clearTimeout(timerId);
       }
-      // Lectura por streaming con cap: resp.text() materializaba el body ENTERO
-      // en memoria y recien despues se truncaba a 4KB — un origin sirviendo un
-      // body gigante inflaba la memoria del host. Ahora se acumula por chunks y
-      // se corta el stream al alcanzar el cap; nunca se materializa mas de
-      // cap+chunk. La superficie hacia la tool no cambia (body <=4096 chars).
-      const MAX_RESP_BYTES = 4096;
+      // Lectura por streaming con cap. Antes: se acumulaba hasta MAX_RESP_BYTES
+      // *bytes* y despues se cortaba el string decodificado a 4096 *caracteres*,
+      // asi que el cap real dependia de la codificacion (ASCII 4 KB, acentos
+      // 8 KB, CJK 12 KB) y para contenido entre 4096 bytes y 4096 chars el corte
+      // dependia de como troceara el fetch. Ahora el cap se aplica en BYTES, que
+      // es lo que el nombre de la constante siempre dijo y lo unico que protege
+      // memoria de verdad.
+      //
+      // Y sobre todo: el truncado era INVISIBLE. La tool recibia {status, body}
+      // sin forma de distinguir "la respuesta termino" de "la corte yo", asi que
+      // un JSON de mas de 4 KB llegaba partido y reventaba en JSON.parse con un
+      // error que parece del publicador. Ahora se devuelven `truncated` y `bytes`
+      // (leidos), mas `contentLength` cuando el origin declara el header: sin el,
+      // una tool que quiera informar el tamaño real del recurso solo puede medir
+      // lo truncado y mentir.
+      const maxRespBytes = maxResponseBytes;
       let respBody = "";
+      let truncated = false;
+      let received = 0;
+      // Number(null) es 0, no NaN: sin este chequeo explicito una respuesta
+      // chunked (sin header) reportaba contentLength 0, que una tool leeria como
+      // "el recurso esta vacio". Ausente debe ser null: "no se sabe".
+      const clRaw = resp.headers.get("content-length");
+      const clNum = clRaw === null ? NaN : Number(clRaw);
+      const contentLength = Number.isFinite(clNum) && clNum >= 0 ? clNum : null;
       if (resp.body && typeof resp.body.getReader === "function") {
         const reader = resp.body.getReader();
-        const decoder = new TextDecoder("utf-8");
-        const parts = [];
-        let received = 0;
+        const chunks = [];
         try {
           for (;;) {
             const { done, value } = await reader.read();
             if (done) break;
+            chunks.push(value);
             received += value.length;
-            parts.push(decoder.decode(value, { stream: true }));
-            if (received >= MAX_RESP_BYTES) break; // suficiente para el truncado
+            if (received >= maxRespBytes) break; // suficiente para el cap
           }
         } finally {
           try { await reader.cancel(); } catch { /* best-effort: libera el stream */ }
         }
-        parts.push(decoder.decode()); // flush (borde multi-byte final)
-        respBody = parts.join("");
-        if (respBody.length > 4096) respBody = respBody.slice(0, 4096);
+        let all = new Uint8Array(received);
+        let off = 0;
+        for (const c of chunks) { all.set(c, off); off += c.length; }
+        if (received > maxRespBytes) {
+          truncated = true;
+          all = all.subarray(0, maxRespBytes);
+        }
+        respBody = new TextDecoder("utf-8").decode(all);
+        // Un corte a mitad de secuencia UTF-8 deja un U+FFFD final espurio: se
+        // quita para no inventar un caracter que el origin no envio.
+        if (truncated && respBody.charCodeAt(respBody.length - 1) === 0xfffd) {
+          respBody = respBody.slice(0, -1);
+        }
       } else {
         // Sin ReadableStream (impl de fetch exotica): fallback al camino previo.
         const text = await resp.text();
-        respBody = text.length > 4096 ? text.slice(0, 4096) : text;
+        const bytes = new TextEncoder().encode(text);
+        received = bytes.length;
+        if (bytes.length > maxRespBytes) {
+          truncated = true;
+          respBody = new TextDecoder("utf-8").decode(bytes.subarray(0, maxRespBytes));
+          if (respBody.charCodeAt(respBody.length - 1) === 0xfffd) respBody = respBody.slice(0, -1);
+        } else {
+          respBody = text;
+        }
       }
-      return vm.newString(JSON.stringify({ status: resp.status, body: respBody }));
+      return vm.newString(JSON.stringify({ status: resp.status, body: respBody, truncated, bytes: received, contentLength }));
     });
     vm.setProp(vm.global, "__fetchOriginRaw", cap);
     cap.dispose();

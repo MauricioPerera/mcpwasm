@@ -757,6 +757,61 @@ try {
 
   hostT.dispose();
 
+  // --- (d2) TRUNCADO OBSERVABLE de la respuesta de fetchOrigin ---------------
+  // El cuerpo que cruza al sandbox esta acotado, pero antes el corte era INVISIBLE:
+  // la tool recibia {status, body} y no podia distinguir "la respuesta termino" de
+  // "la corte yo", asi que un JSON de mas del cap llegaba partido y reventaba en
+  // JSON.parse con un error que parece del publicador. Ademas el cap se aplicaba en
+  // bytes al leer y en CARACTERES al cortar, con lo que dejaba pasar 2-3x segun la
+  // codificacion. Ahora: cap en BYTES + campos truncated/bytes/contentLength.
+  const bodyOf = (text, cl) => ({
+    status: 200,
+    headers: { get: (h) => (h.toLowerCase() === "content-length" && cl !== null ? String(cl) : null) },
+    body: {
+      getReader() {
+        let sent = false;
+        return {
+          read: async () => (sent ? { done: true } : ((sent = true), { done: false, value: new TextEncoder().encode(text) })),
+          cancel: async () => {},
+        };
+      },
+    },
+  });
+  const hostTr = new AsyncToolHost({
+    quickjs, allowedOrigin: "https://test.local",
+    fetchImpl: async (u) => {
+      const url = new URL(u);
+      if (url.pathname === "/ascii-small") return bodyOf("a".repeat(100), 100);
+      if (url.pathname === "/ascii-big") return bodyOf("a".repeat(50000), 50000);
+      if (url.pathname === "/utf8-big") return bodyOf("ñ".repeat(50000), null);
+      return bodyOf("", 0);
+    },
+  });
+  await hostTr.init();
+  hostTr.loadToolSource(
+    'registerTool({ name: "probe", description: "", inputSchema: { type: "object" },' +
+    ' handler(a){ const r = host.fetchOrigin(a.p); return { chars: r.body.length, truncated: r.truncated, bytes: r.bytes, contentLength: r.contentLength, campos: Object.keys(r) }; } });'
+  );
+  const trSmall = await hostTr.callTool("probe", { p: "/ascii-small" });
+  const trBig = await hostTr.callTool("probe", { p: "/ascii-big" });
+  const trUtf8 = await hostTr.callTool("probe", { p: "/utf8-big" });
+  console.log("[trunc] small=", JSON.stringify(trSmall), "big=", JSON.stringify({ ...trBig, campos: undefined }),
+    "utf8=", JSON.stringify({ ...trUtf8, campos: undefined }));
+  check(trSmall.truncated === false && trSmall.chars === 100,
+    "trunc: respuesta bajo el cap -> truncated:false y cuerpo completo");
+  check(trSmall.contentLength === 100, "trunc: contentLength refleja el header del origin");
+  check(trBig.truncated === true && trBig.chars === 4096,
+    "trunc: respuesta sobre el cap -> truncated:true (el corte es OBSERVABLE para la tool)");
+  check(trBig.contentLength === 50000,
+    "trunc: contentLength da el tamano REAL del recurso aunque el cuerpo venga cortado");
+  check(trUtf8.truncated === true && trUtf8.chars === 2048,
+    "trunc: cap aplicado en BYTES -> 4096 bytes de texto 2-byte = 2048 chars (antes: 4096 chars = 8 KB)");
+  check(trUtf8.contentLength === null,
+    "trunc: sin header Content-Length -> null (no 0, que se leeria como 'recurso vacio')");
+  check(trSmall.campos.join(",") === "status,body,truncated,bytes,contentLength",
+    "trunc: la superficie hacia la tool es {status, body, truncated, bytes, contentLength}");
+  hostTr.dispose();
+
   // --- (e) REENVIO del init en la rama BINDING de makeFetchImpl (TAREA16b) ---
   // El bug TAREA16: makeFetchImpl llamaba binding.fetch(url) sin reenviar opts,
   // degradando POST a GET. El fix reenvia init (method/body/headers) al binding.

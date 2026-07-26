@@ -6,6 +6,7 @@
 
 import { newQuickJSAsyncWASMModuleFromVariant, newVariant } from "quickjs-emscripten-core";
 import baseAsyncifyVariant from "@jitl/quickjs-wasmfile-release-asyncify";
+import { canonicalBase, resolveFromBase, isUnderBase, basePath } from "./origin-scope.mjs";
 
 // Prelude que corre DENTRO del sandbox antes de las tools. host.fetchOrigin es
 // sincrona del lado del sandbox (puente asyncify __fetchOriginRaw) y async del host;
@@ -78,6 +79,14 @@ export class AsyncToolHost {
     if (typeof allowedOrigin !== "string" || !allowedOrigin) {
       throw new Error("AsyncToolHost requiere allowedOrigin");
     }
+    // allowedOrigin puede traer path (publicador tipo GitHub Pages de proyecto,
+    // https://user.github.io/REPO). Se canonicaliza una vez; sin path el scope
+    // equivale al chequeo por origin de siempre.
+    const canonAllowed = canonicalBase(allowedOrigin);
+    if (canonAllowed === null) {
+      throw new Error("AsyncToolHost: allowedOrigin invalido: " + allowedOrigin);
+    }
+    allowedOrigin = canonAllowed;
     this._quickjs = quickjs || null;
     this._quickjsModule = quickjsModule || null;
     this._allowedOrigin = allowedOrigin;
@@ -193,14 +202,22 @@ export class AsyncToolHost {
       if (body !== undefined && !contentType) {
         contentType = "application/json";
       }
+      // Scope: mismo origin Y, si el publicador vive bajo un path (sitio de
+      // proyecto), dentro de ese path. Sin path el chequeo es el de siempre.
       let url;
       if (/^https?:\/\//i.test(path)) {
         url = new URL(path);
       } else {
-        url = new URL(path, allowedOrigin);
+        url = new URL(resolveFromBase(allowedOrigin, path));
       }
-      if (url.origin !== allowedOrigin) {
+      if (url.origin !== new URL(allowedOrigin).origin) {
         throw new Error("origin no permitido: " + url.origin);
+      }
+      if (!isUnderBase(allowedOrigin, url.href)) {
+        // Mismo host, fuera del subpath del publicador: en un host compartido
+        // (user.github.io con varios proyectos) esto seria salirse a otro
+        // proyecto. Mensaje propio para no confundirlo con el cross-origin.
+        throw new Error("fuera del scope del publicador (" + basePath(allowedOrigin) + "): " + url.pathname);
       }
       const fetchOpts = { method };
       if (body !== undefined) {

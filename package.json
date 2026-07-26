@@ -38,6 +38,7 @@
     "./mcp-core": "./mcp-core.mjs",
     "./mcp-core-async": "./mcp-core-async.mjs",
     "./llmstxt-parse": "./llmstxt-parse.mjs",
+    "./origin-scope": "./origin-scope.mjs",
     "./sigstore-attest": "./sigstore-attest.mjs",
     "./shim": "./shim.mjs",
     "./web": "./web/mcpwasm-web.mjs"
@@ -51,6 +52,7 @@
     "mcp-core.mjs",
     "mcp-core-async.mjs",
     "llmstxt-parse.mjs",
+    "origin-scope.mjs",
     "sigstore-attest.mjs",
     "shim.mjs",
     "web/mcpwasm-web.mjs"
@@ -66,6 +68,7 @@
     "gateway:offline": "node build-gateway.mjs && node mf-gateway.mjs --offline",
     "memspike": "node build-memsnapshot.mjs && node build-memspike.mjs && node mf-memspike.mjs",
     "local": "node test-local.mjs",
+    "subpath": "node build-gateway.mjs && node test-subpath.mjs",
     "validate-publisher": "node scripts/validate-publisher.mjs",
     "build:web": "node web/build.mjs",
     "test:web": "node test-web.mjs"

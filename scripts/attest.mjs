@@ -16,6 +16,7 @@
 
 import { generateKeyPairSync, createPrivateKey, sign } from "node:crypto";
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
+import { canonicalBase } from "../origin-scope.mjs";
 
 const ATTESTER = "human:mauricio";
 const KEYFILE = ".attester-key.json";
@@ -43,16 +44,13 @@ function todayUtcStr() {
   return `${y}-${m}-${day}`;
 }
 
+// Importado de origin-scope.mjs: MISMA funcion que usan los tres runtimes, para
+// que lo que se firma aqui sea exactamente lo que alla se compara. (Antes cada
+// sitio tenia su propia version y no coincidian.)
 function canonicalOrigin(s) {
-  // new URL(s).origin keeps only scheme+host+port and silently drops any
-  // path. That is correct for a root-domain publisher, but wrong for a
-  // GitHub Pages PROJECT site (https://user.github.io/REPO/), where the
-  // published llms.txt lives under /REPO/, not at the domain root -- this
-  // function was fetching (and signing against) a completely different
-  // origin's llms.txt without any error. Keep the path (sans trailing
-  // slash) as part of the canonical origin.
-  const u = new URL(s);
-  return (u.origin + u.pathname).replace(/\/+$/, "");
+  const c = canonicalBase(s);
+  if (c === null) throw new Error("origin invalido: " + s);
+  return c;
 }
 
 // Extrae el tool_sha256 declarado en llms.txt para la skill <skill>.

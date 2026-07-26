@@ -56,6 +56,7 @@ import { AsyncToolHost } from "../host-async.mjs";
 import { handleMcpMessageAsync } from "../mcp-core-async.mjs";
 import { parseLlmsTxt } from "../llmstxt-parse.mjs";
 import { verifySigstoreAttestation } from "../sigstore-attest.mjs";
+import { canonicalBase, resolveFromBase, wellKnownCandidates } from "../origin-scope.mjs";
 
 const PKG = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 const MAX_LLMS_BYTES = 262144; // 256 KB (mismos defaults que el gateway)
@@ -142,7 +143,12 @@ if (!originArg && !serveDir) {
 let origin = null;
 if (originArg) {
   try {
-    origin = new URL(originArg).origin;
+    // Base canonica: conserva el path del publisher (GitHub Pages de PROYECTO,
+    // https://user.github.io/REPO). Antes era `new URL(originArg).origin`, que
+    // lo descartaba en silencio: pedir <host>/REPO cargaba las skills de <host>
+    // y reportaba "listo" sin un solo aviso.
+    origin = canonicalBase(originArg);
+    if (origin === null) throw new Error("no es un http(s) URL");
   } catch {
     err("origin invalido: " + originArg);
     process.exit(2);
@@ -238,6 +244,18 @@ async function fetchText(url, maxBytes) {
   return { status: res.status, text };
 }
 
+// Primera candidata que responda 200; si ninguna, devuelve la ultima respuesta
+// (para que el caller vea el status real). Ver wellKnownCandidates: para un
+// publisher en la raiz hay UNA sola candidata => sin fetches extra.
+async function fetchFirstAvailable(urls, maxBytes) {
+  let last = null;
+  for (const u of urls) {
+    last = await fetchText(u, maxBytes);
+    if (last.status === 200) return last;
+  }
+  return last || { status: 404, text: "" };
+}
+
 function sha256Hex(text) {
   return createHash("sha256").update(text, "utf8").digest("hex");
 }
@@ -251,7 +269,7 @@ function sha256Hex(text) {
 async function fetchAgentSkillsIndex() {
   let r;
   try {
-    r = await fetchText(origin + "/.well-known/agent-skills/index.json", MAX_INDEX_BYTES);
+    r = await fetchFirstAvailable(wellKnownCandidates(origin, "/.well-known/agent-skills/index.json"), MAX_INDEX_BYTES);
   } catch (e) {
     err("agent-skills index.json fetch fallo: " + (e && e.message) + " -> sin cruce de metadata");
     return null;
@@ -266,13 +284,12 @@ async function fetchAgentSkillsIndex() {
   }
 }
 
-function canonicalOrigin(s) {
-  try {
-    return new URL(s).origin;
-  } catch {
-    return null;
-  }
-}
+// Origin canonico de origin-scope.mjs (la misma funcion que usan el gateway y
+// scripts/attest.mjs). Antes esta version descartaba el path en AMBOS lados de
+// la comparacion de atestaciones, con lo que una atestacion emitida para
+// <host>/proyecto-A casaba para <host>/proyecto-B: la atestacion no quedaba
+// ligada al proyecto, solo al host.
+const canonicalOrigin = canonicalBase;
 
 function todayUtcStr() {
   const d = new Date();
@@ -293,7 +310,7 @@ const ATTEST_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 async function fetchAttestations() {
   let r;
   try {
-    r = await fetchText(origin + "/.well-known/agent-skills/attestations.json", MAX_ATTESTATIONS_BYTES);
+    r = await fetchFirstAvailable(wellKnownCandidates(origin, "/.well-known/agent-skills/attestations.json"), MAX_ATTESTATIONS_BYTES);
   } catch (e) {
     err("attestations.json fetch fallo: " + (e && e.message) + " -> 0 atestaciones");
     return [];
@@ -455,7 +472,7 @@ async function discover() {
       err(label + ": format desconocido '" + mem.format + "' -> memory NO inyectada");
       continue;
     }
-    const snapUrl = new URL(mem.snapshot, origin).href;
+    const snapUrl = resolveFromBase(origin, mem.snapshot);
     let snapResp = null;
     try {
       snapResp = await fetchText(snapUrl, MAX_SNAPSHOT_BYTES);
@@ -556,7 +573,7 @@ async function discover() {
       }
     }
 
-    const toolUrl = new URL(s.toolPath, origin).href;
+    const toolUrl = resolveFromBase(origin, s.toolPath);
     let tr;
     try {
       tr = await fetchText(toolUrl, MAX_TOOL_BYTES);
@@ -621,7 +638,7 @@ async function discover() {
     if (typeof v.skillPath !== "string" || v.skillPath === "") continue;
     let dr;
     try {
-      dr = await fetchText(new URL(v.skillPath, origin).href, MAX_SKILLMD_BYTES);
+      dr = await fetchText(resolveFromBase(origin, v.skillPath), MAX_SKILLMD_BYTES);
     } catch (e) {
       err("receta omitida: " + v.name + " -> fetch SKILL.md fallo: " + ((e && e.message) || e));
       continue;

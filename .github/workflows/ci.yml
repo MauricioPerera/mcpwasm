@@ -33,6 +33,8 @@ jobs:
         run: npm run test:web
       - name: Built demo bundle smoke (the artifact GitHub Pages serves)
         run: npm run test:bundle
+      - name: Offline attestation signing (attest.mjs -> real gateway, enforcing)
+        run: npm run test:attest
 
   prod-integration:
     runs-on: ubuntu-latest

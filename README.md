@@ -714,6 +714,15 @@ Three modes via `ATTESTATION_MODE`:
 - `node scripts/attest.mjs sign <origin> <skill> <valid_until>` — fetches the
   origin's live `llms.txt`, reads the real `tool_sha256` for the skill, signs,
   and prints the attestation object JSON.
+- `… sign <origin> --all <valid_until>` — signs **every** executable skill the
+  `llms.txt` declares and prints the whole array, ready to paste into
+  `attestations.json`. Signing one at a time is how the third one gets forgotten.
+- `… --llms <file>` / `… --from-worker <file>` — read the `llms.txt` from a
+  **local** source instead of the live origin: a file, or the `LLMS_TXT` embedded
+  in a freshly built worker. This is what lets you sign *before* deploying.
+  Reading the live origin forces the opposite order — deploy, then sign — and
+  under `enforcing` that leaves a window where the new hashes have no matching
+  attestation, so the gateway excludes those skills entirely.
 
 The private key lives in `.attester-key.json` and is **local and gitignored** —
 never commit it, and it is never printed by the tool. No key material belongs

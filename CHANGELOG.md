@@ -9,6 +9,15 @@ the git log).
 ## [Unreleased]
 
 ### Fixed
+- **The `tool.js` cache actually caches now** (#24). Entries were written with
+  `cachePut(toolKey, src, 0)`; a falsy `ttlMs` emits no `cache-control` and
+  workerd discards the entry, so the "immutable content-addressed cache" the
+  gateway advertises retained nothing and **every cold discovery re-downloaded
+  every `tool.js`**. Measured after a real discovery: `gw:llms` and `gw:disc`
+  (both written with `max-age`) were present in `caches.default`, `gw:tool` was
+  absent. It now gets an explicit 24 h TTL — safe because the key embeds the
+  declared sha256, so a publisher change changes the key rather than staling the
+  entry, and the hash is re-verified on every read anyway.
 - **The L2 discovery cache no longer hydrates and executes `tool.js` without
   re-verifying it** (#23). The gateway caches the post-verification discovery
   result in `caches.default`; hydration validated shape only, so an entry

@@ -1280,8 +1280,10 @@ try {
   // sha256 de los tool.js servidos == declarados en /llms.txt). Cuenta CADA request
   // que llega al origin (llms.txt, tool.js, attestations.json).
   const t40DemoFakes = buildOfflineFakes();
+  const t40Paths = []; // paths pedidos al origin (para el check de cache de tool.js)
   const t40DemoHandler = (request) => {
     t40FetchCount++;
+    try { t40Paths.push(new URL(request.url).pathname); } catch { /* best-effort */ }
     return t40DemoFakes.demo(request);
   };
   function t40Mf(mode) {
@@ -1440,6 +1442,56 @@ try {
     }
   } finally {
     await t40Cache.dispose();
+  }
+
+  // (f) El cache de tool.js (gw:tool:<url>#<sha>) DEBE persistir.
+  // Se escribia con cachePut(..., 0), que no emite cache-control, y workerd
+  // descartaba la entrada: el cache "inmutable direccionado por contenido" no
+  // retenia nada y cada descubrimiento frio volvia a bajar todos los tool.js
+  // (mientras gw:llms y gw:disc, ambos con max-age, si sobrevivian). Se comprueba
+  // (1) que la entrada existe y es legible tras un descubrimiento, y (2) que un
+  // isolate nuevo, con la entrada de RESULTADO (gw:disc) borrada para forzar
+  // descubrimiento completo, ya NO vuelve a pedir el tool.js al origin.
+  const t40ToolKey = "https://cache.local/gw:tool:" + DEMO_ORIGIN + "/skills/sum_numbers/tool.js#" +
+    createHash("sha256").update(readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "demo-site/content/sum_numbers.tool.js"), "utf8"), "utf8").digest("hex");
+  const t40Cache2 = new Miniflare({
+    modules: true, cachePersist: t40CacheDir, compatibilityDate: "2026-06-01",
+    script: `export default { async fetch(req) {
+      const { op, key } = await req.json();
+      if (op === "get") { const r = await caches.default.match(new Request(key)); return new Response(r ? await r.text() : "", { status: r ? 200 : 404 }); }
+      await caches.default.delete(new Request(key));
+      return new Response("ok");
+    } }`,
+  });
+  const t40Cache2Call = async (payload) => {
+    const r = await t40Cache2.dispatchFetch("http://localhost/", { method: "POST", body: JSON.stringify(payload) });
+    return { status: r.status, text: await r.text() };
+  };
+  try {
+    const toolEntry = await t40Cache2Call({ op: "get", key: t40ToolKey });
+    console.log("[T40.f] entrada gw:tool -> HTTP " + toolEntry.status + " (" + toolEntry.text.length + " bytes)");
+    check(toolEntry.status === 200 && toolEntry.text.length > 0,
+      "T40.f: la entrada gw:tool persiste en caches.default (antes: descartada por falta de cache-control)");
+    check(toolEntry.text === readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "demo-site/content/sum_numbers.tool.js"), "utf8"),
+      "T40.f: lo cacheado son los bytes exactos del tool.js verificado");
+
+    // Se borra la capa de RESULTADO para forzar descubrimiento completo; la de
+    // INSUMOS (gw:tool) debe evitar el re-fetch del tool.js.
+    await t40Cache2Call({ op: "del", key: t40L2Key });
+    const mfF = t40Mf();
+    try {
+      t40Paths.length = 0;
+      const fList = await rpcT40(mfF, t40Base, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+      const pedidos = [...new Set(t40Paths)];
+      console.log("[T40.f] tras borrar gw:disc -> discovery=" + fList.headers["x-gw-discovery"] + " paths=" + pedidos.join(" "));
+      check(fList.status === 200, "T40.f: descubrimiento completo tras borrar el L2 -> HTTP 200");
+      check(!pedidos.some((p) => p.endsWith("/tool.js")),
+        "T40.f: NO se vuelve a pedir ningun tool.js al origin (servido desde el cache de insumos)");
+    } finally {
+      await mfF.dispose();
+    }
+  } finally {
+    await t40Cache2.dispose();
   }
 
   // Limpieza del dir temporal de cache (SQLite del CacheObject).

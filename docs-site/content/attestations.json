@@ -11,11 +11,11 @@
   {
     "origin": "https://llmstxt-docs.rckflr.workers.dev",
     "skill": "get_doc",
-    "tool_sha256": "7cff29b54d5fdecb3c203c749475e9bae1955d3f5c397df4fb2ee9ac5a4eecd0",
+    "tool_sha256": "26d61a69910dddc9ac758e3dd9ac349a50cc5d77c37e5b5c4340c51e3d90bf4d",
     "attester": "human:mauricio",
-    "signed_on": "2026-07-02",
+    "signed_on": "2026-07-26",
     "valid_until": "2027-07-02",
-    "signature": "WvlhjJAfQGBYZte4XQDD+C3OpGcyJIoiBPNsNs+vjbDoi0/7jwUhw4NrPfvXRJkYu4mTzWA6dMWTzPzdxvI2CA=="
+    "signature": "S6qSH0nPolddNgvQfJ+aZA1OubjAR1E5/ZsnZAaKNIR7O/uDxjYZ2iLJrJLN2Ij75vUZjgB0w93rdrwWVL2BBw=="
   },
   {
     "origin": "https://llmstxt-docs.rckflr.workers.dev",

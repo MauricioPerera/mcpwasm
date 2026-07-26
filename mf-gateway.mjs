@@ -85,10 +85,15 @@ function buildOfflineFakes() {
     get_doc: "Fetch one of the 4 published documents by name. Returns {name,length,content} (content truncated to 4000 chars).",
     list_docs: "List the 4 published documents with title and path. Static, no fetch.",
   };
-  const docsToolSrc = {}, docsToolSha = {};
+  const docsToolSrc = {}, docsToolSha = {}, docsSkillMd = {};
   for (const n of docsSkillNames) {
     docsToolSrc[n] = read("docs-site/content/" + n + ".tool.js");
     docsToolSha[n] = sha(docsToolSrc[n]);
+    // La otra mitad de la skill: el publicador real sirve SKILL.md, asi que el
+    // fake tambien debe hacerlo. Sin esto el gateway no registraba recetas en
+    // offline y la tool sintetica get_skill_guide no aparecia: divergencia
+    // fake/real que hacia que el suite hermetico no viera fallos que el online si.
+    docsSkillMd[n] = read("docs-site/content/" + n + ".SKILL.md");
   }
   const snapshot = read("docs-site/skills-index.snapshot");
   const snapshotSha = sha(snapshot);
@@ -113,6 +118,9 @@ function buildOfflineFakes() {
     else if (u.pathname.startsWith("/skills/") && u.pathname.endsWith("/tool.js")) {
       const name = u.pathname.split("/")[2];
       if (docsToolSrc[name]) { body = docsToolSrc[name]; status = 200; ct = "application/javascript; charset=utf-8"; }
+    } else if (u.pathname.startsWith("/skills/") && u.pathname.endsWith("/SKILL.md")) {
+      const name = u.pathname.split("/")[2];
+      if (docsSkillMd[name]) { body = docsSkillMd[name]; status = 200; ct = "text/markdown; charset=utf-8"; }
     } else if (u.pathname.startsWith("/docs/") && u.pathname.endsWith(".md")) {
       const name = u.pathname.slice("/docs/".length, -3);
       if (docsContent[name]) { body = docsContent[name]; status = 200; ct = "text/markdown; charset=utf-8"; }
@@ -286,7 +294,16 @@ try {
   const docsTools = docsList.body && docsList.body.result && docsList.body.result.tools;
   const docsNames = (docsTools || []).map((t) => t.name);
   check(docsList.status === 200, "docs: tools/list HTTP 200");
-  check(Array.isArray(docsTools) && docsTools.length === 3, "docs: tools/list trae 3 skills");
+  // El gateway agrega la tool SINTETICA get_skill_guide cuando el origin sirve
+  // recetas (SKILL.md) — desde 0.5.0. El docs real las sirve, asi que tools/list
+  // trae las 3 skills del publicador MAS la guia: contar el total fijo en 3
+  // fallaba desde entonces, pero solo en el suite ONLINE (el fake offline no
+  // servia SKILL.md, asi que el suite hermetico nunca lo veia). Se cuenta lo que
+  // la assertion queria comprobar —las skills del publicador— y se comprueba
+  // aparte la tool sintetica.
+  const docsSkillNames = docsNames.filter((n) => n !== "get_skill_guide");
+  check(Array.isArray(docsTools) && docsSkillNames.length === 3, "docs: tools/list trae 3 skills del publicador");
+  check(docsNames.includes("get_skill_guide"), "docs: tools/list incluye get_skill_guide (el origin sirve recetas)");
   check(
     docsNames.includes("search_spec") && docsNames.includes("get_doc") && docsNames.includes("list_docs"),
     "docs: skills son search_spec, get_doc, list_docs"

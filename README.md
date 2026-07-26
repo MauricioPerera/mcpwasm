@@ -834,6 +834,13 @@ What it guarantees:
     (calibrated ~100× over the heaviest legitimate skill; see TAREA12B).
   - wall-clock interrupt deadline: 2000 ms per `callTool` / `loadToolSource`
     (a cheap backstop where the clock does advance — Node/tests).
+  - response body cap: 4096 **bytes** per `host.fetchOrigin` (`maxResponseBytes`).
+    The cap is enforced on bytes, so it bounds host memory regardless of encoding.
+    Truncation is **observable**: the tool receives
+    `{status, body, truncated, bytes, contentLength}` — `truncated` says whether
+    the body was cut, `bytes` how many were read, and `contentLength` the size the
+    origin declared (or `null` when it declares none), so a tool can report the
+    real size of a resource instead of the size of what it got.
   - outbound fetch deadline: 10 s per `host.fetchOrigin`
     (`AbortSignal.timeout` + a `Promise.race` backstop that fires even if the
     fetch impl ignores the signal; on firing it throws "fetchOrigin timeout"

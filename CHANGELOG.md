@@ -19,6 +19,18 @@ the git log).
   `sha256` travelling in the same record and discards the **whole** entry on any
   mismatch (falling back to full discovery). Cost is one digest per skill per
   cross-isolate hydration, no network.
+- **`host.fetchOrigin` truncation is now observable, and the cap is honest**
+  (#25). The response body crossing into the sandbox was cut at 4096 with no
+  signal: the tool got `{status, body}` and could not tell "the response ended"
+  from "I cut it", so any JSON over the cap arrived split and blew up in
+  `JSON.parse` with an error that looks like the publisher's fault. The cap was
+  also applied in *bytes* while reading and in *characters* while cutting, so it
+  let through 2-3x its nominal size depending on encoding (4 KB ASCII, 8 KB
+  2-byte, 12 KB CJK). Now the cap is enforced in **bytes** and the tool receives
+  `{status, body, truncated, bytes, contentLength}`; `contentLength` is the size
+  the origin declared (`null` when absent), so a tool can report a resource's real
+  size instead of the size of what it received. Configurable per host via
+  `maxResponseBytes`, like the other limits, and documented in the README.
 - **Publishers living under a path (GitHub Pages *project* sites) now work, and
   attestations are bound to the project** (#19, #21). All three runtimes plus
   `scripts/attest.mjs` now share one canonical-origin definition

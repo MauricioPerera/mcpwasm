@@ -665,7 +665,18 @@ function serializeDiscL2(skills, rejected, snapshots, verdicts, docs) {
 // skills sea array con {name string, code string, sha256 string}, rejected array,
 // y verdicts null o {verdicts, counts}. Reconstruye skills con inputSchema
 // undefined (dropped por JSON).
-function parseDiscL2(raw) {
+//
+// Ademas RE-VERIFICA el sha256 de cada `code` contra el `sha256` declarado en el
+// MISMO registro. Antes no lo hacia (decision deliberada por coste), asi que una
+// entrada alterada en caches.default se hidrataba y se EJECUTABA sin que ningun
+// byte volviera a verificarse -- comprobado end-to-end: alterando solo `code` y
+// dejando `sha256` intacto, un isolate nuevo respondia X-Gw-Discovery=l2, no
+// tocaba al publicador y corria el codigo alterado. El hash viaja en el registro,
+// asi que la comprobacion es un digest por skill y no necesita red. Cualquier
+// desajuste descarta la entrada ENTERA (miss => descubrimiento completo), no solo
+// la skill afectada: una entrada manipulada no es de fiar ni en sus otras skills.
+// Es async por crypto.subtle.digest.
+async function parseDiscL2(raw) {
   try {
     const o = JSON.parse(raw);
     if (!o || typeof o !== "object" || o.kind !== "gw-disc" || o.v !== 1) return null;
@@ -708,6 +719,23 @@ function parseDiscL2(raw) {
       ? o.docs.filter((d) => d && typeof d === "object" && typeof d.name === "string" && typeof d.text === "string")
           .map((d) => ({ name: d.name, description: typeof d.description === "string" ? d.description : "", text: d.text }))
       : [];
+    // Re-verificacion de integridad (ver cabecera). Se hace al final, sobre la
+    // shape ya validada, para no digerir basura.
+    for (const s of skills) {
+      let h;
+      try {
+        h = await sha256Hex(s.code);
+      } catch {
+        return null;
+      }
+      if (h !== s.sha256) {
+        console.warn(
+          "[gateway] L2 descartado: " + s.name + " -> sha256 del code cacheado no coincide con el declarado (" +
+            h.slice(0, 12) + "… vs " + s.sha256.slice(0, 12) + "…) -> descubrimiento completo"
+        );
+        return null;
+      }
+    }
     return { skills, rejected, snapshots, verdicts, docs };
   } catch {
     return null;
@@ -785,7 +813,7 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
   const l2Key = "gw:disc:" + origin + ":" + await discFingerprint(attestCtx);
   const l2Raw = await cacheGet(l2Key);
   if (l2Raw !== null) {
-    const hydrated = parseDiscL2(l2Raw);
+    const hydrated = await parseDiscL2(l2Raw);
     if (hydrated) {
       isolateCachePut(origin, hydrated.skills, hydrated.rejected, hydrated.snapshots, hydrated.verdicts, hydrated.docs);
       return {

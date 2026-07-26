@@ -9,6 +9,16 @@ the git log).
 ## [Unreleased]
 
 ### Fixed
+- **The L2 discovery cache no longer hydrates and executes `tool.js` without
+  re-verifying it** (#23). The gateway caches the post-verification discovery
+  result in `caches.default`; hydration validated shape only, so an entry
+  altered there was executed with no byte re-checked — reproduced end to end:
+  altering only `code` and leaving the `sha256` in the same record untouched,
+  a fresh isolate answered `X-Gw-Discovery: l2`, never contacted the publisher
+  and ran the altered code. `parseDiscL2` now re-hashes each `code` against the
+  `sha256` travelling in the same record and discards the **whole** entry on any
+  mismatch (falling back to full discovery). Cost is one digest per skill per
+  cross-isolate hydration, no network.
 - **Publishers living under a path (GitHub Pages *project* sites) now work, and
   attestations are bound to the project** (#19, #21). All three runtimes plus
   `scripts/attest.mjs` now share one canonical-origin definition

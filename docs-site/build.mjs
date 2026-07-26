@@ -15,7 +15,7 @@
 //    sobre el que se hasheo.
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { initSync, WasmOkfIndex } from "@rckflr/minimemory";
@@ -69,6 +69,13 @@ const COMMIT_BY_BRANCH = {
 };
 
 // --- 1) Fetch / copia de los 4 docs -> content/docs/<name>.md ----------------
+// --no-fetch: NO sale a la red; reusa los content/docs/<name>.md ya vendorizados.
+// Con eso el build depende solo del repo y es reproducible, que es lo que permite
+// comprobar en CI si el artefacto generado corresponde a su fuente
+// (`npm run check:docs-site`). Sin el flag, el comportamiento es el de siempre:
+// re-vendoriza desde upstream. Un check de deriva CON fetch se pondria rojo por
+// ediciones aguas arriba, que no son deriva del artefacto.
+const NO_FETCH = process.argv.includes("--no-fetch");
 const docs = {}; // name -> markdown string
 const provenance = [];
 
@@ -77,7 +84,19 @@ for (const src of DOC_SOURCES) {
   let used = null;
   if (src.local) {
     markdown = readFileSync(src.local, "utf8");
-    used = { source: "local", path: src.local };
+    // Ruta RELATIVA a la raiz del repo: la absoluta hacia que doc-sources.json
+    // cambiara segun donde estuviera clonado el repo, o sea que el artefacto
+    // generado no era comparable entre maquinas (ni entre dos checkouts del
+    // mismo usuario).
+    used = { source: "local", path: relative(join(__dirname, ".."), src.local).split(sep).join("/") };
+  } else if (NO_FETCH) {
+    const vendored = join(docsDir, `${src.name}.md`);
+    if (!existsSync(vendored)) {
+      throw new Error(`--no-fetch: falta ${vendored}; corre el build sin el flag al menos una vez`);
+    }
+    markdown = readFileSync(vendored, "utf8");
+    const c = src.candidates[0];
+    used = { source: "github-raw", branch: c.branch, path: c.path, url: RAW(c.branch, c.path), commit: COMMIT_BY_BRANCH[c.branch] };
   } else {
     for (const c of src.candidates) {
       const url = RAW(c.branch, c.path);
@@ -96,7 +115,7 @@ for (const src of DOC_SOURCES) {
   docs[src.name] = markdown;
   writeFileSync(join(docsDir, `${src.name}.md`), markdown, "utf8");
   provenance.push({ name: src.name, title: src.title, ...used });
-  console.log(`doc ${src.name}: ${markdown.length} bytes <- ${used.source}${used.branch ? " " + used.branch + "@" + used.commit.slice(0, 7) : ""}`);
+  console.log(`doc ${src.name}: ${markdown.length} bytes <- ${used.source}${NO_FETCH && !src.local ? " (vendorizado)" : ""}${used.branch ? " " + used.branch + "@" + used.commit.slice(0, 7) : ""}`);
 }
 
 writeFileSync(join(__dirname, "doc-sources.json"), JSON.stringify(provenance, null, 2) + "\n", "utf8");

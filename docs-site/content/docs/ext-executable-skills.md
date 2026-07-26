@@ -1,7 +1,7 @@
 # Extension: Executable Skills
 
-**Status:** Draft (v0.5)
-**Date:** 2026-07-10
+**Status:** Draft (v0.5.1)
+**Date:** 2026-07-26
 **Extends:** [RFC: Publishing Agent Skills through `llms.txt`](./rfc-skills-in-llms-txt.md) (v0.9)
 
 ---
@@ -142,6 +142,8 @@ they were built for and SHOULD be omitted from aggregation.
 A runtime that executes skills published under this extension (a *gateway*, an agent-embedded engine, etc.):
 
 1. **Integrity.** MUST fetch the artifact, compute SHA-256 over the exact received bytes, and compare with the declared `tool_sha256`. On mismatch the skill MUST be excluded (not degraded to prose, not executed) and the rejection SHOULD be observable (log or diagnostic surface). This matches the mandatory-refusal language of core RFC §4.
+
+   *Exact* means the bytes as served. A runtime MUST NOT normalize line endings, trim whitespace, or re-encode the content before digesting; a publisher serving CRLF declares the hash of the CRLF bytes. This applies equally to `snapshot_sha256` (§2.4) and to the core RFC's `sha256` for the recipe. The rule was implicit in "exact received bytes" and still produced divergent implementations in practice: normalizing `\r\n` to `\n` is a natural thing to do to a text file, and a runtime that did so disagreed with runtimes that did not about whether the *same content* matched its declared hash — each rejecting what the other accepted, with no way for a publisher to satisfy both. Conformance check C15 exercises this with a fixture served as CRLF.
 2. **Isolation.** MUST execute artifacts in a sandbox where the host environment is not reachable: no ambient network, no filesystem, no host secrets. Host capabilities are injected explicitly; this extension defines only `host.fetchOrigin`, scoped to the publishing origin. A runtime MUST reject any `fetchOrigin` target that resolves outside that origin.
 3. **Resource limits.** SHOULD enforce memory, stack, and execution budgets per invocation, so a hostile or buggy artifact cannot exhaust the runtime. Execution budgets SHOULD be **deterministic** (e.g. counting interrupt-callback invocations) for synchronous execution, not wall-clock: platforms that freeze the clock during synchronous execution (Cloudflare Workers freezes `Date.now()` as a Spectre mitigation) make wall-clock deadlines silently inert against `while(true)` — field-tested: a wall-clock 2 s deadline never fired and the platform killed the request at ~40 s. Deterministic gas does not bound time spent *waiting* on async capabilities, so runtimes SHOULD additionally enforce a wall-clock timeout on each capability call (async waits do advance the clock). (Reference implementation values: 64 MB memory, 1 MB stack, interrupt-count gas budget that cuts an infinite loop in a few seconds, plus a 10 s wall-clock timeout per `fetchOrigin` call.)
 4. **Trust domain.** Artifacts from the *same origin* MAY share an execution context; artifacts from *different origins* MUST NOT. Runtimes SHOULD isolate per skill even within one origin (defense in depth).
@@ -177,6 +179,7 @@ The gateway demonstrates: discovery from `llms.txt`, per-skill SHA-256 verificat
 
 ## 7. Changelog
 
+- **v0.5.1 (2026-07-26):** Clarification, no new requirement: requirement 1 now says explicitly that "exact received bytes" forbids normalizing line endings, trimming whitespace or re-encoding before digesting, and that the rule covers `snapshot_sha256` and the recipe `sha256` too. The implicit version had already produced divergent implementations of this same spec, each rejecting content the other accepted. New conformance check C15 serves a fixture with CRLF line endings and a declared hash over those exact bytes: a runtime that normalizes computes a different digest, rejects the skill and fails the check.
 - **v0.5 (2026-07-10):** Scopes for multi-project origins (SS2.5, resolves core RFC OQ6): optional `scope` key per skill line -> runtime-side tool prefixing `<scope>__<name>` (published bytes and hashes untouched, preserving the universal-template property); multiple `skills-memory` lines, one per scope, each binding its snapshot to its scope's skills; public-name collision -> skip with diagnostic (first wins); attestations unaffected. Fully backward compatible: no `scope` -> v0.4 behavior.
 - **v0.4 (2026-07-02):** Origin memory (§2.4): hash-pinned search snapshots (`skills-memory` line, `snapshot_sha256`, pluggable `format`) and the origin-scoped `host.memorySearch` capability; runtime requirement for snapshot integrity. Field-tested: the reference gateway serves BM25 search over the spec's own docs published as a static snapshot (`minimemory-okf-v1`).
 - **v0.3 (2026-07-02):** Lessons from a realistic field test (D1-backed bookstore + unmodified MCP client): explicit sandbox-globals note (ECMAScript only, no WHATWG APIs); `fetchOrigin` extended with optional `{method, body, contentType}` (GET/POST only) enabling write skills; resource budgets SHOULD be deterministic gas, not wall-clock (frozen clocks in Workers); MCP exposure MUST wrap non-object results in `structuredContent`.

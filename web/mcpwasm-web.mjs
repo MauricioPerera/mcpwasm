@@ -25,6 +25,7 @@
 
 import { AsyncToolHost } from "../host-async.mjs";
 import { parseLlmsTxt } from "../llmstxt-parse.mjs";
+import { canonicalBase, resolveFromBase } from "../origin-scope.mjs";
 
 const MAX_TOOL_BYTES = 256 * 1024;
 const MAX_SKILLMD_BYTES = 256 * 1024;
@@ -36,9 +37,8 @@ async function sha256Normalized(text) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-function resolvePath(origin, path) {
-  return new URL(path, origin + "/").toString();
-}
+// Delegado en origin-scope.mjs para que los tres runtimes resuelvan igual.
+const resolvePath = resolveFromBase;
 
 async function fetchText(url, maxBytes, label) {
   const res = await fetch(url);
@@ -90,8 +90,10 @@ function makeMemorySearch(engineFactory, snapshotText) {
 
 export async function connectStaticSkills(origin, options = {}) {
   const log = typeof options.onLog === "function" ? options.onLog : () => {};
-  const originUrl = new URL(origin);
-  const allowedOrigin = originUrl.origin;
+  // Base canonica: conserva el path (sitio de proyecto), igual que el runtime
+  // local y el gateway. Sin path, identico al `new URL(origin).origin` previo.
+  const allowedOrigin = canonicalBase(origin);
+  if (allowedOrigin === null) throw new Error("connectStaticSkills: origin invalido: " + origin);
 
   // 1) QuickJS wasm precompilado (una sola compilacion para todos los sandboxes).
   // quickjsWasm acepta: URL string (streaming), bytes (BufferSource) o un

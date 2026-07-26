@@ -13,6 +13,7 @@ import baseAsyncifyVariant from "@jitl/quickjs-wasmfile-release-asyncify";
 import { AsyncToolHost } from "./host-async.mjs";
 import { handleMcpMessageAsync } from "./mcp-core-async.mjs";
 import { parseLlmsTxt } from "./llmstxt-parse.mjs";
+import { canonicalBase, resolveFromBase, wellKnownCandidates } from "./origin-scope.mjs";
 
 // minimemory (WasmOkfIndex, BM25) para la capability de memoria. .wasm import estatico verbatim (CompiledWasm, mismo truco que QuickJS).
 import initMem, { WasmOkfIndex } from "@rckflr/minimemory";
@@ -432,19 +433,13 @@ function parseReviewers(env) {
   }
 }
 
-// Origin canonico para comparacion de atestaciones (verdictForSkill): conserva
-// el path (sin trailing slash) ademas de scheme+host+port -- new URL(...).origin
-// solo lo descarta, lo que rompe la comparacion para un publisher de GitHub
-// Pages de PROYECTO (https://user.github.io/REPO/). Debe coincidir exactamente
-// con el canonicalOrigin de scripts/attest.mjs (mismo criterio, misma salida).
-function canonicalOrigin(s) {
-  try {
-  const u = new URL(s);
-  return (u.origin + u.pathname).replace(/\/+$/, "");
-  } catch {
-    return null;
-  }
-}
+// Origin canonico: importado de origin-scope.mjs, la fuente unica que comparten
+// los tres runtimes y scripts/attest.mjs. Conserva el path (sin trailing slash)
+// ademas de scheme+host+port. Antes esta funcion vivia aqui y conservaba el
+// path, pero el handler le pasaba un origin YA recortado por
+// `new URL(originParam).origin`, asi que la comparacion contra la atestacion
+// (que SI trae path) no casaba nunca para un publisher de proyecto.
+const canonicalOrigin = canonicalBase;
 
 function todayUtcStr() {
   const d = new Date();
@@ -498,16 +493,22 @@ async function verifyEd25519(pubB64, sigB64, data) {
 // unattested/excluidas en enforcing, fail-safe). Se cachea el TEXTO en el isolate;
 // los veredictos se recomputan al poblar.
 async function fetchAttestations(origin, fetchImpl, maxBytes) {
-  const url = origin + "/.well-known/agent-skills/attestations.json";
-  let r;
-  try {
-    r = await fetchText(url, FETCH_TIMEOUT_MS, maxBytes, fetchImpl);
-  } catch (e) {
-    console.warn(
-      "[gateway] attestations fetch fallo: " + String((e && e.message) || e) + " -> sin atestaciones"
-    );
-    return null;
+  // Candidatas: bajo la base del publisher y, si tiene path, la raiz del host
+  // (RFC 8615 ancla /.well-known a la raiz, pero un publisher de proyecto no
+  // puede servirla). Para un publisher en la raiz hay UNA sola candidata.
+  let r = null;
+  for (const url of wellKnownCandidates(origin, "/.well-known/agent-skills/attestations.json")) {
+    try {
+      r = await fetchText(url, FETCH_TIMEOUT_MS, maxBytes, fetchImpl);
+    } catch (e) {
+      console.warn(
+        "[gateway] attestations fetch fallo: " + String((e && e.message) || e) + " -> sin atestaciones"
+      );
+      return null;
+    }
+    if (r.status === 200) break;
   }
+  if (!r) return null;
   if (r.status === 404) return null; // esperado: el origin no atesta nada
   if (r.status !== 200) {
     console.warn("[gateway] attestations HTTP " + r.status + " -> sin atestaciones");
@@ -534,16 +535,19 @@ async function fetchAttestations(origin, fetchImpl, maxBytes) {
 // error de descubrimiento -- el gateway simplemente no cruza nada y confia solo
 // en llms.txt, como hacia antes de este cambio.
 async function fetchAgentSkillsIndex(origin, fetchImpl, maxBytes) {
-  const url = origin + "/.well-known/agent-skills/index.json";
-  let r;
-  try {
-    r = await fetchText(url, FETCH_TIMEOUT_MS, maxBytes, fetchImpl);
-  } catch (e) {
-    console.warn(
-      "[gateway] agent-skills index.json fetch fallo: " + String((e && e.message) || e) + " -> sin cruce de metadata"
-    );
-    return null;
+  let r = null;
+  for (const url of wellKnownCandidates(origin, "/.well-known/agent-skills/index.json")) {
+    try {
+      r = await fetchText(url, FETCH_TIMEOUT_MS, maxBytes, fetchImpl);
+    } catch (e) {
+      console.warn(
+        "[gateway] agent-skills index.json fetch fallo: " + String((e && e.message) || e) + " -> sin cruce de metadata"
+      );
+      return null;
+    }
+    if (r.status === 200) break;
   }
+  if (!r) return null;
   if (r.status === 404) return null; // esperado: el origin no publica index.json
   if (r.status !== 200) {
     console.warn("[gateway] agent-skills index.json HTTP " + r.status + " -> sin cruce de metadata");
@@ -875,7 +879,7 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
       continue;
     }
 
-    const toolUrl = new URL(s.toolPath, origin).href;
+    const toolUrl = resolveFromBase(origin, s.toolPath);
     const toolKey = "gw:tool:" + toolUrl + "#" + s.sha256;
 
     let src = await cacheGet(toolKey);
@@ -942,7 +946,7 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
     if (typeof s.skillPath === "string" && s.skillPath !== "") {
       let dr = null;
       try {
-        dr = await fetchText(new URL(s.skillPath, origin).href, FETCH_TIMEOUT_MS, caps.skillmd, fetchImpl);
+        dr = await fetchText(resolveFromBase(origin, s.skillPath), FETCH_TIMEOUT_MS, caps.skillmd, fetchImpl);
       } catch (e) {
         console.warn("[gateway] receta omitida: " + s.name + " -> fetch SKILL.md fallo: " + String((e && e.message) || e));
       }
@@ -983,7 +987,7 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
     }
     let snapResp = null;
     try {
-      snapResp = await fetchText(new URL(mem.snapshot, origin).href, FETCH_TIMEOUT_MS, caps.snapshot, fetchImpl);
+      snapResp = await fetchText(resolveFromBase(origin, mem.snapshot), FETCH_TIMEOUT_MS, caps.snapshot, fetchImpl);
     } catch (e) {
       console.warn(label + ": snapshot fetch fallo: " + String((e && e.message) || e) + " -> memory NO inyectada");
       continue;
@@ -1175,12 +1179,17 @@ function json(obj, status = 200, discovery, attest, client, rl) {
   return new Response(JSON.stringify(obj), { status, headers });
 }
 
+// Allowlist canonicalizada: cada entrada pasa por canonicalBase, asi una
+// entrada CON path (https://user.github.io/REPO) es comparable con el origin
+// canonico del request. Antes se comparaban strings crudos contra un origin ya
+// recortado, con lo que una entrada con path no casaba nunca (403 permanente) y
+// la unica config viable era el host entero. Entradas invalidas se descartan.
 function allowedOrigins(env) {
   const raw = (env && env.ALLOWED_ORIGINS) || "";
   return raw
     .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+    .map((s) => canonicalBase(s.trim()))
+    .filter((s) => typeof s === "string" && s.length > 0);
 }
 
 // Comparacion de strings en tiempo (aprox) constante para el header Authorization.
@@ -1509,7 +1518,11 @@ export default {
     }
     let origin;
     try {
-      origin = new URL(originParam).origin;
+      // Base canonica: conserva el path (sitio de proyecto). Antes aqui se
+      // hacia `new URL(originParam).origin`, que lo descartaba en silencio y
+      // hacia que ?origin=<host>/REPO sirviera el publisher de <host>.
+      origin = canonicalBase(originParam);
+      if (origin === null) throw new Error("origin invalido");
     } catch {
       return json(
         { jsonrpc: "2.0", id: null, error: { code: -32602, message: "origin invalido: " + originParam } },

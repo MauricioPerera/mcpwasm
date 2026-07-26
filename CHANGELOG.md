@@ -9,6 +9,29 @@ the git log).
 ## [Unreleased]
 
 ### Fixed
+- **Publishers living under a path (GitHub Pages *project* sites) now work, and
+  attestations are bound to the project** (#19, #21). All three runtimes plus
+  `scripts/attest.mjs` now share one canonical-origin definition
+  (`origin-scope.mjs`); previously there were three incompatible ones. Before
+  this, asking for `<host>/REPO` silently loaded `<host>`'s skills and answered
+  HTTP 200 with no warning; a publisher that existed only under `/REPO` got a
+  404; a valid attestation signed for `<host>/REPO` was never matched by the
+  gateway (excluded under `enforcing`); and in the local runtime an attestation
+  for `<host>/proyecto-A` was accepted for `<host>/proyecto-B`.
+  - `host.fetchOrigin` is now scoped to the publisher's subpath, not just its
+    host, so one project cannot reach another project's endpoints on a shared
+    host. Cross-origin still fails with the same "origin no permitido" message;
+    same-host-out-of-scope has its own.
+  - `ALLOWED_ORIGINS` entries may now carry a path (before, such an entry could
+    never match and produced a permanent 403).
+  - `/.well-known/agent-skills/*` is looked up under the publisher's base first,
+    falling back to the host root (RFC 8615 anchors it at the root, which a
+    project-site publisher cannot serve). Root publishers issue exactly one
+    request, as before.
+  - New hermetic suite `npm run subpath` (16 checks, both runtimes + sandbox
+    scope + enforcing attestations), wired into CI.
+  - **Root publishers are byte-identical to before**: every existing suite
+    passes unchanged.
 - Local runtime: when discovery fails entirely (no verifiable skills), MCP
   requests now receive a controlled JSON-RPC error (`-32002`,
   "descubrimiento fallo: <reason>") instead of an internal

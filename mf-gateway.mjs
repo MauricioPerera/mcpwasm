@@ -1324,6 +1324,69 @@ try {
     await mfC.dispose();
   }
 
+  // (e) INTEGRIDAD del L2: una entrada ALTERADA no debe ejecutarse.
+  // El L2 guarda el resultado post-verificacion, asi que hidratarlo sin volver a
+  // comprobar nada significaba que quien pudiera escribir en caches.default podia
+  // colar codigo: alterando solo `code` y dejando el `sha256` del mismo registro
+  // intacto, un isolate nuevo respondia l2, no tocaba al publicador y ejecutaba lo
+  // alterado. Ahora parseDiscL2 re-verifica el digest de cada `code` contra el
+  // sha256 declarado en el registro y descarta la entrada entera si no cuadra.
+  // Se comprueba que el gateway NO sirve lo alterado y que cae a descubrimiento
+  // completo (miss + fetch real al origin).
+  const t40EvilCode = 'registerTool({ name: "sum_numbers", description: "d", inputSchema: { type: "object" }, handler(){ return "L2_NO_VERIFICADO"; } });';
+  const t40Fp = createHash("sha256").update(JSON.stringify({
+    mode: "off", reviewers: "",
+    date: new Date().toISOString().slice(0, 10),
+  }), "utf8").digest("hex");
+  const t40L2Key = "https://cache.local/gw:disc:" + DEMO_ORIGIN + ":" + t40Fp;
+  // Lectura + escritura del cache DENTRO de workerd (el proxy de Miniflare no
+  // acepta Response de Node), compartiendo el mismo cachePersist.
+  const t40Cache = new Miniflare({
+    modules: true, cachePersist: t40CacheDir, compatibilityDate: "2026-06-01",
+    script: `export default { async fetch(req) {
+      const { op, key, body } = await req.json();
+      if (op === "get") { const r = await caches.default.match(new Request(key)); return new Response(r ? await r.text() : "", { status: r ? 200 : 404 }); }
+      await caches.default.put(new Request(key), new Response(body, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "max-age=60" } }));
+      return new Response("ok");
+    } }`,
+  });
+  const t40CacheCall = async (payload) => {
+    const r = await t40Cache.dispatchFetch("http://localhost/", { method: "POST", body: JSON.stringify(payload) });
+    return { status: r.status, text: await r.text() };
+  };
+  try {
+    const got = await t40CacheCall({ op: "get", key: t40L2Key });
+    check(got.status === 200 && got.text.length > 0, "T40.e: la entrada L2 existe y es legible (precondicion del test)");
+    const rec = JSON.parse(got.text);
+    const victim = (rec.skills || []).find((k) => k.name === "sum_numbers");
+    check(!!victim, "T40.e: el registro L2 trae la skill sum_numbers con su code y su sha256");
+    victim.code = t40EvilCode; // se ALTERA el code; el sha256 declarado queda intacto
+    await t40CacheCall({ op: "put", key: t40L2Key, body: JSON.stringify(rec) });
+
+    const mfE = t40Mf(); // isolate nuevo, mismo cachePersist, misma config => misma key
+    try {
+      const countBeforeE = t40FetchCount;
+      const eCall = await rpcT40(mfE, t40Base, {
+        jsonrpc: "2.0", id: 1, method: "tools/call",
+        params: { name: "sum_numbers", arguments: { a: 20, b: 22 } },
+      });
+      const countAfterE = t40FetchCount;
+      const txt = JSON.stringify(eCall.body);
+      console.log("[T40.e] E tras alterar el L2 -> discovery=" + eCall.headers["x-gw-discovery"] +
+        " fetchCount " + countBeforeE + "->" + countAfterE + " body=" + txt.slice(0, 120));
+      check(!/L2_NO_VERIFICADO/.test(txt), "T40.e: el gateway NO ejecuta el code alterado del L2");
+      check(eCall.headers["x-gw-discovery"] === "miss",
+        "T40.e: entrada alterada -> descartada -> descubrimiento completo (miss, no l2)");
+      check(countAfterE > countBeforeE,
+        "T40.e: E SI fetcheo el origin (contador " + countBeforeE + "->" + countAfterE + ")");
+      check(/42/.test(txt), "T40.e: el resultado vuelve a ser el correcto (42, code verificado del origin)");
+    } finally {
+      await mfE.dispose();
+    }
+  } finally {
+    await t40Cache.dispose();
+  }
+
   // Limpieza del dir temporal de cache (SQLite del CacheObject).
   try { rmSync(t40CacheDir, { recursive: true, force: true }); } catch { /* best-effort */ }
 

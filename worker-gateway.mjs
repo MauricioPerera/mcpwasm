@@ -230,6 +230,15 @@ function isolateCachePut(origin, skills, rejected, snapshots, verdicts, docs) {
 // tool.js inmutable key=`gw:tool:${url}#${sha}` (solo tras verify OK); llms.txt
 // TTL 60s key=`gw:llms:${origin}` (con timestamp).
 const LLMS_TTL_MS = 60_000;
+// TTL del cache de tool.js. La key incluye el sha256 declarado
+// (`gw:tool:<url>#<sha>`), asi que la entrada es INMUTABLE por construccion: un
+// cambio del publicador cambia la key, no el contenido de esta. Por eso puede ser
+// largo. Antes se llamaba a cachePut con ttlMs=0, que NO emite cache-control y
+// hacia que workerd descartara la entrada: el cache "inmutable direccionado por
+// contenido" no retenia nada y CADA descubrimiento frio volvia a bajar todos los
+// tool.js. Medido: tras un descubrimiento real, `gw:llms` y `gw:disc` (ambos con
+// max-age) quedaban en caches.default y `gw:tool` no.
+const TOOL_TTL_MS = 86_400_000; // 24 h
 const FETCH_TIMEOUT_MS = 5000;
 
 // T42: caps de tamano para TODOS los fetches de descubrimiento (env con defaults
@@ -294,6 +303,8 @@ async function cacheGet(key) {
   }
 }
 
+// OJO: sin `ttlMs` no se emite cache-control y workerd NO conserva la entrada
+// (comprobado). Todo caller que quiera que su entrada sobreviva debe pasar un TTL.
 async function cachePut(key, body, ttlMs) {
   try {
     const c = caches.default;
@@ -949,8 +960,11 @@ async function discoverSkillsInner(origin, fetchImpl, attestCtx, caps) {
       continue;
     }
 
-    // Cache inmutable (key incluye el sha => contenido addressable).
-    await cachePut(toolKey, src, 0);
+    // Cache inmutable (key incluye el sha => contenido addressable). El TTL es
+    // largo a proposito: si el publicador cambia el tool.js, cambia el sha
+    // declarado y por tanto la KEY, asi que esta entrada no puede quedar stale.
+    // Ademas el sha256 se re-verifica SIEMPRE al leer (mas abajo), incluso en hit.
+    await cachePut(toolKey, src, TOOL_TTL_MS);
     // ext v0.5: nombre publico con scope; colision -> skill rejected (gana la primera).
     const publicName = s.scope ? s.scope + "__" + s.name : s.name;
     if (skills.some((k) => k.publicName === publicName)) {

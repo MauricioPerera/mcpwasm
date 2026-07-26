@@ -757,6 +757,62 @@ try {
 
   hostT.dispose();
 
+  // --- (d1b) El presupuesto de interrupcion mide EJECUCION, no espera --------
+  // El deadline se fijaba una sola vez al entrar a callTool, asi que el rato que
+  // la pila pasaba SUSPENDIDA esperando fetchOrigin lo consumia: tras un origin
+  // lento, la primera invocacion del handler al reanudar mataba la tool con el
+  // mismo "interrupted" del corte anti-while(true) -- un publicador lento se
+  // diagnosticaba como bucle infinito. Ahora se contabilizan segmentos de
+  // ejecucion. Se comprueba que (1) la espera ya no mata, (2) el presupuesto de
+  // CPU sigue acotado incluso repartido en dos segmentos alrededor de un fetch
+  // (o sea: no se desactivo, se reconvirtio), y (3) los dos cortes se distinguen.
+  const slowFetch = (ms) => async () => {
+    await new Promise((r) => setTimeout(r, ms));
+    return {
+      status: 200,
+      headers: { get: () => null },
+      body: { getReader() { let sent = false; return { read: async () => (sent ? { done: true } : ((sent = true), { done: false, value: new TextEncoder().encode('{"ok":true}') })), cancel: async () => {} }; } },
+    };
+  };
+  const WORK = (n) => 'registerTool({ name: "t", description: "", inputSchema: { type: "object" },' +
+    ' handler(){ const r = host.fetchOrigin("/x"); let s = 0; for (let i = 0; i < ' + n + '; i++) s += i % 7; return { status: r.status, s: s }; } });';
+  const hostSlow = new AsyncToolHost({ quickjs, allowedOrigin: "https://test.local", fetchImpl: slowFetch(3000) });
+  await hostSlow.init();
+  hostSlow.loadToolSource(WORK(1e6));
+  let slowOk = null, slowErr = null;
+  const tSlow = Date.now();
+  try { slowOk = await hostSlow.callTool("t", {}); } catch (e) { slowErr = e.message; }
+  console.log("[exec-budget] fetch 3s + 1e6 iter ->", slowOk ? JSON.stringify(slowOk) : "ERR " + slowErr, (Date.now() - tSlow) + "ms");
+  check(slowOk && slowOk.status === 200,
+    "exec-budget: un fetch de 3s (> presupuesto) ya NO mata la tool que procesa la respuesta");
+  hostSlow.dispose();
+
+  // Dos segmentos pesados alrededor de un fetch rapido: el TOTAL de ejecucion
+  // sigue acotado => debe cortar igual.
+  const hostSplit = new AsyncToolHost({ quickjs, allowedOrigin: "https://test.local", fetchImpl: slowFetch(0) });
+  await hostSplit.init();
+  hostSplit.loadToolSource('registerTool({ name: "t", description: "", inputSchema: { type: "object" },' +
+    ' handler(){ let s = 0; for (let i = 0; i < 3e7; i++) s += i % 7; host.fetchOrigin("/x"); for (let i = 0; i < 3e7; i++) s += i % 7; return s; } });');
+  let splitErr = null;
+  try { await hostSplit.callTool("t", {}); } catch (e) { splitErr = e.message; }
+  console.log("[exec-budget] 2x3e7 con fetch en medio ->", splitErr);
+  check(!!splitErr && /interrupted/.test(splitErr),
+    "exec-budget: el presupuesto de CPU sigue acotado repartido en dos segmentos (no se desactivo)");
+  check(!!splitErr && /EJECUCION/.test(splitErr),
+    "exec-budget: el corte por presupuesto se identifica como tal en el mensaje");
+  hostSplit.dispose();
+
+  // while(true): corta por GAS y el mensaje lo dice (antes: mismo texto que arriba).
+  const hostLoop = new AsyncToolHost({ quickjs, allowedOrigin: "https://test.local" });
+  await hostLoop.init();
+  hostLoop.loadToolSource('registerTool({ name: "t", description: "", inputSchema: { type: "object" }, handler(){ while(true){} } });');
+  let loopErr = null;
+  try { await hostLoop.callTool("t", {}); } catch (e) { loopErr = e.message; }
+  console.log("[exec-budget] while(true) ->", loopErr);
+  check(!!loopErr && /gas agotado/.test(loopErr),
+    "exec-budget: while(true) corta por GAS y el mensaje lo distingue del presupuesto");
+  hostLoop.dispose();
+
   // --- (d2) TRUNCADO OBSERVABLE de la respuesta de fetchOrigin ---------------
   // El cuerpo que cruza al sandbox esta acotado, pero antes el corte era INVISIBLE:
   // la tool recibia {status, body} y no podia distinguir "la respuesta termino" de

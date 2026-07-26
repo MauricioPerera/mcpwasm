@@ -1,0 +1,26 @@
+# Los finales de linea son parte del CONTRATO en este repo, no una preferencia
+# de estilo: tool_sha256 / snapshot_sha256 pinnean los bytes EXACTOS, y varios
+# builds embeben archivos del working tree verbatim dentro de artefactos
+# generados y versionados (docs-site/worker.mjs, docs/demo/mcpwasm-web.js).
+#
+# Git almacena LF en todos los archivos de texto de este repo (verificado:
+# `git ls-files --eol` no reporta ni un `i/crlf`), pero un checkout con
+# core.autocrlf=true los materializa en CRLF. Un build corrido en esa maquina
+# lee CRLF y lo embebe/hashea, produciendo bytes DISTINTOS de los que produce
+# la misma orden en Linux o macOS. Eso ya paso: al regenerar el docs-site para
+# #35, el README embebido salio con \r\n y el SKILL.md con \n respecto de lo
+# commiteado, sin que cambiara una sola linea de contenido.
+#
+# Con eol=lf el working tree es LF en todas las plataformas, asi que cualquier
+# build produce los mismos bytes en cualquier maquina. Es la misma leccion de
+# #20 (los tres runtimes discrepaban sobre que bytes cubre tool_sha256),
+# aplicada un nivel mas abajo: al material que entra a los builds.
+* text=auto eol=lf
+
+# Binarios: nunca convertir ni diferenciar como texto.
+*.wasm binary
+
+# Snapshots BM25: son texto pero estan hash-pinneados y no se leen a mano.
+# Git ya los autodetectaba como binarios; explicitarlo evita depender de la
+# heuristica si el contenido cambia.
+*.snapshot binary

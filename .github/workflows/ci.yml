@@ -37,6 +37,8 @@ jobs:
         run: npm run check:bundle
       - name: Committed docs-site artifact matches its source (no silent drift)
         run: npm run check:docs-site
+      - name: Committed demo-site/bookstore artifacts match their source
+        run: npm run check:publishers
       - name: Offline attestation signing (attest.mjs -> real gateway, enforcing)
         run: npm run test:attest
 

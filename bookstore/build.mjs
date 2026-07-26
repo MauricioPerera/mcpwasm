@@ -52,8 +52,13 @@ const skillLines = Object.keys(skills).map((name) => {
     corrupt_skill: "TEST FIXTURE: valid tool.js with a deliberately wrong declared sha256 (gateway exclusion test).",
     busy_loop: "TEST FIXTURE: infinite-loop handler with correct sha256 (gateway interrupt test).",
   }[name];
+  // `sha256` = hash de la RECETA (core RFC); `tool_sha256` = el del ejecutable
+  // (extension). El fixture corrupt_skill sigue declarando un tool_sha256
+  // deliberadamente incorrecto: lo que se prueba ahi es el rechazo por hash del
+  // TOOL, asi que su receta lleva el hash correcto como las demas.
   const meta = JSON.stringify({
     version: "1.0.0",
+    sha256: sha256(skills[name].skillMd),
     tool: `/skills/${name}/tool.js`,
     tool_sha256: declaredHash(name),
   });

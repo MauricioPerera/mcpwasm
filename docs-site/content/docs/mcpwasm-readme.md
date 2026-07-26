@@ -147,6 +147,15 @@ MCP client configuration (Claude Code, Cursor, …):
 }
 ```
 
+**Publishers under a path work.** The origin may carry one — a GitHub Pages
+*project* site (`https://user.github.io/REPO`) is discovered at
+`<base>/llms.txt`, not at the host root, and `host.fetchOrigin` is scoped to
+that subpath rather than to the whole host, so one project cannot reach
+another's endpoints on a shared host. The same canonical origin is used by the
+gateway and by `scripts/attest.mjs`, so an attestation signed for a project
+site verifies. (Pointing at a *raw* GitHub URL still does not work — see
+`--serve` below.)
+
 Honest limits (stated in `bin/mcpwasm-local.mjs`): discovery runs once per
 process (restart to refresh). Hash verification and the sandbox model
 (per-skill contexts, origin-scoped `fetchOrigin`, resource limits) are the
@@ -377,7 +386,8 @@ tool-agnostic deploy — not a bespoke MCP server built per API.
                                                         │               │────► (4) host fetches
                                                         │  mem/stack/   │      ONLY the allowed
                                                         │  interrupt    │      origin, returns
-                                                        │  limits set   │      {status,body}
+                                                        │  limits set   │      {status,body,
+                                                        │               │       truncated,...}
                                                         └───────────────┘
 ```
 
@@ -391,7 +401,9 @@ Flow:
    ones into a fresh `AsyncToolHost` scoped to that origin.
 3. Tool code runs inside QuickJS-wasm. It can only call
    `host.fetchOrigin(path, opts?)` (`opts`: `{method: "GET"|"POST",
-   body?: string ≤16 KB, contentType?}` — write skills go through POST),
+   body?: string ≤16 KB, contentType?}` — write skills go through POST;
+   returns `{status, body, truncated, bytes, contentLength}`, see the limits
+   section for what `truncated` means and why it exists),
    which is async from the host side but synchronous-looking inside the sandbox
    (QuickJS asyncify suspends/resumes the wasm stack). An origin that declares
    a verified memory snapshot additionally gets `host.memorySearch(query, k?)`.
@@ -741,6 +753,27 @@ npm test      # build + e2e Miniflare for the sync PoC (worker.mjs)
 npm run spike # build + e2e Miniflare for the async spike (worker-spike.mjs)
 npm run gateway # build + e2e Miniflare for the gateway (worker-gateway.mjs) — hits the live demo site
 npm run memspike # build the memory snapshot + memspike worker, then e2e Miniflare against the docs-site origin (host.memorySearch / BM25)
+```
+
+The rest of the suites, all hermetic (no network) and all part of the CI gate:
+
+```bash
+npm run gateway:offline # the gateway suite with fake origins — no network at all
+npm run local     # the stdio runtime end to end against a fake publisher
+npm run subpath   # publishers living under a path (project sites), both runtimes
+npm run test:web  # the browser runtime, running the same module in Node
+npm run test:bundle  # the BUILT demo bundle, i.e. the artifact GitHub Pages serves
+npm run test:attest  # sign offline with attest.mjs, verify the real gateway accepts it
+```
+
+And the drift guards, which fail if a committed generated artifact no longer
+matches its source — the failure mode that let the demo bundle sit five fixes
+behind its own source across four merges:
+
+```bash
+npm run check:bundle      # docs/demo/mcpwasm-web.js
+npm run check:docs-site   # docs-site/worker.mjs (+ snapshot, provenance)
+npm run check:publishers  # demo-site/ and bookstore/ workers
 ```
 
 `npm run gateway` is documented as-is from `package.json`; it builds the gateway

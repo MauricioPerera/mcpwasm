@@ -714,6 +714,15 @@ Three modes via `ATTESTATION_MODE`:
 - `node scripts/attest.mjs sign <origin> <skill> <valid_until>` — fetches the
   origin's live `llms.txt`, reads the real `tool_sha256` for the skill, signs,
   and prints the attestation object JSON.
+- `… sign <origin> --all <valid_until>` — signs **every** executable skill the
+  `llms.txt` declares and prints the whole array, ready to paste into
+  `attestations.json`. Signing one at a time is how the third one gets forgotten.
+- `… --llms <file>` / `… --from-worker <file>` — read the `llms.txt` from a
+  **local** source instead of the live origin: a file, or the `LLMS_TXT` embedded
+  in a freshly built worker. This is what lets you sign *before* deploying.
+  Reading the live origin forces the opposite order — deploy, then sign — and
+  under `enforcing` that leaves a window where the new hashes have no matching
+  attestation, so the gateway excludes those skills entirely.
 
 The private key lives in `.attester-key.json` and is **local and gitignored** —
 never commit it, and it is never printed by the tool. No key material belongs
@@ -832,8 +841,21 @@ What it guarantees:
     pure `while(true){}` never advances the clock. The gas counter does not
     depend on the clock — it counts how many times QuickJS invoked the handler
     (calibrated ~100× over the heaviest legitimate skill; see TAREA12B).
-  - wall-clock interrupt deadline: 2000 ms per `callTool` / `loadToolSource`
-    (a cheap backstop where the clock does advance — Node/tests).
+  - execution budget: 2000 ms per `callTool` / `loadToolSource` (a cheap backstop
+    where the clock does advance — Node/tests). It measures **execution**, not
+    wall clock: time the stack spends suspended waiting for a host capability
+    (`fetchOrigin`, `memorySearch`) does not count against it, so a slow origin
+    no longer kills a tool that then tries to process the response. Network waits
+    are bounded separately, per fetch, by the outbound deadline below. When either
+    cutoff fires the error says which one ("gas agotado" vs "presupuesto de
+    EJECUCION agotado") — they used to be the same bare "interrupted".
+  - response body cap: 4096 **bytes** per `host.fetchOrigin` (`maxResponseBytes`).
+    The cap is enforced on bytes, so it bounds host memory regardless of encoding.
+    Truncation is **observable**: the tool receives
+    `{status, body, truncated, bytes, contentLength}` — `truncated` says whether
+    the body was cut, `bytes` how many were read, and `contentLength` the size the
+    origin declared (or `null` when it declares none), so a tool can report the
+    real size of a resource instead of the size of what it got.
   - outbound fetch deadline: 10 s per `host.fetchOrigin`
     (`AbortSignal.timeout` + a `Promise.race` backstop that fires even if the
     fetch impl ignores the signal; on firing it throws "fetchOrigin timeout"

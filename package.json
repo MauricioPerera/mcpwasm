@@ -71,7 +71,8 @@
     "subpath": "node build-gateway.mjs && node test-subpath.mjs",
     "validate-publisher": "node scripts/validate-publisher.mjs",
     "build:web": "node web/build.mjs",
-    "test:web": "node test-web.mjs"
+    "test:web": "node test-web.mjs",
+    "test:bundle": "node smoke-bundle.mjs"
   },
   "dependencies": {
     "@jitl/quickjs-wasmfile-release-asyncify": "^0.32.0",

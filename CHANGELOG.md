@@ -8,6 +8,20 @@ the git log).
 
 ## [Unreleased]
 
+### Added
+- **`scripts/attest.mjs` can sign offline, and sign everything at once.**
+  `sign` read the origin's **live** `llms.txt` to get the real `tool_sha256`,
+  which forces deploy-then-sign: under `enforcing` that leaves a window where
+  the new hashes have no matching attestation and the gateway excludes those
+  skills. `--llms <file>` and `--from-worker <file>` read the declaration from
+  the build output instead, so you sign first and deploy with the attestations
+  already in. `--all` signs every declared skill and prints the array ready for
+  `attestations.json`. The tool also drops its private copy of the `llms.txt`
+  regex in favour of `parseLlmsTxt` — the same parser the runtimes use, so what
+  gets signed cannot drift from what gets verified (the old regex also ignored
+  `scope`). New `npm run test:attest` in CI signs offline and checks the real
+  gateway accepts the result in `enforcing`; the tool had no coverage at all.
+
 ### Fixed
 - **Recipes and `index.json` are cached as discovery inputs** (#36). Neither was
   cached at any layer, so with `tool.js` served from cache a cold discovery still

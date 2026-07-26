@@ -9,6 +9,17 @@ the git log).
 ## [Unreleased]
 
 ### Fixed
+- **The three runtimes now agree on which bytes `tool_sha256` covers** (#20).
+  The browser runtime normalized CRLF to LF before digesting, while the local
+  runtime, the gateway and the publisher builds hash the bytes exactly as
+  received. For a publisher serving CRLF the verdicts were **inverted**:
+  declaring the hash of the raw bytes, the browser rejected and the other two
+  accepted; declaring the normalized one, the reverse — and in the local runtime,
+  if it was the origin's only skill, the whole origin became unusable. The spec
+  leaves no room (`ext-executable-skills` SS4.1: "compute SHA-256 over the exact
+  received bytes"), so the browser was the one deviating; the normalization is
+  gone. New CRLF fixture in the web suite, verified to go red if the
+  normalization ever comes back.
 - **A slow origin no longer kills the tool that calls it** (#22). The 2000 ms
   interrupt budget was set once on entering `callTool`, so the time the stack
   spent **suspended** waiting for `fetchOrigin` counted against it: after a fetch

@@ -23,6 +23,21 @@ const SUM_TOOL = `registerTool({
 const CORRUPT_TOOL = `registerTool({ name: "corrupt", description: "x", inputSchema: { type: "object" }, handler() { return 1; } });`;
 const SUM_SKILL_MD = "---\nname: sum_numbers\n---\n\n# sum_numbers\n\nAlways pass BOTH a and b.\n";
 
+// Skill servida con terminadores CRLF y hash declarado sobre los bytes CRUDOS
+// (lo que produce cualquier build que lea el archivo del disco: docs-site/build.mjs,
+// scripts/attest.mjs). El runtime web normalizaba CRLF->LF antes de digerir, asi
+// que la RECHAZABA mientras el runtime local y el gateway la aceptaban: mismos
+// bytes, veredictos opuestos. Ahora los tres hashean los bytes exactos.
+const CRLF_TOOL = [
+  'registerTool({',
+  '  name: "crlf_skill",',
+  '  description: "Servida con CRLF.",',
+  '  inputSchema: { type: "object" },',
+  '  handler() { return "crlf-ok"; }',
+  '});',
+].join("\r\n");
+const CRLF_SKILL_MD = ["---", "name: crlf_skill", "---", "", "# crlf_skill", ""].join("\r\n");
+
 // snapshot BM25 real para la memoria scoped
 import { initSync as memInit, WasmOkfIndex } from "@rckflr/minimemory";
 memInit({ module: readFileSync(_require.resolve("@rckflr/minimemory/minimemory_bg.wasm")) });
@@ -42,7 +57,8 @@ const LLMS = "# fake\n\n" +
   "## Skills\n\n" +
   `- [sum_numbers](/skills/sum/SKILL.md): Sum. <!-- skill: ${JSON.stringify({ version: "1.0.0", sha256: sha(SUM_SKILL_MD), tool: "/skills/sum/tool.js", tool_sha256: sha(SUM_TOOL) })} -->\n` +
   `- [search_mem](/skills/search/SKILL.md): Search. <!-- skill: ${JSON.stringify({ version: "1.0.0", tool: "/skills/search/tool.js", tool_sha256: sha(SEARCH_TOOL), scope: "alpha" })} -->\n` +
-  `- [corrupt](/skills/corrupt/SKILL.md): Broken hash. <!-- skill: ${JSON.stringify({ version: "1.0.0", tool: "/skills/corrupt/tool.js", tool_sha256: "0".repeat(64) })} -->\n`;
+  `- [corrupt](/skills/corrupt/SKILL.md): Broken hash. <!-- skill: ${JSON.stringify({ version: "1.0.0", tool: "/skills/corrupt/tool.js", tool_sha256: "0".repeat(64) })} -->\n` +
+  `- [crlf_skill](/skills/crlf/SKILL.md): CRLF. <!-- skill: ${JSON.stringify({ version: "1.0.0", sha256: sha(CRLF_SKILL_MD), tool: "/skills/crlf/tool.js", tool_sha256: sha(CRLF_TOOL) })} -->\n`;
 
 const server = createServer((req, res) => {
   const routes = {
@@ -51,6 +67,8 @@ const server = createServer((req, res) => {
     "/skills/sum/SKILL.md": [SUM_SKILL_MD, "text/markdown"],
     "/skills/search/tool.js": [SEARCH_TOOL, "application/javascript"],
     "/skills/corrupt/tool.js": [CORRUPT_TOOL, "application/javascript"],
+    "/skills/crlf/tool.js": [CRLF_TOOL, "application/javascript"],
+    "/skills/crlf/SKILL.md": [CRLF_SKILL_MD, "text/markdown"],
     "/mem.snapshot": [SNAPSHOT, "application/json"],
   };
   const hit = routes[new URL(req.url, "http://x").pathname];
@@ -93,6 +111,16 @@ try {
     "web: receta SKILL.md verificada expuesta");
   check(logs.some((l) => /tool_sha256 mismatch/.test(l)),
     "web: el log registra el mismatch del hash roto");
+
+  // Paridad CRLF entre runtimes (#20): los bytes servidos llevan CRLF y el hash
+  // declarado es el de esos bytes exactos, calculado con node:crypto igual que lo
+  // haria el build de un publicador. Si el runtime web volviera a normalizar,
+  // estos checks se ponen rojos.
+  check(sha(CRLF_TOOL) !== sha(CRLF_TOOL.replace(/\r\n/g, "\n")),
+    "web: el fixture CRLF es significativo (hash crudo y normalizado DIFIEREN)");
+  check(names.includes("crlf_skill"), "web: skill con CRLF y hash de los bytes crudos -> VERIFICA");
+  check((await skills.callTool("crlf_skill", {})) === "crlf-ok", "web: la skill CRLF ejecuta en el sandbox");
+  check(!!skills.recipes.crlf_skill, "web: la receta CRLF tambien verifica (mismo criterio de bytes)");
 
   let threw = false;
   try { await skills.callTool("nope", {}); } catch { threw = true; }

@@ -1939,6 +1939,44 @@ function newMockExtensions(log) {
 var variant = { type: "async", importFFI: () => Promise.resolve().then(() => (init_ffi(), ffi_exports)).then((mod) => mod.QuickJSAsyncFFI), importModuleLoader: () => Promise.resolve().then(() => (init_emscripten_module_browser(), emscripten_module_browser_exports)).then((mod) => mod.default) };
 var src_default = variant;
 
+// origin-scope.mjs
+function canonicalBase(input) {
+  let u;
+  try {
+    u = new URL(input);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+  return (u.origin + u.pathname).replace(/\/+$/, "");
+}
+function basePath(base) {
+  const b = canonicalBase(base);
+  if (b === null) return "";
+  try {
+    return new URL(b).pathname.replace(/\/+$/, "");
+  } catch {
+    return "";
+  }
+}
+function resolveFromBase(base, p) {
+  return new URL(p, base + "/").href;
+}
+function isUnderBase(base, urlStr) {
+  let u;
+  const b = canonicalBase(base);
+  if (b === null) return false;
+  try {
+    u = new URL(urlStr);
+  } catch {
+    return false;
+  }
+  if (u.origin !== new URL(b).origin) return false;
+  const bp = basePath(b);
+  if (bp === "") return true;
+  return u.pathname === bp || u.pathname.startsWith(bp + "/");
+}
+
 // host-async.mjs
 var SANDBOX_PRELUDE_ASYNC = `
   globalThis.__tools = {};
@@ -1983,6 +2021,7 @@ var DEFAULT_MAX_STACK_SIZE_BYTES = 1024 * 1024;
 var DEFAULT_INTERRUPT_DEADLINE_MS = 2e3;
 var DEFAULT_INTERRUPT_MAX_INVOCATIONS = 2e4;
 var DEFAULT_FETCH_TIMEOUT_MS = 1e4;
+var DEFAULT_MAX_RESPONSE_BYTES = 4096;
 var AsyncToolHost = class {
   // Opciones: quickjs (modulo asyncify ya construido; recomendado en Workers para
   // evitar top-level await), quickjsModule (WebAssembly.Module pre-compilado),
@@ -1992,18 +2031,25 @@ var AsyncToolHost = class {
   // interruptMaxInvocations (gas determinista; salva contra while(true){}
   // en Workers), fetchImpl (default global fetch; el gateway inyecta uno que enruta
   // origins same-account via service binding, bypass del error 1042 worker-to-worker),
-  // fetchTimeoutMs (el gas acota CPU pero no esperas de red), extraCapabilities
+  // fetchTimeoutMs (el gas acota CPU pero no esperas de red), maxResponseBytes
+  // (cap EN BYTES del cuerpo que ve la tool; default 4096), extraCapabilities
   // (mapa nombre->async(argsJson)=>resultJson inyectado como host.<nombre>).
-  constructor({ quickjs, quickjsModule, allowedOrigin, memoryLimitBytes, maxStackSizeBytes, interruptDeadlineMs, interruptMaxInvocations, fetchImpl, fetchTimeoutMs, extraCapabilities }) {
+  constructor({ quickjs, quickjsModule, allowedOrigin, memoryLimitBytes, maxStackSizeBytes, interruptDeadlineMs, interruptMaxInvocations, fetchImpl, fetchTimeoutMs, maxResponseBytes, extraCapabilities }) {
     if (typeof allowedOrigin !== "string" || !allowedOrigin) {
       throw new Error("AsyncToolHost requiere allowedOrigin");
     }
+    const canonAllowed = canonicalBase(allowedOrigin);
+    if (canonAllowed === null) {
+      throw new Error("AsyncToolHost: allowedOrigin invalido: " + allowedOrigin);
+    }
+    allowedOrigin = canonAllowed;
     this._quickjs = quickjs || null;
     this._quickjsModule = quickjsModule || null;
     this._allowedOrigin = allowedOrigin;
     this._fetchImpl = typeof fetchImpl === "function" ? fetchImpl : ((u, o) => fetch(u, o));
     this._extraCapabilities = extraCapabilities || null;
     this._fetchTimeoutMs = typeof fetchTimeoutMs === "number" && fetchTimeoutMs > 0 ? fetchTimeoutMs : DEFAULT_FETCH_TIMEOUT_MS;
+    this._maxResponseBytes = typeof maxResponseBytes === "number" && maxResponseBytes > 0 ? Math.floor(maxResponseBytes) : DEFAULT_MAX_RESPONSE_BYTES;
     this._memoryLimitBytes = typeof memoryLimitBytes === "number" ? memoryLimitBytes : DEFAULT_MEMORY_LIMIT_BYTES;
     this._maxStackSizeBytes = typeof maxStackSizeBytes === "number" ? maxStackSizeBytes : DEFAULT_MAX_STACK_SIZE_BYTES;
     this._interruptDeadlineMs = typeof interruptDeadlineMs === "number" ? interruptDeadlineMs : DEFAULT_INTERRUPT_DEADLINE_MS;
@@ -2011,7 +2057,19 @@ var AsyncToolHost = class {
     this._deadline = Number.MAX_SAFE_INTEGER;
     this._interruptCount = 0;
     this._interruptActive = false;
+    this._execStart = 0;
+    this._execAccum = 0;
+    this._interruptReason = null;
     this._vm = null;
+  }
+  // Cierran/reabren el segmento de ejecucion. Los llama un puente alrededor del
+  // await que suspende la pila del sandbox. Fuera de callTool/loadToolSource
+  // (_interruptActive false) no hay nada que contabilizar.
+  _suspendExec() {
+    if (this._interruptActive) this._execAccum += Date.now() - this._execStart;
+  }
+  _resumeExec() {
+    if (this._interruptActive) this._execStart = Date.now();
   }
   // Construye (si hace falta) y cachea el modulo asyncify. En Workers el caller pasa
   // `quickjs` ya construido para evitar un top-level await.
@@ -2041,8 +2099,14 @@ var AsyncToolHost = class {
       vm.runtime.setInterruptHandler(() => {
         if (!host._interruptActive) return false;
         host._interruptCount = host._interruptCount + 1 >>> 0;
-        if (host._interruptCount > host._interruptMaxInvocations) return true;
-        if (host._interruptDeadlineMs > 0 && Date.now() > host._deadline) return true;
+        if (host._interruptCount > host._interruptMaxInvocations) {
+          host._interruptReason = "gas";
+          return true;
+        }
+        if (host._interruptDeadlineMs > 0 && host._execAccum + (Date.now() - host._execStart) > host._interruptDeadlineMs) {
+          host._interruptReason = "deadline";
+          return true;
+        }
         return false;
       });
     } catch (e) {
@@ -2051,100 +2115,132 @@ var AsyncToolHost = class {
     const allowedOrigin = this._allowedOrigin;
     const fetchImpl = this._fetchImpl;
     const fetchTimeoutMs = this._fetchTimeoutMs;
+    const maxResponseBytes = this._maxResponseBytes;
     const MAX_BODY_BYTES = 16 * 1024;
+    const self2 = this;
     const cap = vm.newFunction("__fetchOriginRaw", async (pathH, optsH) => {
-      const path = vm.getString(pathH);
-      const optsRaw = vm.getString(optsH);
-      let opts = {};
-      if (optsRaw) {
-        try {
-          opts = JSON.parse(optsRaw);
-        } catch {
-          opts = {};
-        }
-      }
-      const method = (opts && typeof opts.method === "string" ? opts.method : "GET").toUpperCase();
-      if (method !== "GET" && method !== "POST") {
-        throw new Error("method no permitido: " + method);
-      }
-      let body = void 0;
-      if (opts && opts.body !== void 0 && opts.body !== null) {
-        if (typeof opts.body !== "string") {
-          throw new Error("body debe ser string");
-        }
-        if (opts.body.length > MAX_BODY_BYTES) {
-          throw new Error("body excede 16KB");
-        }
-        body = opts.body;
-      }
-      if (method === "GET" && body !== void 0) {
-        throw new Error("body no permitido con GET");
-      }
-      let contentType = opts && typeof opts.contentType === "string" ? opts.contentType : null;
-      if (body !== void 0 && !contentType) {
-        contentType = "application/json";
-      }
-      let url;
-      if (/^https?:\/\//i.test(path)) {
-        url = new URL(path);
-      } else {
-        url = new URL(path, allowedOrigin);
-      }
-      if (url.origin !== allowedOrigin) {
-        throw new Error("origin no permitido: " + url.origin);
-      }
-      const fetchOpts = { method };
-      if (body !== void 0) {
-        fetchOpts.body = body;
-        fetchOpts.headers = { "content-type": contentType };
-      }
-      fetchOpts.signal = AbortSignal.timeout(fetchTimeoutMs);
-      const TIMEOUT_TAG = "__fetchOriginTimeout__";
-      let timerId;
-      const timeoutP = new Promise((_, reject) => {
-        timerId = setTimeout(() => reject(new Error(TIMEOUT_TAG)), fetchTimeoutMs);
-      });
-      let resp;
+      self2._suspendExec();
       try {
-        resp = await Promise.race([fetchImpl(url.href, fetchOpts), timeoutP]);
-      } catch (e) {
-        const msg = String(e && e.message || e);
-        if (msg === TIMEOUT_TAG || fetchOpts.signal && fetchOpts.signal.aborted || /timeout|aborted|abort/i.test(msg)) {
-          throw new Error("fetchOrigin timeout");
-        }
-        throw e;
-      } finally {
-        clearTimeout(timerId);
-      }
-      const MAX_RESP_BYTES = 4096;
-      let respBody = "";
-      if (resp.body && typeof resp.body.getReader === "function") {
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder("utf-8");
-        const parts = [];
-        let received = 0;
-        try {
-          for (; ; ) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            received += value.length;
-            parts.push(decoder.decode(value, { stream: true }));
-            if (received >= MAX_RESP_BYTES) break;
-          }
-        } finally {
+        const path = vm.getString(pathH);
+        const optsRaw = vm.getString(optsH);
+        let opts = {};
+        if (optsRaw) {
           try {
-            await reader.cancel();
+            opts = JSON.parse(optsRaw);
           } catch {
+            opts = {};
           }
         }
-        parts.push(decoder.decode());
-        respBody = parts.join("");
-        if (respBody.length > 4096) respBody = respBody.slice(0, 4096);
-      } else {
-        const text = await resp.text();
-        respBody = text.length > 4096 ? text.slice(0, 4096) : text;
+        const method = (opts && typeof opts.method === "string" ? opts.method : "GET").toUpperCase();
+        if (method !== "GET" && method !== "POST") {
+          throw new Error("method no permitido: " + method);
+        }
+        let body = void 0;
+        if (opts && opts.body !== void 0 && opts.body !== null) {
+          if (typeof opts.body !== "string") {
+            throw new Error("body debe ser string");
+          }
+          if (opts.body.length > MAX_BODY_BYTES) {
+            throw new Error("body excede 16KB");
+          }
+          body = opts.body;
+        }
+        if (method === "GET" && body !== void 0) {
+          throw new Error("body no permitido con GET");
+        }
+        let contentType = opts && typeof opts.contentType === "string" ? opts.contentType : null;
+        if (body !== void 0 && !contentType) {
+          contentType = "application/json";
+        }
+        let url;
+        if (/^https?:\/\//i.test(path)) {
+          url = new URL(path);
+        } else {
+          url = new URL(resolveFromBase(allowedOrigin, path));
+        }
+        if (url.origin !== new URL(allowedOrigin).origin) {
+          throw new Error("origin no permitido: " + url.origin);
+        }
+        if (!isUnderBase(allowedOrigin, url.href)) {
+          throw new Error("fuera del scope del publicador (" + basePath(allowedOrigin) + "): " + url.pathname);
+        }
+        const fetchOpts = { method };
+        if (body !== void 0) {
+          fetchOpts.body = body;
+          fetchOpts.headers = { "content-type": contentType };
+        }
+        fetchOpts.signal = AbortSignal.timeout(fetchTimeoutMs);
+        const TIMEOUT_TAG = "__fetchOriginTimeout__";
+        let timerId;
+        const timeoutP = new Promise((_, reject) => {
+          timerId = setTimeout(() => reject(new Error(TIMEOUT_TAG)), fetchTimeoutMs);
+        });
+        let resp;
+        try {
+          resp = await Promise.race([fetchImpl(url.href, fetchOpts), timeoutP]);
+        } catch (e) {
+          const msg = String(e && e.message || e);
+          if (msg === TIMEOUT_TAG || fetchOpts.signal && fetchOpts.signal.aborted || /timeout|aborted|abort/i.test(msg)) {
+            throw new Error("fetchOrigin timeout");
+          }
+          throw e;
+        } finally {
+          clearTimeout(timerId);
+        }
+        const maxRespBytes = maxResponseBytes;
+        let respBody = "";
+        let truncated = false;
+        let received = 0;
+        const clRaw = resp.headers.get("content-length");
+        const clNum = clRaw === null ? NaN : Number(clRaw);
+        const contentLength = Number.isFinite(clNum) && clNum >= 0 ? clNum : null;
+        if (resp.body && typeof resp.body.getReader === "function") {
+          const reader = resp.body.getReader();
+          const chunks = [];
+          try {
+            for (; ; ) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              chunks.push(value);
+              received += value.length;
+              if (received >= maxRespBytes) break;
+            }
+          } finally {
+            try {
+              await reader.cancel();
+            } catch {
+            }
+          }
+          let all = new Uint8Array(received);
+          let off = 0;
+          for (const c of chunks) {
+            all.set(c, off);
+            off += c.length;
+          }
+          if (received > maxRespBytes) {
+            truncated = true;
+            all = all.subarray(0, maxRespBytes);
+          }
+          respBody = new TextDecoder("utf-8").decode(all);
+          if (truncated && respBody.charCodeAt(respBody.length - 1) === 65533) {
+            respBody = respBody.slice(0, -1);
+          }
+        } else {
+          const text = await resp.text();
+          const bytes = new TextEncoder().encode(text);
+          received = bytes.length;
+          if (bytes.length > maxRespBytes) {
+            truncated = true;
+            respBody = new TextDecoder("utf-8").decode(bytes.subarray(0, maxRespBytes));
+            if (respBody.charCodeAt(respBody.length - 1) === 65533) respBody = respBody.slice(0, -1);
+          } else {
+            respBody = text;
+          }
+        }
+        return vm.newString(JSON.stringify({ status: resp.status, body: respBody, truncated, bytes: received, contentLength }));
+      } finally {
+        self2._resumeExec();
       }
-      return vm.newString(JSON.stringify({ status: resp.status, body: respBody }));
     });
     vm.setProp(vm.global, "__fetchOriginRaw", cap);
     cap.dispose();
@@ -2158,7 +2254,13 @@ var AsyncToolHost = class {
         const rawName = "__" + name + "Raw";
         const ecap = vm.newFunction(rawName, async (argsH) => {
           const argsJson = vm.getString(argsH);
-          const resultJson = await fn(argsJson);
+          self2._suspendExec();
+          let resultJson;
+          try {
+            resultJson = await fn(argsJson);
+          } finally {
+            self2._resumeExec();
+          }
           return vm.newString(
             typeof resultJson === "string" ? resultJson : JSON.stringify(resultJson === void 0 ? null : resultJson)
           );
@@ -2195,13 +2297,16 @@ var AsyncToolHost = class {
     const prevActive = this._interruptActive;
     this._deadline = Date.now() + this._interruptDeadlineMs;
     this._interruptCount = 0;
+    this._execAccum = 0;
+    this._execStart = Date.now();
+    this._interruptReason = null;
     this._interruptActive = true;
     try {
       const res = vm.evalCode(sourceText);
       if (res.error) {
         const msg = vm.dump(res.error);
         res.error.dispose();
-        throw new Error("fallo al cargar tool.js: " + JSON.stringify(msg));
+        throw new Error(this._qualifyInterrupt("fallo al cargar tool.js: " + JSON.stringify(msg)));
       }
       res.value.dispose();
     } finally {
@@ -2233,6 +2338,9 @@ var AsyncToolHost = class {
     const prevActive = this._interruptActive;
     this._deadline = Date.now() + this._interruptDeadlineMs;
     this._interruptCount = 0;
+    this._execAccum = 0;
+    this._execStart = Date.now();
+    this._interruptReason = null;
     this._interruptActive = true;
     try {
       return await this._callToolInner(name, args);
@@ -2240,6 +2348,20 @@ var AsyncToolHost = class {
       this._interruptActive = prevActive;
       this._deadline = prevDeadline;
     }
+  }
+  // QuickJS lanza "interrupted" sin decir CUAL de los dos mecanismos corto. Con
+  // _interruptReason se cualifica el mensaje, que es lo que finalmente ve el
+  // cliente MCP como isError:true. Sin esto, "gas agotado por un bucle infinito"
+  // y "presupuesto de ejecucion agotado" son el mismo texto.
+  _qualifyInterrupt(message) {
+    if (!/interrupted/i.test(String(message || ""))) return message;
+    if (this._interruptReason === "gas") {
+      return message + " (gas agotado: " + this._interruptMaxInvocations + " invocaciones del interrupt handler; tipico de un bucle sin fin)";
+    }
+    if (this._interruptReason === "deadline") {
+      return message + " (presupuesto de EJECUCION agotado: " + this._interruptDeadlineMs + "ms de CPU en el sandbox; la espera de fetchOrigin no cuenta)";
+    }
+    return message;
   }
   async _callToolInner(name, args) {
     const vm = this._vm;
@@ -2249,7 +2371,7 @@ var AsyncToolHost = class {
       const dumped = vm.dump(res.error);
       res.error.dispose();
       const message = dumped && typeof dumped === "object" && dumped.message ? dumped.message : typeof dumped === "string" ? dumped : JSON.stringify(dumped);
-      throw new Error(message);
+      throw new Error(this._qualifyInterrupt(message));
     }
     let st = vm.getPromiseState(res.value);
     let guard = 0;
@@ -2265,7 +2387,7 @@ var AsyncToolHost = class {
       st.error.dispose();
       res.value.dispose();
       const message = dumped && typeof dumped === "object" && dumped.message ? dumped.message : typeof dumped === "string" ? dumped : JSON.stringify(dumped);
-      throw new Error(message);
+      throw new Error(this._qualifyInterrupt(message));
     }
     if (st.type !== "fulfilled") {
       res.value.dispose();
@@ -2383,14 +2505,11 @@ function parseLlmsTxt(text) {
 var MAX_TOOL_BYTES = 256 * 1024;
 var MAX_SKILLMD_BYTES = 256 * 1024;
 var MAX_SNAPSHOT_BYTES = 4 * 1024 * 1024;
-async function sha256Normalized(text) {
-  const bytes = new TextEncoder().encode(text.replace(/\r\n/g, "\n"));
-  const buf = await crypto.subtle.digest("SHA-256", bytes);
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
-function resolvePath(origin, path) {
-  return new URL(path, origin + "/").toString();
-}
+var resolvePath = resolveFromBase;
 async function fetchText(url, maxBytes, label) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${label}: HTTP ${res.status}`);
@@ -2437,8 +2556,8 @@ function makeMemorySearch(engineFactory, snapshotText) {
 async function connectStaticSkills(origin, options = {}) {
   const log = typeof options.onLog === "function" ? options.onLog : () => {
   };
-  const originUrl = new URL(origin);
-  const allowedOrigin = originUrl.origin;
+  const allowedOrigin = canonicalBase(origin);
+  if (allowedOrigin === null) throw new Error("connectStaticSkills: origin invalido: " + origin);
   const qw = options.quickjsWasm ?? options.quickjsWasmUrl;
   if (!qw) throw new Error("connectStaticSkills: falta quickjsWasm (URL, bytes o Module)");
   log("compilando QuickJS-wasm...");
@@ -2478,7 +2597,7 @@ async function connectStaticSkills(origin, options = {}) {
     }
     try {
       const snapText = await fetchText(resolvePath(allowedOrigin, mem.snapshot), MAX_SNAPSHOT_BYTES, label);
-      const actual = await sha256Normalized(snapText);
+      const actual = await sha256Hex(snapText);
       if (actual !== mem.snapshot_sha256) {
         log(`${label}: snapshot sha256 mismatch \u2014 capability NO inyectada`);
         continue;
@@ -2510,7 +2629,7 @@ async function connectStaticSkills(origin, options = {}) {
       log(`skill rechazada: ${s.name} \u2014 ${e.message}`);
       continue;
     }
-    const actual = await sha256Normalized(code);
+    const actual = await sha256Hex(code);
     if (actual !== s.sha256) {
       rejected.push({ name: s.name, reason: "tool_sha256 mismatch" });
       log(`skill rechazada: ${s.name} \u2014 tool_sha256 mismatch (declarado ${s.sha256.slice(0, 12)}..., real ${actual.slice(0, 12)}...)`);
@@ -2545,7 +2664,7 @@ async function connectStaticSkills(origin, options = {}) {
     if (s.skillPath && s.skillSha256) {
       try {
         const md = await fetchText(resolvePath(allowedOrigin, s.skillPath), MAX_SKILLMD_BYTES, `SKILL.md de ${s.name}`);
-        if (await sha256Normalized(md) === s.skillSha256) {
+        if (await sha256Hex(md) === s.skillSha256) {
           recipes[publicName] = md;
         } else {
           log(`receta omitida: ${publicName} \u2014 SKILL.md sha256 mismatch (la tool carga igual)`);

@@ -21,6 +21,13 @@ const serverSkill = read("server_time.SKILL.md");
 
 const sumHash = sha256(sumTool);
 const serverHash = sha256(serverTool);
+// Hash de la RECETA (campo `sha256` del core RFC), distinto de `tool_sha256`
+// (el del artefacto ejecutable, campo de la extension). Sin declararlo, este
+// publicador servia sus SKILL.md sin hash: un runtime los aceptaba a ciegas, y
+// el cache de recetas del gateway no podia guardarlos porque solo cachea lo que
+// puede re-verificar en cada lectura.
+const sumSkillHash = sha256(sumSkill);
+const serverSkillHash = sha256(serverSkill);
 
 // Attestaciones (ext-skill-attestations v0.2). Array JSON publicado en
 // /.well-known/agent-skills/attestations.json. Firmado fuera de linea con
@@ -37,8 +44,8 @@ const llmsTxt =
   `# llms-txt-skills demo site\n\n` +
   `> Demo site publishing executable skills per the llms-txt-skills standard with a provisional extension for executable skills.\n\n` +
   `## Skills\n\n` +
-  `- [sum_numbers](/skills/sum_numbers/SKILL.md): Sum two numbers a and b. <!-- skill: {"version":"1.0.0","tool":"/skills/sum_numbers/tool.js","tool_sha256":"${sumHash}"} -->\n` +
-  `- [server_time](/skills/server_time/SKILL.md): Return the current server time. <!-- skill: {"version":"1.0.0","tool":"/skills/server_time/tool.js","tool_sha256":"${serverHash}"} -->\n`;
+  `- [sum_numbers](/skills/sum_numbers/SKILL.md): Sum two numbers a and b. <!-- skill: {"version":"1.0.0","sha256":"${sumSkillHash}","tool":"/skills/sum_numbers/tool.js","tool_sha256":"${sumHash}"} -->\n` +
+  `- [server_time](/skills/server_time/SKILL.md): Return the current server time. <!-- skill: {"version":"1.0.0","sha256":"${serverSkillHash}","tool":"/skills/server_time/tool.js","tool_sha256":"${serverHash}"} -->\n`;
 
 const worker =
   `// AUTOGENERADO por build.mjs. No editar a mano.\n` +

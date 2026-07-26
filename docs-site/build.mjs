@@ -200,9 +200,19 @@ console.log(`attestations: ${attestations.length} entrada(s)`);
 // --- 4) /llms.txt: linea skills-memory a nivel origin + ## Skills -------------
 // La linea skills-memory va ANTES del heading "## Skills": algunos parsers
 // conformes pliegan lineas sueltas tras la lista dentro del ultimo skill.
+// `sha256` es el hash de la RECETA (SKILL.md), campo del core RFC; `tool_sha256`
+// es el del artefacto ejecutable, campo de la extension. Son dos archivos
+// distintos y los runtimes NO deben confundirlos (ext-executable-skills SS2).
+//
+// Declararlo tiene dos efectos, los dos deseables: las recetas pasan a
+// VERIFICARSE en vez de solo servirse (hasta ahora este publicador las mandaba
+// sin hash, asi que un runtime las aceptaba a ciegas), y habilita el cache de
+// recetas del gateway, que a proposito solo cachea lo que puede re-verificar en
+// cada lectura -- sin `sha256` una receta se re-baja en cada descubrimiento frio.
 const skillLines = SKILLS.map((name) => {
   const meta = JSON.stringify({
     version: "1.0.0",
+    sha256: sha256(skills[name].skillMd),
     tool: `/skills/${name}/tool.js`,
     tool_sha256: skills[name].hash,
   });

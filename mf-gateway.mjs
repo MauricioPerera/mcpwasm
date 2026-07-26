@@ -802,15 +802,34 @@ try {
     "exec-budget: el corte por presupuesto se identifica como tal en el mensaje");
   hostSplit.dispose();
 
-  // while(true): corta por GAS y el mensaje lo dice (antes: mismo texto que arriba).
+  // while(true): los DOS mecanismos pueden matarlo y cual llega primero depende de
+  // la velocidad de la maquina (local el gas ganaba a ~1.3s, en un runner mas lento
+  // gana el presupuesto de 2s). Exigir "gas" con la config por defecto era una
+  // assertion flaky -- se puso roja en CI. Se separan las dos cosas:
+  //   (a) con el presupuesto DESACTIVADO (interruptDeadlineMs 0) solo puede cortar
+  //       el gas => determinista, y es la unica forma de probar ESE camino;
+  //   (b) con la config por defecto basta con que muera y con que el mensaje diga
+  //       cual de los dos fue (que es lo que el issue pedia: distinguirlos).
+  const hostGas = new AsyncToolHost({ quickjs, allowedOrigin: "https://test.local", interruptDeadlineMs: 0 });
+  await hostGas.init();
+  hostGas.loadToolSource('registerTool({ name: "t", description: "", inputSchema: { type: "object" }, handler(){ while(true){} } });');
+  let gasErr = null;
+  try { await hostGas.callTool("t", {}); } catch (e) { gasErr = e.message; }
+  console.log("[exec-budget] while(true) sin presupuesto ->", gasErr);
+  check(!!gasErr && /gas agotado/.test(gasErr),
+    "exec-budget: sin presupuesto wall-clock, while(true) corta por GAS (camino determinista)");
+  hostGas.dispose();
+
   const hostLoop = new AsyncToolHost({ quickjs, allowedOrigin: "https://test.local" });
   await hostLoop.init();
   hostLoop.loadToolSource('registerTool({ name: "t", description: "", inputSchema: { type: "object" }, handler(){ while(true){} } });');
   let loopErr = null;
   try { await hostLoop.callTool("t", {}); } catch (e) { loopErr = e.message; }
-  console.log("[exec-budget] while(true) ->", loopErr);
-  check(!!loopErr && /gas agotado/.test(loopErr),
-    "exec-budget: while(true) corta por GAS y el mensaje lo distingue del presupuesto");
+  console.log("[exec-budget] while(true) config default ->", loopErr);
+  check(!!loopErr && /interrupted/.test(loopErr),
+    "exec-budget: con la config default, while(true) muere igual");
+  check(!!loopErr && /(gas agotado|EJECUCION)/.test(loopErr),
+    "exec-budget: el mensaje nombra el mecanismo que corto (cualquiera de los dos es correcto aqui)");
   hostLoop.dispose();
 
   // --- (d2) TRUNCADO OBSERVABLE de la respuesta de fetchOrigin ---------------

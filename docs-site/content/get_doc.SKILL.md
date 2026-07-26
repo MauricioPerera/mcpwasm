@@ -16,8 +16,15 @@ Fetch the full markdown of one of the 4 published documents via
 
 ## Returns
 
-`{ name, length, content }` — `content` is the markdown body truncated to 4000
-chars; `length` is the full body length in characters.
+`{ name, length, truncated, content }`.
+
+- `content`: the markdown body, truncated to 4000 chars.
+- `length`: the size of the **document**, as declared by the origin. It is not
+  the length of `content`, and it is not the length of what the sandbox
+  received — the host caps every `fetchOrigin` response, so measuring the body
+  would report the cap (4096) for every document above it.
+- `truncated`: whether `content` is partial. When it is, read the rest with
+  `search_spec`, or fetch the document directly if you can.
 
 ## Example
 

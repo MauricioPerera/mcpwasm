@@ -177,7 +177,7 @@ console.log(`snapshot: ${snapshot.length} bytes, sha256: ${snapshotSha}`);
 const SKILLS = ["search_spec", "get_doc", "list_docs"];
 const skillDesc = {
   search_spec: "BM25 search over the llms-txt-skills spec snapshot (4 docs). Returns hits {text,score,title,concept_id}.",
-  get_doc: "Fetch one of the 4 published documents by name. Returns {name,length,content} (content truncated to 4000 chars).",
+  get_doc: "Fetch one of the 4 published documents by name. Returns {name,length,truncated,content}; length is the document size, content is truncated to 4000 chars.",
   list_docs: "List the 4 published documents with title and path. Static, no fetch.",
 };
 const skills = {};

@@ -789,20 +789,36 @@ restricted to origins in its allowlist; the demo site
 `https://llmstxt-bookstore.rckflr.workers.dev` (D1-backed, includes a write
 skill `create_order`), and the docs-site
 `https://llmstxt-docs.rckflr.workers.dev` (origin memory / BM25) are allowed.
-`origin` is URL-encoded as a query param. **The deployed gateway has auth
-enabled:** every request below needs `-H "Authorization: Bearer <AUTH_TOKEN>"`
-(the `AUTH_TOKEN` secret; 401 otherwise). The token is a secret — it is not in
-this repo. The deployed gateway can also run in **per-client mode** (the
-`CLIENTS` secret), in which case each client sends its own
-`Authorization: Bearer <client_token>` with the same curl syntax; the response
-then carries `X-Gw-Client: <client_id>`.
+`origin` is URL-encoded as a query param.
+
+**Auth: use the public demo token.** The deployed gateway runs in per-client
+mode (the `CLIENTS` secret), so every request needs an `Authorization: Bearer`
+header and `AUTH_TOKEN` is ignored. A read-only demo client is registered so you
+can try it without asking for anything:
+
+```
+mcpwasm-demo-57ca54a82292cf764a28a6b5
+```
+
+This is deliberately not a secret — it is a speed bump, not a credential. It is
+rate-limited to 20 requests/minute (429 with `Retry-After` past that), it is
+identified as `public-demo` in the `X-Gw-Client` response header, and it can be
+revoked without touching anyone else's. If you are running your own gateway,
+each client gets its own token; the registry stores only the SHA-256 of each,
+never the token itself.
+
+Two things you will notice, both intentional. The gateway runs
+`ATTESTATION_MODE=enforcing`, so it serves **only skills with a valid
+attestation** — a publisher's unattested skills simply will not be listed.
+And if you just want to see the thing work, you do not need the gateway at all:
+`npx -y @rckflr/mcpwasm <origin>` needs no token, no account, and no deploy.
 
 List the skills the demo site publishes:
 
 ```bash
 curl -s -X POST \
   "https://llmstxt-gateway.rckflr.workers.dev/mcp?origin=https%3A%2F%2Fllmstxt-demo-site.rckflr.workers.dev" \
-  -H "Authorization: Bearer <AUTH_TOKEN>" \
+  -H "Authorization: Bearer mcpwasm-demo-57ca54a82292cf764a28a6b5" \
   -H "content-type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
@@ -812,7 +828,7 @@ Call `sum_numbers` (pure sync tool, runs in the sandbox):
 ```bash
 curl -s -X POST \
   "https://llmstxt-gateway.rckflr.workers.dev/mcp?origin=https%3A%2F%2Fllmstxt-demo-site.rckflr.workers.dev" \
-  -H "Authorization: Bearer <AUTH_TOKEN>" \
+  -H "Authorization: Bearer mcpwasm-demo-57ca54a82292cf764a28a6b5" \
   -H "content-type: application/json" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"sum_numbers","arguments":{"a":2,"b":40}}}'
 ```
@@ -823,7 +839,7 @@ allowed origin):
 ```bash
 curl -s -X POST \
   "https://llmstxt-gateway.rckflr.workers.dev/mcp?origin=https%3A%2F%2Fllmstxt-demo-site.rckflr.workers.dev" \
-  -H "Authorization: Bearer <AUTH_TOKEN>" \
+  -H "Authorization: Bearer mcpwasm-demo-57ca54a82292cf764a28a6b5" \
   -H "content-type: application/json" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"server_time","arguments":{}}}'
 ```

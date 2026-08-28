@@ -114,6 +114,15 @@ export function solvePowWeb(seed, k, g) {
   return solvePowWebInner(te.encode(seed), k, g);
 }
 
+// variante byte-level: la seed del challenge de CF es base64url DE CODIFICADA
+// a bytes (no un string UTF-8) — el chain debe correr sobre los bytes crudos.
+export function solvePowBytes(seedBytes, k, g) {
+  if (!(seedBytes instanceof Uint8Array)) throw new TypeError("seedBytes debe ser Uint8Array");
+  if (!Number.isInteger(k) || k < 0) throw new TypeError("k debe ser entero >= 0");
+  if (!Number.isInteger(g) || g < 0) throw new TypeError("g debe ser entero >= 0");
+  return solvePowWebInner(seedBytes, k, g);
+}
+
 export function encodeCheckpointsWeb(checkpoints) {
   let bin = "";
   for (const cp of checkpoints) bin += String.fromCharCode(...cp);

@@ -56,6 +56,7 @@ import { AsyncToolHost } from "../host-async.mjs";
 import { handleMcpMessageAsync } from "../mcp-core-async.mjs";
 import { parseLlmsTxt } from "../llmstxt-parse.mjs";
 import { verifySigstoreAttestation } from "../sigstore-attest.mjs";
+import { makeSqliteCapability } from "../sqlite-capability.mjs";
 import { canonicalBase, resolveFromBase, wellKnownCandidates } from "../origin-scope.mjs";
 
 const PKG = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
@@ -87,7 +88,13 @@ const USAGE =
   "     --require-attestation <issuer>|<identity>  (opcional, ambos modos: exige una\n" +
   "         atestacion Sigstore valida de esa identidad OIDC exacta para CADA skill;\n" +
   "         sin ella, la skill se excluye igual que un tool_sha256 mismatch. Ej:\n" +
-  "         --require-attestation 'https://token.actions.githubusercontent.com|https://github.com/OWNER/REPO/.github/workflows/release.yml@refs/heads/main')";
+  "         --require-attestation 'https://token.actions.githubusercontent.com|https://github.com/OWNER/REPO/.github/workflows/release.yml@refs/heads/main')\n" +
+  "     --sqlite <archivo|:memory:>  (OPT-IN del consumidor: monta una base SQLite\n" +
+  "         local (node:sqlite, builtin Node>=22.5) e inyecta host.sqlite en TODAS\n" +
+  "         las skills. SOLO LECTURA por defecto (conexion readonly a nivel SQLite\n" +
+  "         + policy SELECT/PRAGMA/EXPLAIN); un origin NUNCA la recibe sin que el\n" +
+  "         usuario la monte. Solo runtime local: Workers no tiene node:sqlite.)\n" +
+  "     --sqlite-write  (habilita INSERT/UPDATE/DELETE/DDL; requiere --sqlite)";
 
 const argv = process.argv.slice(2);
 let originArg = null;
@@ -96,6 +103,8 @@ let fixedPort = null;
 let requireAttestation = null; // { issuer, identity } | null (opt-in)
 let lockPath = null; // --lock <archivo> (opt-in, pin-on-first-use)
 let lockUpdate = false; // --lock-update (aceptar cambios y re-pinnear)
+let sqlitePath = null; // --sqlite <archivo|:memory:> (opt-in del CONSUMIDOR)
+let sqliteWrite = false; // --sqlite-write (habilita escrituras; requiere --sqlite)
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === "--serve") {
@@ -127,9 +136,21 @@ for (let i = 0; i < argv.length; i++) {
       err("--require-attestation: issuer e identity no pueden estar vacios");
       process.exit(2);
     }
+  } else if (a === "--sqlite") {
+    sqlitePath = argv[++i];
+    if (!sqlitePath) {
+      err("--sqlite requiere una ruta de archivo (o ':memory:')");
+      process.exit(2);
+    }
+  } else if (a === "--sqlite-write") {
+    sqliteWrite = true;
   } else if (originArg === null && serveDir === null) {
     originArg = a;
   }
+}
+if (sqliteWrite && !sqlitePath) {
+  err("--sqlite-write requiere --sqlite <archivo|:memory:>");
+  process.exit(2);
 }
 if (!originArg && !serveDir) {
   err(USAGE);
@@ -795,6 +816,24 @@ async function start() {
         scopedCaps[k] = { memorySearch: makeMemorySearch(mem, snapshots[k]) };
         err("origin-memory" + (k ? "[" + k + "]" : "") + ": snapshot verificado -> host.memorySearch inyectada");
       }
+    }
+  }
+
+  // SQLite del CONSUMIDOR (opt-in --sqlite): una sola DB compartida por el
+  // proceso, inyectada como host.sqlite en TODAS las skills (todos los scopes).
+  // El dato es del usuario que corre el runtime — no del publicador; el flag es
+  // la autorizacion explicita (mismo modelo de confianza que elegir el origin).
+  if (sqlitePath) {
+    try {
+      const sqliteCap = await makeSqliteCapability({ path: sqlitePath, write: sqliteWrite });
+      for (const s of skills) {
+        const k = s.scope || "";
+        scopedCaps[k] = { ...(scopedCaps[k] || {}), sqlite: sqliteCap };
+      }
+      err("sqlite: " + (sqlitePath === ":memory:" ? ":memory:" : path.resolve(sqlitePath)) + " montada (" + (sqliteWrite ? "lectura+escritura" : "SOLO LECTURA") + ") -> host.sqlite inyectada");
+    } catch (e) {
+      err("--sqlite: " + String((e && e.message) || e) + " — abortando");
+      process.exit(2);
     }
   }
 

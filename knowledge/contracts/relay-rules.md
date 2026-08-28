@@ -15,7 +15,7 @@ budget:
   params_max: 2
 tests: "tests/test-relay-rules.mjs"
 tests_sha256: "1cd1973b9c65dcd2083163822230dc343a410b268c932d19215fd4088f127ee0"
-touch_only: ['relay/rules.mjs']
+touch_only: ['relay/rules.mjs', 'relay/deno/main.ts']
 deps_allowed: []
 forbids: ['subprocess', 'fs-write']
 ---

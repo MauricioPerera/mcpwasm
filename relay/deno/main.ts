@@ -6,50 +6,19 @@
 // FUERA de Cloudflare (Deno Deploy): consola (navegador) -> relay -> CF API.
 //
 // Proxy pura: transmite metodo/authorization/body sin tocar; no guarda nada
-// (sin KV, sin logs de tokens). Whitelist estricta de rutas + CORS para la
-// consola (https://llmstxt-studio.rckflr.workers.dev y localhost).
-// Uso: deployctl deploy --project=<proyecto> relay/deno/main.ts
+// (sin KV, sin logs de tokens). Las reglas (whitelist + CORS) viven en
+// ./rules.mjs, testeado con Node (contrato relay-rules).
+// Uso: deno check relay/deno/main.ts
+//      deployctl deploy --project=<proyecto> relay/deno/main.ts
 // ---------------------------------------------------------------------------
 
+import { allowedRoute, corsHeaders } from "../rules.mjs";
+
 const CF_BASE = Deno.env.get("CF_RELAY_TARGET") || "https://api.cloudflare.com";
-const ALLOWED_ORIGINS = new Set([
-  "https://llmstxt-studio.rckflr.workers.dev",
-  "http://localhost:8787",
-]);
-
-// (metodo, ruta) que la consola necesita contra la cuenta temporal
-const ROUTES: Array<{ method: string; re: RegExp }> = [
-  { method: "POST", re: /^\/client\/v4\/provisioning\/previews\/challenge$/ },
-  { method: "POST", re: /^\/client\/v4\/provisioning\/previews$/ },
-  { method: "PUT", re: /^\/client\/v4\/accounts\/[^/]+\/workers\/scripts\/[\w-]+$/ },
-  { method: "GET", re: /^\/client\/v4\/accounts\/[^/]+\/workers\/subdomain$/ },
-  { method: "POST", re: /^\/client\/v4\/accounts\/[^/]+\/workers\/scripts\/[\w-]+\/subdomain$/ },
-  { method: "DELETE", re: /^\/client\/v4\/accounts\/[^/]+\/workers\/scripts\/[\w-]+$/ },
-];
-
-function allowedRoute(method: string, path: string): boolean {
-  return ROUTES.some((r) => r.method === method && r.re.test(path));
-}
-
-function corsHeaders(origin: string | null): Record<string, string> {
-  const h: Record<string, string> = {
-    "cache-control": "no-store",
-    vary: "Origin",
-  };
-  if (origin && (ALLOWED_ORIGINS.has(origin) || Deno.env.get("CF_RELAY_ALLOW_ANY_ORIGIN") === "1")) {
-    h["access-control-allow-origin"] = origin;
-    h["access-control-allow-methods"] = "GET, POST, PUT, DELETE, OPTIONS";
-    h["access-control-allow-headers"] = "content-type, authorization";
-    // Private Network Access: si el origin es publico (https) la peticion a
-    // este host privado exige este header en el preflight
-    h["access-control-allow-private-network"] = "true";
-  }
-  return h;
-}
 
 Deno.serve(async (req: Request): Promise<Response> => {
   const origin = req.headers.get("origin");
-  const cors = corsHeaders(origin);
+  const cors = corsHeaders(origin, Deno.env.get("CF_RELAY_ALLOW_ANY_ORIGIN") === "1");
 
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: cors });
@@ -78,7 +47,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   } catch {
     return new Response(
       JSON.stringify({ error: "relay: no se pudo alcanzar api.cloudflare.com" }),
-      { status: 502, headers: { "content-type": "application/json", ...corsHeaders(origin) } },
+      { status: 502, headers: { "content-type": "application/json", ...cors } },
     );
   }
 

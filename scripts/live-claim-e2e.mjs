@@ -52,8 +52,13 @@ try {
   check(Boolean(out.sid) && Boolean(out.previewUrl), `sid + previewUrl: ${out.previewUrl}`);
   const sid = out.sid;
 
+  // el subdomain recien creado tarda en propagarse: reintentos con espera
   let res = null, body = "";
-  try { res = await fetch(out.previewUrl); body = await res.text(); } catch { res = null; }
+  for (let i = 0; i < 5; i++) {
+    await new Promise((r) => setTimeout(r, 4000));
+    try { res = await fetch(out.previewUrl); body = await res.text(); } catch { res = null; }
+    if (res && res.status === 200) break;
+  }
   check(res && res.status === 200 && body.includes("claim demo"), `previewUrl responde HTTP ${res ? res.status : "?"}`);
 
   console.log("[live] claim_preview (la tool gratis del agente)");

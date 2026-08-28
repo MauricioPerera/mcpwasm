@@ -89,6 +89,12 @@ for (const src of DOC_SOURCES) {
   let used = null;
   if (src.local) {
     markdown = readFileSync(src.local, "utf8");
+    // El README local se sirve como referencia de producto: se recorta la
+    // seccion en espanol (contenido del repo, no del producto) para que el
+    // corpus BM25 del docs-gateway no mezcle idiomas (el caso out-of-domain
+    // de los tests busca 0 hits con una receta en espanol).
+    const esAnchor = markdown.indexOf('<a id="español">');
+    if (esAnchor !== -1) markdown = markdown.slice(0, esAnchor).trimEnd() + "\n";
     // Ruta RELATIVA a la raiz del repo: la absoluta hacia que doc-sources.json
     // cambiara segun donde estuviera clonado el repo, o sea que el artefacto
     // generado no era comparable entre maquinas (ni entre dos checkouts del

@@ -33,6 +33,8 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm run test:sqlite
+      - name: Run security suite (redirect scope, hostile origin)
+        run: npm run test:security
       - name: Subpath publishers (project sites, both runtimes)
         run: npm run subpath
       - name: Web runtime smoke (same code the browser runs)

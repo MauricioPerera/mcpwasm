@@ -278,10 +278,17 @@ export class AsyncToolHost {
         fetchOpts.body = body;
         fetchOpts.headers = { "content-type": contentType };
       }
+      // Redirects BAJO CONTROL DEL SCOPE: undici (Node >=18) NO elimina
+      // Authorization en redirects cross-origin y con 307/308 reenvia tambien el
+      // body — un origin hostil podria exfiltrar el token (--auth) o el payload
+      // de la tool con un simple redirect. redirect:"manual" + validacion de cada
+      // salto con las MISMAS reglas que el URL inicial (mismo origin Y isUnderBase).
+      fetchOpts.redirect = "manual";
       // Timeout doble: AbortSignal.timeout (un fetch bien comportado aborta) + un
       // Promise.race con backstop que corta aun si el fetchImpl ignora el signal
       // (p.ej. un service binding que lo descarta). El timer usa setTimeout, que SI
       // avanza (el await cede al event loop) aunque Date.now este congelado.
+      // Un UNICO signal/deadline cubre toda la cadena de redirects.
       fetchOpts.signal = AbortSignal.timeout(fetchTimeoutMs);
       const TIMEOUT_TAG = "__fetchOriginTimeout__";
       // clearTimeout en finally: sin esto el backstop queda colgado hasta 10s en el
@@ -290,17 +297,47 @@ export class AsyncToolHost {
       const timeoutP = new Promise((_, reject) => {
         timerId = setTimeout(() => reject(new Error(TIMEOUT_TAG)), fetchTimeoutMs);
       });
+      const hopOnce = async (href) => {
+        try {
+          return await Promise.race([fetchImpl(href, fetchOpts), timeoutP]);
+        } catch (e) {
+          const msg = String((e && e.message) || e);
+          if (msg === TIMEOUT_TAG ||
+              (fetchOpts.signal && fetchOpts.signal.aborted) ||
+              /timeout|aborted|abort/i.test(msg)) {
+            throw new Error("fetchOrigin timeout");
+          }
+          throw e;
+        }
+      };
       let resp;
       try {
-        resp = await Promise.race([fetchImpl(url.href, fetchOpts), timeoutP]);
-      } catch (e) {
-        const msg = String((e && e.message) || e);
-        if (msg === TIMEOUT_TAG ||
-            (fetchOpts.signal && fetchOpts.signal.aborted) ||
-            /timeout|aborted|abort/i.test(msg)) {
-          throw new Error("fetchOrigin timeout");
+        resp = await hopOnce(url.href);
+        // Seguir redirects SOLO dentro del scope (mismo origin Y bajo la base).
+        // 301/302/303 degradan a GET sin body (semantica HTTP); 307/308 conservan
+        // metodo y body, pero solo hacia destinos que pasen el mismo chequeo.
+        let hops = 0;
+        while (resp.status >= 300 && resp.status < 400 && hops < 5) {
+          const loc = resp.headers.get("location");
+          if (!loc) break;
+          const next = new URL(loc, url.href);
+          if (next.origin !== new URL(allowedOrigin).origin) {
+            throw new Error("redirect cross-origin no permitido (scope del sandbox): " + next.origin);
+          }
+          if (!isUnderBase(allowedOrigin, next.href)) {
+            throw new Error("redirect fuera del scope del publicador (" + basePath(allowedOrigin) + "): " + next.pathname);
+          }
+          if (resp.status === 303 || (resp.status !== 307 && resp.status !== 308 && method === "POST")) {
+            fetchOpts.method = "GET";
+            delete fetchOpts.body;
+            delete fetchOpts.headers;
+          }
+          hops++;
+          resp = await hopOnce(next.href);
         }
-        throw e;
+        if (hops >= 5) {
+          throw new Error("demasiados redirects (posible loop): " + url.href);
+        }
       } finally {
         clearTimeout(timerId);
       }

@@ -279,3 +279,159 @@ one wasm runtime inside QuickJS (no imports, no nested wasm). If your wasm
 runtime lives in the *browser* (e.g. WordPress-Playground-style php-wasm), the
 bridge is browser-side — the WebMCP route (like this studio's 18 in-page
 tools), or a server that also runs the engine.
+
+## 9. Authenticated, per-user data (token-scoped origins + `--auth`)
+
+The public model has an inverted trust direction compared to a store with
+accounts: the consumer chooses the origin; **your server must authenticate
+every request**. The sandbox makes this safe by construction — `fetchOrigin`
+is base-scoped, so your API is the *only* egress possible and becomes the
+single authorization point. Two opt-in patterns, both verified end-to-end:
+
+**Token-as-origin (works today, zero new components).** The user's dashboard
+issues a scoped, revocable token; their client config points at
+`https://api.yourstore.com/u/<token>`. Rules that make it work:
+
+- `tool.js` paths must be **relative** (`fetchOrigin("api/orders")`) so they
+  resolve under the token path — absolute paths resolve to the host root
+- Your server validates the bearer on **every** request (hash compare,
+  expiry, scope, rate limit, audit) and scopes all data server-side
+- Revocation is fail-closed: discovery fails → the runtime exits 1
+- One public `tool.js` serves all tenants; the token never appears in it
+
+**`--auth <issuer>` (device flow, RFC 8628 — local runtime).** The config
+carries no token at all; on first activation the runtime discovers the
+issuer's device/token endpoints (RFC 8414, conventional fallback), prints the
+verification URL **by stderr** (stdout is MCP protocol only) and stores the
+token locally (`~/.mcpwasm/credentials.json`, 0600). Every fetch carries
+`Authorization: Bearer`; `refresh_token` renews silently; a 401 clears the
+local credential and re-runs the device flow once; without `--auth` a
+protected origin aborts (fail-closed). Related flags: `--auth-client-id`,
+`--auth-logout`.
+
+**The boundary rule behind both patterns: credentials never cross the LLM.**
+No `login(password)` tools (the conversation is the least trusted storage —
+logs, injection, replication), no token-as-tool-argument (confused-deputy +
+disclosure). Credentials live in the client config, the runtime process, or
+the server. An agent may *start* an auth flow (return a connect URL) and
+*report* the result, never *carry* the credential. OAuth itself belongs to
+HTTP-transport MCP servers (clients run it natively) or to the `--auth`
+device flow — not to in-sandbox tools, which have no human channel.
+
+## 10. Payments and irreversible actions (human-in-the-loop)
+
+Commerce-grade rule: **the agent prepares, the human commits, the agent
+verifies.** Money never moves through a tool call:
+
+```
+agent:   cart_add → cart_add → order_draft      (token write; server
+                                               recomputes prices server-side —
+                                               never trust a client-sent total)
+server:  DRAFT (pending_payment) + checkout_url bound to the draft
+         (one-time, expiring, tied to token/user)
+human:   pays in their own browser (3DS/SCA, real session) — card data never
+         crosses the agent; the link also arrives by the platform's own
+         channel (email), so the agent is a messenger, not the only path
+agent:   order_status → "paid ✓" (polls; the state machine lives server-side)
+```
+
+Server-side essentials: idempotency keys per draft (agents retry), draft
+expiry (unpaid carts die), spend caps and rate limits per token, and full
+audit — every `tools/call` is one token-bearing request. The same pattern
+covers every irreversible or high-stakes action (cancel order, change
+shipping address, delete account): the agent triggers preparation, the human
+confirms through a channel your platform controls, the agent verifies. The
+agent is one more interface of your store — with the same guarantees as the
+web — never a side door around your business rules.
+
+## 11. Where the runtime runs: the ladder (local ⇄ gateway)
+
+"Server" here means an MCP *component*. The whole system is a ladder — start
+at the lowest level your case allows, climb one step only when a concrete
+feature forces it:
+
+| Level | MCP server? | Enables | Verified by |
+|---|---|---|---|
+| 0. Static | No | public tools, state travels with the agent, hash verification | this studio (6 tools in production) |
+| 0.5. Static + local data | No | consumer mounts their own DB (`--sqlite`) | `test:sqlite` |
+| 1. Static + token origin | No — your existing API validates | per-user data, revocable, fail-closed | multi-tenant spike |
+| 2. Remote MCP + OAuth | Yes — thin adapter over your API | real identity, native one-click OAuth UX | gateway build |
+| 3. Hosted-state MCP | Yes — sessions, mirror | live mirrors, pause/undo, shared state | modelar-live |
+
+The trust mirror: **without a server**, the consumer decides trust (chooses
+the origin, pins hashes, mounts their own data); **with a server**, the
+server decides (authenticates, scopes, audits every request). Same tools,
+same hashes — two trust directions.
+
+**Gateway on Cloudflare** (the same QuickJS sandbox already ships a gateway
+build, tested under Miniflare, with service-binding `fetchImpl` routing):
+static assets on Pages or Workers Static Assets; a Worker exposing `/mcp`
+runs the identical sandbox server-side; D1/KV/Durable Objects replace the
+consumer-local file (`--sqlite`) and session state. Clients configure just a
+URL and the *client* runs OAuth natively — the "one URL, first-activation
+auth, token saved locally" UX, without your own device flow. Worker-side
+budgets add to the sandbox ones: ~128 MB isolate, CPU time and subrequests
+per plan — keep tools fine-grained and cache catalogs in KV.
+
+**The operational split that falls out of it** (viable and correct): buyers
+→ gateway (high volume, low privilege, one-click OAuth, central audit);
+admins → local runtime (few users, high privilege: hash-pinned, runs on
+their own machine, immune to gateway incidents, `--sqlite` for local
+analysis). Same origin, same `tool.js`, same hashes — the *token* decides
+which skills each `llms.txt` exposes; never fork the tools, never expose
+admin scopes through the gateway. Rule of thumb: high volume + low privilege
+→ gateway; high privilege + low volume → local.
+
+## 12. Designing tools: intentions, not endpoints
+
+A tool is an arbitrary async JavaScript function, not an API mirror — one
+tool may orchestrate **one or many endpoints** (sequential, parallel via
+`Promise.all`, mixed with local capabilities) plus its own logic:
+
+```js
+registerTool({
+  name: "reorder_last",            // the user's INTENTION, not "GET /orders"
+  inputSchema: { type: "object", properties: {} },
+  async handler() {
+    const r1 = await host.fetchOrigin("wc/v3/orders?per_page=5");
+    const last = (JSON.parse(r1.body || "[]")).find(o => o.status === "completed");
+    if (!last) return { error: "no completed orders" };
+    const r2 = await host.fetchOrigin("assistant/order-draft", {
+      method: "POST", contentType: "application/json",
+      body: JSON.stringify({ items: last.line_items, note: "reorder of #" + last.id }),
+    });
+    return JSON.parse(r2.body || "{}");   // { draft_id, checkout_url }
+  },
+});
+```
+
+Why it matters: agents reason over intents (8 semantic tools beat 40 mirrored
+endpoints); your API becomes a private implementation detail (refactor freely
+— only the hash changes); the flow logic lives in one auditable, public,
+hash-verified file. Sandbox budgets cap flow length (~2 s wall-clock, 20k
+gas, 4 KB response, 16 KB POST): design 2–5-call flows; hand pagination back
+to the agent via cursors (`list_orders(cursor)`) instead of looping.
+
+## 13. Minimum requirements
+
+**Consumer** (runs the agent): Node.js 18+ (22 LTS recommended; `--sqlite`
+needs 22.5+ — CI tests 22 and 24), ~150–300 MB RAM, ~10–20 MB disk, any
+desktop OS, any stdio MCP client, no admin rights.
+
+**Publisher** (the store): any static host serving `llms.txt` + `tool.js`
+(+ optional `SKILL.md`) over HTTPS; zero compute; no database for public
+tools; for authenticated patterns, reuse the API/login you already have
+(token validation middleware; two tiny device-flow endpoints if you adopt
+`--auth`).
+
+**Hard sandbox limits** (from `host-async.mjs`, not negotiable): `tool.js`
+≤ 1 MB, `llms.txt` ≤ 256 KB, 64 MB WASM memory per skill, ~2 s wall-clock,
+20 000 gas, POST body ≤ 16 KB, fetch timeout 10 s, response cap 4 KB
+(`maxResponseBytes`). Design tools as fine-grained calls; paginate
+server-side.
+
+What is **not** required — and is the point: no MCP server (ever), no
+compute for public tools (CDN only), no accounts for public discovery, and
+with `--auth`, no OAuth knowledge on the consumer's side (one URL + one
+click). The publisher's marginal cost per tool call is a CDN line; the
+sandbox runs on the machine of whoever asked for the execution.

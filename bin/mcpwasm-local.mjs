@@ -283,10 +283,30 @@ function serveDirectory(dir, port) {
 let internalServer = null;
 
 async function fetchText(url, maxBytes, f) {
-  const res = await (f || authFetchImpl || fetch)(url, {
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    redirect: "follow",
-  });
+  // Redirects controlados: mismo ORIGIN permitido (www->apex, /path/ y los
+  // candidatos /.well-known de la raiz del host), cross-origin PROHIBIDO.
+  // Undici no elimina Authorization en redirects cross-origin: con --auth el
+  // Bearer viaja en estos fetchs y el origin no decide a donde se reenvia.
+  const baseFetch = f || authFetchImpl || fetch;
+  let current = url;
+  let res = null;
+  let hops = 0;
+  for (;;) {
+    res = await baseFetch(current, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      redirect: "manual",
+    });
+    if (res.status < 300 || res.status >= 400 || hops >= 5) break;
+    const loc = res.headers.get("location");
+    if (!loc) break;
+    const next = new URL(loc, current);
+    if (next.origin !== new URL(current).origin) {
+      throw new Error("redirect cross-origin no permitido durante descubrimiento: " + next.origin);
+    }
+    current = next.href;
+    hops++;
+    if (hops >= 5) throw new Error("demasiados redirects (posible loop): " + url);
+  }
   const text = await res.text();
   // Cap en BYTES reales (UTF-8), no en unidades UTF-16: text.length subcuenta
   // los multi-byte y dejaba pasar bodies por encima del cap nominal.

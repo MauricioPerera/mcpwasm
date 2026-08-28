@@ -232,3 +232,44 @@ Subpath exports: `/host` (sync), `/host-async`, `/mcp-core`, `/mcp-core-async`,
 `/llmstxt-parse`, `/shim`. Build your own transports on top (Modelar added
 MCP-over-HTTP `POST /mcp`, WebSocket mirroring, pause/rollback and a hosted
 state layer in ~270 lines: `scripts/modelar-host.mjs`).
+
+## 8. Interacting with OTHER wasm runtimes (php-wasm, sqlite-wasm, …)
+
+Short answer: **yes — the sandbox and your other wasm runtime are separate
+instances; everything crosses as JSON through explicit bridges.** Two verified
+patterns (`scripts/spike-wasm-bridge.mjs` runs both against a real SQLite):
+
+**Path A — through your site's HTTP API (zero changes):** if your wasm runtime
+backs an endpoint on your origin, tools just call it:
+
+```js
+handler: async (args) => {
+  const r = await host.fetchOrigin("/api/sql", { method: "POST", body: args.sql });
+  return JSON.parse(r.body);
+},
+```
+
+`fetchOrigin` supports **GET and POST** (body ≤ 16 KB, 10 s timeout); the engine
+behind the endpoint (sqlite-wasm, php-wasm, anything) is invisible to mcpwasm.
+
+**Path B — in-process capability (the designed extension point):** embed
+`AsyncToolHost` in the process that runs your wasm engine and inject a named
+capability — `extraCapabilities: { sqlite: async (argsJson) => resultJson }`.
+Tools then call `await host.sqlite({ sql, params })`; the asyncify bridge
+suspends the sandbox during the await (the wait consumes no gas), and your
+function decides the security policy (read-only, parameterized-only, quotas…).
+**No capability, no access** — this is the same bridge the gateway uses for
+`fetchOrigin`/`memorySearch`. Contract: the bridge receives
+`JSON.stringify([...args])` (an array) and returns a JSON string; the
+sandbox-side wrapper already parses the reply.
+
+Sandbox limits that shape the design (from `host-async.mjs`): 64 MB memory,
+2 s wall-clock deadline per `callTool` (configurable), deterministic gas
+(20 000 interrupt invocations), response cap 4 KB by default
+(`maxResponseBytes`). So **run the heavy wasm in the host, not inside the
+sandbox**: php-wasm is tens of MB and slow — expose coarse tools
+(`run_script`, `query`) bridged to your php-wasm instance; never try to nest
+one wasm runtime inside QuickJS (no imports, no nested wasm). If your wasm
+runtime lives in the *browser* (e.g. WordPress-Playground-style php-wasm), the
+bridge is browser-side — the WebMCP route (like this studio's 18 in-page
+tools), or a server that also runs the engine.

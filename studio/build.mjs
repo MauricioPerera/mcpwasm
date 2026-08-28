@@ -73,6 +73,7 @@ const CONSOLE_MODULES = [
   "deploy-app-web.mjs",
   "deploy-preview-web.mjs",
   "console-tools.mjs",
+  "console-webmcp.mjs",
 ];
 const consoleModuleSources = {};
 for (const name of CONSOLE_MODULES) {

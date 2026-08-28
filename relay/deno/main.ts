@@ -40,6 +40,9 @@ function corsHeaders(origin: string | null): Record<string, string> {
     h["access-control-allow-origin"] = origin;
     h["access-control-allow-methods"] = "GET, POST, PUT, DELETE, OPTIONS";
     h["access-control-allow-headers"] = "content-type, authorization";
+    // Private Network Access: si el origin es publico (https) la peticion a
+    // este host privado exige este header en el preflight
+    h["access-control-allow-private-network"] = "true";
   }
   return h;
 }

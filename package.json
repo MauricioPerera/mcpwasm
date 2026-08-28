@@ -113,6 +113,7 @@
     "@jitl/quickjs-wasmfile-release-sync": "^0.32.0",
     "esbuild": "^0.25.0",
     "miniflare": "^4.20260630.0",
+    "playwright-core": "^1.62.1",
     "quickjs-emscripten": "^0.32.0",
     "wrangler": "^4.106.0"
   }

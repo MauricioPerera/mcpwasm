@@ -7,6 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { makeConsoleTools } from "./console-tools.mjs";
+import { registerConsoleWebMCP } from "./console-webmcp.mjs";
 
 const ACTIVE_KEY = "mcpwasm-console-active";
 const PREFIX = "mcpwasm-console-session-";
@@ -123,75 +124,24 @@ document.getElementById("discard-btn").addEventListener("click", (ev) => runButt
   document.getElementById("status-line").textContent = "sin preview activo";
 }));
 
-// --- WebMCP: las mismas tools, expuestas en la pagina -------------------------
-const WEBMCP_DEFS = [
-  {
-    name: "create_preview",
-    description: "Deploy a small web app to a throwaway Cloudflare account (dies unless claimed). Returns previewUrl + claimUrl. files: [{name, content}] ES-module Worker; main = entry file.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        files: { type: "array", items: { type: "object", properties: { name: { type: "string" }, content: { type: "string" } }, required: ["name", "content"] } },
-        main: { type: "string" },
-        sid: { type: "string" },
-      },
-      required: ["files", "main"],
-    },
-    handle: (args) => tools.create_preview(args || {}),
-  },
-  {
-    name: "preview_status",
-    description: "Check the preview session for this tab: lifetime left, previewUrl, claim state.",
-    inputSchema: { type: "object", properties: { sid: { type: "string" } }, required: ["sid"] },
-    handle: (args) => tools.preview_status(args || {}),
-  },
-  {
-    name: "claim_preview",
-    description: "Start the claim so the HUMAN can keep the app: returns the paylink to open ($19 / 30 days).",
-    inputSchema: { type: "object", properties: { sid: { type: "string" }, email: { type: "string" } }, required: ["sid", "email"] },
-    handle: (args) => tools.claim_preview(args || {}),
-  },
-  {
-    name: "discard_preview",
-    description: "Delete the preview deploy now (instead of waiting for the TTL).",
-    inputSchema: { type: "object", properties: { sid: { type: "string" } }, required: ["sid"] },
-    handle: (args) => tools.discard_preview(args || {}),
-  },
-];
-
-function wireWebMCP() {
+// --- WebMCP: las mismas tools, expuestas en la pagina (via console-webmcp) ----
+async function wireWebMCP() {
   const mc = navigator.modelContext;
   const note = document.getElementById("mcp-note");
   if (!mc || typeof mc.registerTool !== "function") {
     note.textContent = "WebMCP no disponible en este navegador: usa el botón demo, o conecta tu agente por MCP en la terminal (npx -y @rckflr/mcpwasm " + location.origin + " --previews).";
     return;
   }
-  let n = 0;
-  for (const def of WEBMCP_DEFS) {
-    try {
-      mc.registerTool({
-        name: def.name,
-        description: def.description,
-        inputSchema: def.inputSchema,
-        execute: async (input) => {
-          const out = await def.handle(input);
-          log(out && out.ok ? "ok" : "info", "agente → " + def.name + ": " + summarize(out));
-          return { content: [{ type: "text", text: JSON.stringify(out) }] };
-        },
-      });
-      n++;
-    } catch (e) { log("err", "WebMCP " + def.name + ": " + (e && e.message)); }
-  }
-  note.textContent = "WebMCP activo: " + n + " tools expuestas al agente en esta página.";
-  log("ok", "WebMCP listo — " + n + " tools visibles para tu agente");
+  const out = await registerConsoleWebMCP(mc, tools, {
+    onLog: (m) => log(m.includes("fallo") || m.includes('"ok":false') ? "info" : "ok", m),
+  });
+  note.textContent = "WebMCP activo: " + out.registered + " tools expuestas al agente en esta página.";
+  log(out.registered >= 3 ? "ok" : "info", "WebMCP listo — " + out.registered + " tools visibles para tu agente" + (out.failed.length ? " (" + out.failed.length + " fallaron)" : ""));
 }
 
-function summarize(out) {
-  try {
-    const s = JSON.stringify(out);
-    return s.length > 180 ? s.slice(0, 177) + "…" : s;
-  } catch { return "(resultado no serializable)"; }
-}
+// hook de observabilidad/demo: las tools disponibles en esta pagina (la UI y
+// los tests del navegador las usan; el agente pasa por navigator.modelContext)
+globalThis.__consoleTools = tools;
 
 // restore de sesion activa + arranque
 try {

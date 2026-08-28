@@ -16,6 +16,27 @@ contenido, despliega y firma. Sin tocar el worker a mano (se genera).
 | `build.mjs` | genera `worker.mjs`: landing + llms.txt v0.4 (con hashes) + rutas de skills + API CRUD |
 | `wrangler.toml` | config de despliegue (D1 + nodejs_compat) |
 
+## Monetización: vende el acceso a tu tool de escritura
+
+`kit.config.json` → bloque `monetize` (activado por defecto):
+
+```json
+"monetize": { "enabled": true, "tool": "create_item", "price": 19, "uses": 25, "days": 30 }
+```
+
+Con `enabled: true`, el worker generado **gatea `create_item`** tras una
+licencia de creador:
+
+1. El agente llama `create_item` sin token → `{ok:false, needs_payment:true}`.
+2. El agente llama `buy_creator_access` con el email del humano → paylink.
+3. **El humano paga** ($19 / 25 creaciones / 30 días — simulado hasta conectar
+   Stripe) y la página del paylink le muestra el `license_token`.
+4. El agente crea con `{access_token}` → cada creación decrementa `uses_left`.
+
+`buy_creator_access` y `check_license` son gratis; la lectura también. Para
+desactivar: `"enabled": false` y quita esas 2 skills de la lista (el build
+regenera el worker libre). La tabla `licenses` vive en `schema.sql`.
+
 ## Los 7 pasos (de cero a plataforma attestada)
 
 ```bash

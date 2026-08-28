@@ -1,4 +1,4 @@
-# mcpwasm — Static MCP
+# mcpwasm
 
 [![CI](https://github.com/MauricioPerera/mcpwasm/actions/workflows/ci.yml/badge.svg)](https://github.com/MauricioPerera/mcpwasm/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/%40rckflr%2Fmcpwasm)](https://www.npmjs.com/package/@rckflr/mcpwasm)
@@ -1202,3 +1202,8 @@ isolate/colo mostly out of this cold path.
 Run the e2e tests with `npm test` (sync) / `npm run spike` (async) /
 `npm run gateway` (gateway against the live demo site) / `npm run memspike`
 (memory capability against the docs-site origin).
+<a id="español"></a>
+
+## Español
+
+mcpwasm es un runtime MCP estático: las skills viven en `llms.txt` con hashes verificables y las tools corren en un sandbox WASM. Apunta tu cliente MCP a un origin publicado y listo — sin servidor. El historial de cambios por versión está en [CHANGELOG.md](./CHANGELOG.md).

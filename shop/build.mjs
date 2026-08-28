@@ -2,7 +2,7 @@
 // Mismo patron que studio/build.mjs: los hashes se calculan del contenido real.
 // API: D1 (catalogo + ordenes atomicas e idempotentes por client_order_id).
 
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -12,6 +12,11 @@ const contentDir = join(__dirname, "content");
 const read = (f) => readFileSync(join(contentDir, f), "utf8");
 
 const SKILLS = ["search_catalog", "get_product", "create_order", "order_status"];
+
+// Attestations Ed25519 (opcional): si content/attestations.json existe, el worker
+// lo sirve en /.well-known/agent-skills/attestations.json (patron bookstore).
+const attestationsPath = join(contentDir, "attestations.json");
+const attestationsJson = existsSync(attestationsPath) ? readFileSync(attestationsPath, "utf8").trim() : null;
 
 const skills = {};
 for (const name of SKILLS) {
@@ -81,7 +86,8 @@ const worker =
   `// AUTOGENERADO por shop/build.mjs. No editar a mano.\n` +
   `${toolConstants}\n\n` +
   `const LLMS_TXT = ${JSON.stringify(llmsTxt)};\n` +
-  `const LANDING_HTML = ${JSON.stringify(landing)};\n\n` +
+  `const LANDING_HTML = ${JSON.stringify(landing)};\n` +
+  (attestationsJson ? `  const ATTESTATIONS = ${attestationsJson};\n\n` : "") +
   `const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };\n` +
   `const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: JSON_HEADERS });\n\n` +
   `export default {\n` +
@@ -106,6 +112,11 @@ const worker =
   `      return json({ error: "error interno: " + (e && e.message ? e.message : String(e)) }, 500);\n` +
   `    }\n\n` +
   `${skillRoutes}\n\n` +
+  (attestationsJson
+    ? "  if (path === \"/.well-known/agent-skills/attestations.json\") {\n" +
+      "      return new Response(JSON.stringify(ATTESTATIONS), { headers: { \"content-type\": \"application/json; charset=utf-8\", \"cache-control\": \"no-store\" } });\n" +
+      "    }\n\n"
+    : "") +
   `    return json({ error: "Not Found", path }, 404);\n` +
   `  }\n` +
   `};\n\n` +

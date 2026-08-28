@@ -90,7 +90,8 @@
     "test:kit": "node test-kit.mjs",
     "e2e:shop": "node scripts/live-shop-e2e.mjs",
     "e2e:pay": "node scripts/live-pay-e2e.mjs",
-    "byoa-init": "node scripts/byoa-init.mjs"
+    "byoa-init": "node scripts/byoa-init.mjs",
+    "e2e:license": "node scripts/live-license-e2e.mjs"
   },
   "dependencies": {
     "@jitl/quickjs-wasmfile-release-asyncify": "^0.32.0",

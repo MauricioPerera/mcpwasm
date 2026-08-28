@@ -20,11 +20,11 @@
   {
     "origin": "https://llmstxt-shop.rckflr.workers.dev",
     "skill": "create_order",
-    "tool_sha256": "10fbd3f7432098aa6f3313f510856a686b6e376cd0edb3afcf1589c7119c618e",
+    "tool_sha256": "94190c05b1886bd595dd50208bed35e4bc42481e7598075df807844d6deb9afd",
     "attester": "human:mauricio-3",
     "signed_on": "2026-08-28",
     "valid_until": "2027-08-28",
-    "signature": "6Z1NUEUAMQaFQVIdx8CH3+B/BXeklNeh7vtHvDhIhrtQOHdd0nx4NfXhkOsR/sRNulNOeQU8OpbHHUk1RPjfDw=="
+    "signature": "VGAHGp2BaD+gusHxfX3Bqdm7Y0xDa9G433lhaQC2lEwN5Ba0Y5ikNMBGw+V1jGb/RWFi7Y4VzRJQESSjGPrqCQ=="
   },
   {
     "origin": "https://llmstxt-shop.rckflr.workers.dev",
@@ -34,5 +34,32 @@
     "signed_on": "2026-08-28",
     "valid_until": "2027-08-28",
     "signature": "hvww04Y9CtOJ3WCmlT+SxJaczLKIE0Mbw/OtmKZUQ23Z1Cvkt600iGC7BCZiGpseoPGR/f4gZoYwVhTw6GdwBQ=="
+  },
+  {
+    "origin": "https://llmstxt-shop.rckflr.workers.dev",
+    "skill": "create_product",
+    "tool_sha256": "f8d4d00e26127d114b32a5a77ca333f7de53503134709452a65b9ff8da5eb6fa",
+    "attester": "human:mauricio-3",
+    "signed_on": "2026-08-28",
+    "valid_until": "2027-08-28",
+    "signature": "CaXasKXoNopX2piQV7xEsjmMTSNa+KIkuacMgpS/P1Xe9IjerBjI2ox8iVCLSFrjgVaLq4vwxM/G1rTPZm79BQ=="
+  },
+  {
+    "origin": "https://llmstxt-shop.rckflr.workers.dev",
+    "skill": "buy_creator_access",
+    "tool_sha256": "743800c6e1aafe31498eb5234d508a8914dbbd59e64562d309568282fc6c6b2f",
+    "attester": "human:mauricio-3",
+    "signed_on": "2026-08-28",
+    "valid_until": "2027-08-28",
+    "signature": "EcadSjwtXaCXmd1vN9Yy8JuBbBav9w1YvWvgqkf3XfgkyXvi8Yc5/DR8+M7gfVdxJcPVAoCWRtqzs8m187B2Cg=="
+  },
+  {
+    "origin": "https://llmstxt-shop.rckflr.workers.dev",
+    "skill": "check_license",
+    "tool_sha256": "22de2bec8ffd99cee4b984c82d682dbc9eefad3445cef53906dbb125c6ca9f4a",
+    "attester": "human:mauricio-3",
+    "signed_on": "2026-08-28",
+    "valid_until": "2027-08-28",
+    "signature": "WbBzPQM6RReYOgURvS+CWcO8Du4eQi1tCapJxknBbO92zqKXiP+kI/n2Y17vls21rZkZEpaY4lYwWisF7BUzCQ=="
   }
 ]

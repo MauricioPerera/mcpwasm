@@ -29,6 +29,7 @@ async function runTool(mf, skillName, args) {
     fetchOrigin: async (path, opts = {}) => {
       const res = await mf.dispatchFetch("http://localhost" + path, {
         method: opts.method || "GET",
+        headers: opts.headers,
         body: opts.body,
       });
       const body = await res.text();
@@ -64,7 +65,7 @@ async function main() {
   console.log("[1] descubrimiento");
   const llms = await (await mf.dispatchFetch("http://localhost/llms.txt")).text();
   const lines = llms.split("\n").filter((l) => l.includes("<!-- skill:"));
-  check(lines.length === 4, `4 skills en llms.txt (${lines.length})`);
+  check(lines.length === 7, `7 skills en llms.txt (${lines.length})`);
   for (const line of lines) {
     const m = line.match(/^- \[([^\]]+)\]\(([^)]+)\):.*"tool":"([^"]+)","tool_sha256":"([a-f0-9]{64})"/);
     check(Boolean(m), `linea v0.4: ${m ? m[1] : "?"}`);
@@ -134,6 +135,33 @@ async function main() {
   check(noAuth.status === 401, "GET /api/orders sin token -> 401");
   const withAuth = await call(mf, "/api/orders?limit=10", { headers: { Authorization: "Bearer test-admin" } });
   check(withAuth.status === 200 && withAuth.body.count === 2 && withAuth.body.orders.map((o) => o.status).includes("paid"), "con token -> ordenes (incluida la PAGADA del paylink)");
+
+  console.log("[8] licencia de creador: el acceso a create_product se VENDE");
+  const noTok = await runTool(mf, "create_product", { name: "sin-token", price: 5 });
+  check(noTok.ok === false && noTok.needs_payment === true, "create_product sin token -> needs_payment");
+  const buy = await runTool(mf, "buy_creator_access", { email: "merchant@example.com" });
+  check(buy.ok === true && typeof buy.payment_url === "string" && buy.payment_url.startsWith("https://llmstxt-shop"), "buy_creator_access -> paylink de licencia");
+  const pt2 = buy.payment_url.split("pt=")[1];
+  const licToken = buy.payment_url.split("/buy/")[1].split("?")[0];
+  const licPage = await mf.dispatchFetch("http://localhost" + buy.payment_url.replace("https://llmstxt-shop.rckflr.workers.dev", ""));
+  const licHtml = await licPage.text();
+  check(licPage.status === 200 && licHtml.includes("Licencia de creador"), "GET /buy/:token -> pagina de licencia");
+  const badActivate = await call(mf, "/api/licenses/activate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_token: "falso" }) });
+  check(badActivate.status === 404, "activar con payment_token falso -> 404");
+  const activate = await call(mf, "/api/licenses/activate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_token: pt2 }) });
+  check(activate.status === 200 && activate.body.license_token === licToken, "activar con payment_token -> license_token");
+  const licInfo = await runTool(mf, "check_license", { access_token: licToken });
+  check(licInfo.found === true && licInfo.valid === true && licInfo.uses_left === 25, "check_license -> activa con 25 usos");
+  const badTok = await call(mf, "/api/products", { method: "POST", headers: { Authorization: "Bearer token-falso", "Content-Type": "application/json" }, body: JSON.stringify({ name: "x", price: 1 }) });
+  check(badTok.status === 401, "create product con token falso -> 401");
+  const created1 = await runTool(mf, "create_product", { name: "Agent Made Mug", price: 21, stock: 10, access_token: licToken });
+  check(created1.ok === true && created1.sku === "agent-made-mug" && created1.uses_left === 24, "create_product -> producto creado, uses_left 24");
+  const created2 = await runTool(mf, "create_product", { name: "Agent Made Mug", price: 22, stock: 5, access_token: licToken });
+  check(created2.ok === true && created2.sku !== created1.sku && created2.sku.startsWith("agent-made-mug-"), "sku duplicado -> slug con sufijo unico");
+  const seen = await runTool(mf, "search_catalog", { q: "Agent Made" });
+  check(Array.isArray(seen) && seen.some((p) => p.sku === created1.sku), "search_catalog ve el producto creado por el agente");
+  const noEmail = await runTool(mf, "buy_creator_access", {});
+  check(noEmail.ok === false && noEmail.error.includes("email"), "buy_creator_access sin email -> error claro");
 
   const ok = CHECKS.every(Boolean);
   console.log(`TEST SHOP: ${ok ? "PASS" : "FALLO"} (${CHECKS.filter(Boolean).length}/${CHECKS.length})`);

@@ -103,6 +103,7 @@ export default {
       if (productMatch) return await handleProduct(decodeURIComponent(productMatch[1]), env);
       if (path === "/api/orders" && request.method === "POST") return await handleCreateOrder(request, env);
       if (path === "/api/orders" && request.method === "GET") return await handleListOrders(request, env);
+      if (path === "/api/licenses" && request.method === "GET") return await handleListLicenses(request, env);
       const payPageMatch = path.match(/^\/pay\/(\d+)$/);
       if (payPageMatch) return await handlePayPage(request, env, Number(payPageMatch[1]), url.searchParams.get("pt") || "");
       const payApiMatch = path.match(/^\/api\/pay\/(\d+)$/);
@@ -229,6 +230,19 @@ async function handleListOrders(request, env) {
   const limit = Number.isFinite(limitRaw) && limitRaw >= 1 && limitRaw <= 200 ? Math.floor(limitRaw) : 50;
   const { results } = await env.DB.prepare("SELECT order_id, sku, qty, email, total, status, client_order_id, created_at FROM orders ORDER BY order_id DESC LIMIT ?").bind(limit).all();
   return json({ orders: results, count: results.length });
+}
+
+async function handleListLicenses(request, env) {
+  const auth = request.headers.get("Authorization") || "";
+  const expected = "Bearer " + (env.ADMIN_TOKEN || "");
+  if (!env.ADMIN_TOKEN || auth !== expected) {
+    return json({ error: "unauthorized: merchant token required" }, 401);
+  }
+  const { results } = await env.DB.prepare("SELECT token, email, plan, price, uses_total, uses_left, status, created_at, expires_at FROM licenses ORDER BY created_at DESC LIMIT 200").all();
+  const active = results.filter((l) => l.status === "active");
+  const revenue = active.reduce((s, l) => s + l.price, 0);
+  const usesLeft = active.reduce((s, l) => s + l.uses_left, 0);
+  return json({ licenses: results, count: results.length, active: active.length, revenue, uses_left: usesLeft });
 }
 
 const paylinkPage = function paylinkPage(order) {

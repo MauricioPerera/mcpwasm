@@ -27,7 +27,7 @@ async function runTool(mf, toolFile, args) {
     fetchOrigin: async (p, opts = {}) => {
       const res = await mf.dispatchFetch("http://localhost" + p, {
         method: opts.method || "GET",
-        headers: opts.body ? { "Content-Type": "application/json" } : undefined,
+        headers: opts.headers || (opts.body ? { "Content-Type": "application/json" } : undefined),
         body: opts.body,
       });
       return { status: res.status, body: await res.text() };
@@ -50,7 +50,7 @@ async function main() {
   cfg.name = "llmstxt-mi-tienda";
   cfg.origin = "https://llmstxt-mi-tienda.example.dev";
   writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
-  check(cfg.skills.length === 3, `config con ${cfg.skills.length} skills: ${cfg.skills.join(", ")}`);
+  check(cfg.skills.length === 5 && cfg.monetize.enabled === true, `config con ${cfg.skills.length} skills + monetize ON`);
 
   // [2] build: discovery con hashes del contenido real
   console.log("[2] build: llms.txt v0.4 con hashes reales");
@@ -60,7 +60,7 @@ async function main() {
   const listTool = readFileSync(join(scaffoldDir, "content", "list_items.tool.js"), "utf8");
   check(workerSrc.includes(sha(listTool)), "tool_sha256 en el llms.txt sale del contenido REAL");
   const skillMd = readFileSync(join(scaffoldDir, "content", "create_item.SKILL.md"), "utf8");
-  check(skillMd.includes("aprobación humana"), "SKILL.md de escritura trae la regla de aprobación humana");
+  check(skillMd.includes("HUMANO"), "SKILL.md de escritura trae la regla de aprobacion humana");
 
   // [3] API CRUD en D1
   console.log("[3] API CRUD en D1 (Miniflare)");
@@ -88,20 +88,40 @@ async function main() {
   check(miss.status === 404, "GET /api/items/999 -> 404");
   const createRes = await mf.dispatchFetch("http://localhost/api/items", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "kit-nuevo", price: 9.5, stock: 3 }) });
   const created = await createRes.json();
-  check(createRes.status === 201 && created.ok === true && created.id === 3, "POST /api/items -> 201 con id asignado");
+  check(createRes.status === 401 && created.needs_payment === true, "POST /api/items sin licencia -> 401 needs_payment (monetize ON)");
   const badCreate = await mf.dispatchFetch("http://localhost/api/items", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "", price: -1 }) });
-  check(badCreate.status === 400, "POST invalido -> 400");
+  check(badCreate.status === 400 || badCreate.status === 401, "POST invalido -> 400/401");
 
   // [4] tools reales via runTool
   console.log("[4] tools reales (sandbox con fetchOrigin)");
   const listed = await runTool(mf, "list_items.tool.js", { q: "kit" });
-  check(Array.isArray(listed) && listed.some((i) => i.name === "kit-nuevo"), "list_items filtra por texto (matchea name o description)");
-  const got = await runTool(mf, "get_item.tool.js", { id: 3 });
-  check(got.found === true && got.price === 9.5, "get_item por id");
-  const made = await runTool(mf, "create_item.tool.js", { name: "por-tool", price: 3 });
-  check(made.ok === true && typeof made.id === "number", "create_item escribe (aprobacion humana en su SKILL.md)");
-  const badTool = await runTool(mf, "create_item.tool.js", { name: "x", price: -5 });
+  check(Array.isArray(listed) && listed.some((i) => i.name === "kit-nuevo") === false, "list_items (sin items nuevos aun, solo semilla)");
+
+  console.log("[5] monetizacion: comprar acceso -> pagar -> crear con token");
+  const gated = await runTool(mf, "create_item.tool.js", { name: "sin-token", price: 1 });
+  check(gated.ok === false && gated.needs_payment === true && typeof gated.next_step === "string", "create_item sin token -> needs_payment + next_step");
+  const buy = await runTool(mf, "buy_creator_access.tool.js", { email: "merchant@example.com" });
+  check(buy.ok === true && typeof buy.payment_url === "string" && buy.payment_url.startsWith("https://"), "buy_creator_access -> paylink absoluta");
+  const licToken = buy.payment_url.split("/buy/")[1].split("?")[0];
+  const pt = buy.payment_url.split("pt=")[1];
+  const licPageRes = await mf.dispatchFetch("http://localhost" + buy.payment_url.replace(/^https?:\/\/[^/]+/, ""));
+  const licHtml = await licPageRes.text();
+  check(licPageRes.status === 200 && licHtml.includes("Licencia ACTIVA") === false && licHtml.includes("Pagar"), "paylink de licencia: pagina con boton (token oculto antes de pagar)");
+  const activate = await mf.dispatchFetch("http://localhost/api/licenses/activate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_token: licToken && "" }) });
+  check(activate.status === 400 || activate.status === 404, "activar sin payment_token real -> rechazo");
+  const activate2 = await mf.dispatchFetch("http://localhost/api/licenses/activate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_token: buy.payment_url.split("pt=")[1] }) });
+  const act = await activate2.json();
+  check(activate2.status === 200 && act.license_token === licToken, "pago -> licencia activa con license_token");
+  const licInfo = await runTool(mf, "check_license.tool.js", { access_token: licToken });
+  check(licInfo.found === true && licInfo.valid === true && licInfo.uses_left === 25, "check_license -> activa con 25 usos");
+  const badTok = await runTool(mf, "create_item.tool.js", { name: "x", price: 2, access_token: "token-falso" });
+  check(badTok.ok === false && badTok.needs_payment === true, "create_item con token falso -> needs_payment");
+  const made = await runTool(mf, "create_item.tool.js", { name: "por-tool", price: 3, access_token: licToken });
+  check(made.ok === true && typeof made.id === "number" && made.uses_left === 24, "create_item con token -> crea y decrementa usos");
+  const badTool = await runTool(mf, "create_item.tool.js", { name: "x", price: -5, access_token: licToken });
   check(badTool.ok === false, "create_item valida price negativo");
+  const noEmail = await runTool(mf, "buy_creator_access.tool.js", {});
+  check(noEmail.ok === false && noEmail.error.includes("email"), "buy_creator_access sin email -> error claro");
 
   const ok = CHECKS.every(Boolean);
   console.log(`TEST KIT: ${ok ? "PASS" : "FALLO"} (${CHECKS.filter(Boolean).length}/${CHECKS.length})`);

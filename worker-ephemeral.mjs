@@ -111,6 +111,12 @@ const COOKIE = "mcpwasm_preview_sid";
 const SESSION_TTL = 3600 + 120; // 60 min de vida + margen (KV expirationTtl)
 const LIMITS = { maxFiles: 20, maxTotalBytes: 8 * 1024 * 1024, maxName: 128 };
 
+// Claim comercial: el HUMANO paga (paylink simulado) para conservar el deploy
+// mas alla del TTL de la cuenta temporal. La sesion reclamada se re-put en KV
+// con CLAIM.days de vida. (El claim NATIVO de Cloudflare — transferir la cuenta
+// temporal — sigue disponible via session.claimUrl; este es el claim hosted.)
+const CLAIM = { price: 19, days: 30 };
+
 function getSid(request, url, bodySid) {
   const cookie = request.headers.get("Cookie") || "";
   const m = cookie.match(new RegExp(`${COOKIE}=([A-Za-z0-9-]+)`));
@@ -182,6 +188,10 @@ async function mainHandler(request, env) {
   if (request.method === "POST" && route === "/preview/discard") {
     return handleDelete(request, env);
   }
+  // POST /preview/claim: inicia el claim comercial (paylink para el humano)
+  if (request.method === "POST" && route === "/preview/claim") {
+    return handleClaimStart(request, env);
+  }
 
   // GET /preview: estado de la sesion (sin crear nada). sid por cookie o ?sid=
   if (request.method === "GET") {
@@ -197,6 +207,8 @@ async function mainHandler(request, env) {
       expiresAt: session.expiresAt,
       claimExpiresAt: session.claimExpiresAt,
       msToExpiry: Date.parse(session.expiresAt) - Date.now(),
+      claimed: session.claimed ? { email: session.claimed.email, at: session.claimed.at } : null,
+      claim_pending: session.claim_pending ? true : null,
     });
   }
 
@@ -272,7 +284,79 @@ async function handleDelete(request, env) {
 }
 
 // Handlers exportados para la plataforma (llmstxt-studio) que los monta en su router.
-export const ephemeral = { handlePreview: mainHandler, handleStatus: mainHandler, handleDelete };
+export const ephemeral = { handlePreview: mainHandler, handleStatus: mainHandler, handleDelete, handleClaimStart, handleClaimPage, handleClaimConfirm };
+
+// --- claim comercial (paylink simulado -> sesion reclamada con TTL extendido) --
+
+// POST /preview/claim {email} (sid por cookie/?sid=/body): inicia el claim.
+// Devuelve el paylink para el HUMANO. El token de pago vive en la sesion.
+export async function handleClaimStart(request, env) {
+  const url = new URL(request.url);
+  let body = {};
+  try { body = await request.json(); } catch { body = {}; }
+  const sid = getSid(request, url, body && body.sid);
+  const session = await loadSession(env, sid);
+  if (!session) return json({ error: "sin sesion de preview" }, 404);
+  if (session.claimed) {
+    return json({ ok: true, already: true, claimed: session.claimed, expiresAt: session.expiresAt });
+  }
+  const email = body && body.email;
+  if (typeof email !== "string" || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return json({ ok: false, error: "email del humano requerido" }, 400);
+  }
+  const pt = crypto.randomUUID();
+  session.claim_pending = { email, pt, startedAt: new Date().toISOString() };
+  await env.SESSIONS.put(sessionKey(sid), JSON.stringify(session), { expirationTtl: SESSION_TTL });
+  return json({
+    ok: true, status: "pending", price: CLAIM.price, days: CLAIM.days,
+    payment_url: "/claim/" + sid + "?pt=" + pt,
+    next_step: "el humano paga el paylink; al confirmar, el deploy se conserva " + CLAIM.days + " dias mas",
+  });
+}
+
+// GET /claim/:sid?pt= : pagina del paylink (el humano paga aqui).
+export async function handleClaimPage(request, env, sid, pt) {
+  const session = await loadSession(env, sid);
+  if (!session) return json({ error: "sesion no encontrada" }, 404);
+  const pending = session.claim_pending;
+  if (!pending || !pt || pt !== pending.pt) return json({ error: "paylink invalido" }, 403);
+  const claimed = session.claimed;
+  const html = "<!doctype html><html lang=\"es\"><head><meta charset=\"utf-8\">" +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    "<title>Reclamar deploy</title>" +
+    "<style>body{font-family:system-ui,sans-serif;max-width:28rem;margin:3rem auto;padding:0 1rem;line-height:1.6;color:#14181f;background:#fafbfc}code{background:#eef1f4;padding:.1rem .35rem;border-radius:4px}.box{border:1px solid #e4e8ec;border-radius:10px;padding:1.2rem;margin:1rem 0}button{background:#0b62a4;color:#fff;border:0;border-radius:8px;padding:.7rem 1.4rem;font-size:1rem;cursor:pointer;width:100%}button:disabled{opacity:.5}.ok{color:#0a7d32;font-weight:700}.tag{color:#66707b;font-size:.85rem}</style></head><body>" +
+    "<h1>llmstxt-studio</h1><div class=\"box\"><h2>Reclamar tu deploy</h2>" +
+    "<p><code>" + (session.scriptName || sid.slice(0, 8)) + "</code></p>" +
+    (claimed
+      ? '<p class="ok">\u2705 Deploy RECLAMADO por ' + claimed.email + ".</p>" +
+        "<p>Conservado hasta: " + session.expiresAt + "</p>"
+      : '<button id="btn" onclick="pay()">Reclamar por $' + CLAIM.price + " \u2014 conservar " + CLAIM.days + " dias (simulado)</button>" +
+        '<p id="msg"></p>' +
+        '<p class="tag">SIMULACION: no se cobra dinero real. Al confirmar, el deploy se marca como tuyo y su TTL se extiende ' + CLAIM.days + " dias.</p>") +
+    "<script>function pay(){var b=document.getElementById('btn');if(!b)return;b.disabled=true;b.textContent='Procesando...';fetch('/api/claim/" + sid + "',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({payment_token:'" + pending.pt + "'})}).then(function(r){return r.json()}).then(function(j){if(j.ok){location.reload();}else{document.getElementById('msg').textContent='Error: ' + (j.error||'?');b.disabled=false;}});}<\/script>" +
+    "</div></body></html>";
+  return new Response(html, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+}
+
+// POST /api/claim/:sid {payment_token}: confirma el pago (simulado), extiende el TTL.
+export async function handleClaimConfirm(request, env, sid) {
+  let body = {};
+  try { body = await request.json(); } catch { body = {}; }
+  const session = await loadSession(env, sid);
+  if (!session) return json({ ok: false, error: "sesion no encontrada" }, 404);
+  const pending = session.claim_pending;
+  const pt = body && typeof body.payment_token === "string" ? body.payment_token : "";
+  if (!pending || !pt || pt !== pending.pt) return json({ ok: false, error: "paylink invalido" }, 403);
+  if (session.claimed) {
+    return json({ ok: true, already: true, claimed: session.claimed, expiresAt: session.expiresAt });
+  }
+  session.claimed = { email: pending.email, at: new Date().toISOString(), price: CLAIM.price };
+  // claim_pending se conserva: el mismo paylink queda idempotente (already:true)
+  // El KV re-put con TTL largo: el deploy sobrevive al vencimiento de la cuenta temporal.
+  session.expiresAt = new Date(Date.now() + CLAIM.days * 86400000).toISOString();
+  await env.SESSIONS.put(sessionKey(sid), JSON.stringify(session), { expirationTtl: CLAIM.days * 86400 + 120 });
+  return json({ ok: true, claimed: session.claimed, expiresAt: session.expiresAt, scriptName: session.scriptName });
+}
 
 export default {
   async fetch(request, env) {

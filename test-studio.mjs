@@ -103,7 +103,7 @@ async function main() {
   check(llms.includes("## Skills"), "llms.txt con seccion Skills");
   // formato v0.4: cada linea con tool + tool_sha256, y el hash == bytes servidos
   const lines = llms.split("\n").filter((l) => l.includes("<!-- skill:"));
-  check(lines.length === 3, `3 skills en llms.txt (${lines.length})`);
+  check(lines.length === 4, `4 skills en llms.txt (${lines.length})`);
   for (const line of lines) {
     const m = line.match(/^- \[([^\]]+)\]\(([^)]+)\):.*"tool":"([^"]+)","tool_sha256":"([a-f0-9]{64})"/);
     check(Boolean(m), `linea v0.4 parseable: ${m ? m[1] : "?"}`);
@@ -164,6 +164,37 @@ async function main() {
   check(r7.status === 400, "main fuera de files -> 400");
   const r8 = await call("/preview/discard?sid=inexistente", { method: "POST", body: "{}" });
   check(r8.status === 404, "discard de sesion inexistente -> 404");
+
+  console.log("[6] claim comercial: paylink -> pago (simulado) -> TTL extendido");
+  const rc1 = await call("/preview", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ files: APP, main: "app.js" }),
+  });
+  const sid2 = rc1.body.sid;
+  check(rc1.status === 200 && Boolean(sid2), "nueva preview para el flujo de claim");
+  const noEmail = await call("/preview/claim?sid=" + sid2, { method: "POST", body: "{}" });
+  check(noEmail.status === 400, "claim sin email -> 400");
+  const c1 = await call("/preview/claim?sid=" + sid2, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: "owner@example.com" }),
+  });
+  check(c1.status === 200 && c1.body?.ok === true && typeof c1.body?.payment_url === "string" && c1.body.payment_url.startsWith("/claim/"), "claim start -> paylink con pt");
+  const badPage = await mf.dispatchFetch("http://localhost/claim/" + sid2 + "?pt=falso");
+  check(badPage.status === 403, "pagina de claim con pt falso -> 403");
+  const page = await mf.dispatchFetch("http://localhost" + c1.body.payment_url);
+  const pageHtml = await page.text();
+  check(page.status === 200 && pageHtml.includes("Reclamar"), "GET /claim/:sid -> pagina del paylink");
+  const wrongPay = await call("/api/claim/" + sid2, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_token: "falso" }) });
+  check(wrongPay.status === 403, "confirmar con payment_token falso -> 403");
+  const confirm = await call("/api/claim/" + sid2, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_token: c1.body.payment_url.split("pt=")[1] }) });
+  check(confirm.status === 200 && confirm.body?.ok === true && confirm.body?.claimed?.email === "owner@example.com", "pago -> deploy reclamado");
+  const again = await call("/api/claim/" + sid2, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_token: c1.body.payment_url.split("pt=")[1] }) });
+  check(again.status === 200 && again.body?.already === true, "claim repetido -> already:true (idempotente)");
+  const st = await call("/preview?sid=" + sid2);
+  check(st.body?.claimed?.email === "owner@example.com", "preview_status refleja claimed con email");
+  check(Date.parse(st.body.expiresAt) > Date.now() + 29 * 86400000, "TTL extendido (~30 dias)");
 
   const ok = CHECKS.every(Boolean);
   console.log(`TEST STUDIO: ${ok ? "PASS" : "FALLO"} (${CHECKS.filter(Boolean).length}/${CHECKS.length})`);

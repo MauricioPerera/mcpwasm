@@ -116,6 +116,23 @@ async function main() {
     }
   }
 
+  console.log("[1b] consola del navegador (la pagina que sirve el studio)");
+  const conRes = await mf.dispatchFetch("http://localhost/console");
+  const conHtml = await conRes.text();
+  check(conRes.status === 200 && conHtml.includes("console-main.mjs"), "GET /console -> HTML de la consola");
+  check(conHtml.includes("Probar con demo app"), "consola con boton demo (path sin agente)");
+  const mainRes = await mf.dispatchFetch("http://localhost/console/console-main.mjs");
+  const mainJs = await mainRes.text();
+  check(mainRes.status === 200 && mainRes.headers.get("content-type").includes("text/javascript"), "console-main.mjs se sirve como JS de modulo");
+  check(mainJs.includes("makeConsoleTools") && mainJs.includes("claim_preview"), "el glue expone las 4 tools");
+  for (const mod of ["solve-pow-web.mjs", "ephemeral-account-web.mjs", "deploy-app-web.mjs", "deploy-preview-web.mjs", "console-tools.mjs"]) {
+    const res = await mf.dispatchFetch("http://localhost/console/" + mod);
+    const src = await res.text();
+    check(res.status === 200 && res.headers.get("content-type").includes("text/javascript"), `modulo ${mod} servido como JS`);
+    // uso real de APIs de Node (no menciones en comentarios): Buffer., from "node:", process.
+    check(!/\bBuffer\s*\./.test(src) && !/\bfrom\s+["']node:/.test(src) && !/\brequire\s*\(/.test(src), `modulo ${mod} libre de APIs de Node (browser-safe)`);
+  }
+
   console.log("[2] flujo agente: create_preview SIN cookies (sid explicito)");
   const r1 = await call("/preview", {
     method: "POST",

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>llmstxt-studio — consola</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#2b3440; --fg:#e6edf3; --dim:#8b97a3; --acc:#4f9cf9; --ok:#3fb950; --warn:#d29922; --err:#f85149; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:system-ui,sans-serif; background:var(--bg); color:var(--fg); line-height:1.5; }
+  header { display:flex; align-items:center; gap:.8rem; padding:.7rem 1.1rem; border-bottom:1px solid var(--line); }
+  header h1 { font-size:1.02rem; margin:0; font-weight:650; }
+  header .sub { color:var(--dim); font-size:.82rem; }
+  header .right { margin-left:auto; display:flex; gap:.6rem; align-items:center; font-size:.82rem; color:var(--dim); }
+  main { display:grid; grid-template-columns: 380px 1fr; gap:1rem; padding:1rem 1.1rem; max-width:1400px; margin:0 auto; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:1rem; }
+  .card h2 { font-size:.9rem; margin:0 0 .6rem; color:var(--acc2,#9ecbff); font-weight:600; letter-spacing:.02em; }
+  #log { font:12.5px/1.45 ui-monospace,monospace; background:#0b0f14; border:1px solid var(--line); border-radius:8px; padding:.7rem .8rem; height:38vh; overflow:auto; white-space:pre-wrap; word-break:break-word; }
+  #log-line { margin:.15rem 0; } .log-ok { color:var(--ok); } .log-err { color:var(--err); } .log-info { color:var(--dim); }
+  .btn { background:#21262d; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:.45rem .8rem; font-size:.85rem; cursor:pointer; }
+  .btn.primary { background:#1f6feb; border-color:#1f6feb; color:#fff; font-weight:600; }
+  .btn.danger { background:#2d1b1e; border-color:#67262e; color:#ff8182; }
+  .btn:disabled { opacity:.5; cursor:default; }
+  iframe { width:100%; height:64vh; border:1px solid var(--line); border-radius:10px; background:#fff; }
+  .row { display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; margin:.55rem 0; }
+  .muted { color:var(--muted,#9aa7b2); font-size:.85rem; }
+  .kv { font-size:.86rem; color:var(--dim); } .kv b { color:var(--fg); }
+  a { color:#58a6ff; } .hidden { display:none; }
+  #claim-box { border:1px solid #2e4a33; background:#122416; border-radius:8px; padding:.7rem .8rem; font-size:.9rem; }
+  .pill { display:inline-block; background:#21262d; border:1px solid var(--line); color:var(--acc); border-radius:99px; padding:.05rem .55rem; font-size:.75rem; margin-right:.3rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>llmstxt-studio</h1>
+  <span class="right" id="status-line">consola lista</span>
+  <span style="flex:1"></span>
+  <a class="btn" href="/">¿Qué es esto?</a>
+</header>
+<main>
+  <section>
+    <div class="card">
+      <h2>Tu agente + esta pestaña</h2>
+      <p style="font-size:.88rem" class="kv">La consola expone 4 tools <em>en la página</em> (WebMCP en Chrome/extensiones compatibles, o vía <code>npx -y @rckflr/mcpwasm https://llmstxt-studio.rckflr.workers.dev --previews</code> desde tu terminal). Tu agente dice <strong>qué construir</strong>; el aprovisionamiento de la cuenta temporal de Cloudflare corre <strong>aquí, en tu navegador</strong>: sin wrangler, sin cuenta, sin credenciales tuyas.</p>
+      <div class="row" id="mcp-state"></div>
+      <div class="row">
+        <button class="btn primary" id="demo-btn">Probar con demo app</button>
+        <button class="btn" id="status-btn">Estado de la sesión</button>
+        <button class="btn danger" id="discard-btn">Descartar preview</button>
+      </div>
+      <div id="claim-box" class="hidden">
+        <strong>Consérvalo (claim):</strong> <span id="claim-text">—</span>
+        <div class="row"><a class="btn primary" id="claim-link" target="_blank" rel="noopener">Abrir paylink / reclamar</a></div>
+      </div>
+      <div id="mcp-note" class="kv"></div>
+    </div>
+    <div class="card">
+      <h2>Activity</h2>
+      <div id="log"></div>
+    </div>
+  </section>
+  <section>
+    <div class="card">
+      <h2>Preview en vivo <span id="preview-meta" class="muted"></span></h2>
+      <iframe id="preview" src="about:blank" sandbox="allow-scripts"></iframe>
+    </div>
+  </section>
+</main>
+<script type="module" src="/console/console-main.mjs"></script>
+</body>
+</html>

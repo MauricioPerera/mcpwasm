@@ -263,6 +263,12 @@ function decides the security policy (read-only, parameterized-only, quotas…).
 `JSON.stringify([...args])` (an array) and returns a JSON string; the
 sandbox-side wrapper already parses the reply.
 
+**First-class shortcut:** since this pattern is exactly how a local consumer
+would bridge SQLite, the local runtime now ships it: `--sqlite ./data.db`
+(node:sqlite, opt-in, read-only by default, `--sqlite-write` to allow DML —
+see the README section "First-class SQLite"). If your engine needs more than
+that, `extraCapabilities` is the door.
+
 Sandbox limits that shape the design (from `host-async.mjs`): 64 MB memory,
 2 s wall-clock deadline per `callTool` (configurable), deterministic gas
 (20 000 interrupt invocations), response cap 4 KB by default

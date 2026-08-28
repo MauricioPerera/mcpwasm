@@ -320,6 +320,35 @@ Tested by `npm run test:auth` (hermetic: fake RFC 8414/8628 platform +
 protected llms.txt/API; first activation, silent reactivation, revocation ->
 auto re-auth, and fail-closed without --auth — 14 checks).
 
+#### Ephemeral Cloudflare previews: `--previews` (local runtime only)
+
+The consumer's agent can **deploy a small web app to a throwaway Cloudflare
+account** that lives 60 minutes — the "build with your agent, claim it to keep
+it, or let it die" flow (`llmstxt-studio` is the reference platform):
+
+```bash
+npx -y @rckflr/mcpwasm https://llmstxt-studio.rckflr.workers.dev --previews
+# then: create_preview { files, main } -> { sid, previewUrl, claimUrl, expiresAt }
+```
+
+The provisioning runs **in the host (Node), not in a Cloudflare Worker**:
+Cloudflare blocks Workers from subrequesting its own provisioning API (error
+`1017 worker_subrequest_blocked`, verified in production) — but the local
+runtime's native `crypto` solves the account-creation proof-of-work in ~2s.
+The ephemeral account's `apiToken` lives ONLY in `~/.mcpwasm/previews.json`
+(0600) — it **never crosses to the sandbox or the LLM**: the tool sees
+`{sid, previewUrl, claimUrl, expiresAt}` and orchestrates via
+`host.provisionPreview({op: "create"|"status"|"discard", ...})`. The human
+gets a `claimUrl` to keep the app (opens a Cloudflare login); unclaimed
+accounts self-destruct at `expiresAt`. `discard_preview` deletes early.
+Accepting Cloudflare's ToS is implicit in using the flag, same as
+`wrangler --temporary`.
+
+Tested by `npm run test:studio` (platform surface, Miniflare — 28 checks),
+`npm run test:studio-e2e` (real runtime + sandbox tool + fake CF API — 12
+checks) and `node scripts/live-e2e.mjs` (real Cloudflare end to end — 9
+checks).
+
 #### Developing your own skills: `--serve <dir>`
 
 Pointing the runtime at a raw GitHub URL does **not** work: `new URL(...).origin`

@@ -1,6 +1,6 @@
 {
   "name": "@rckflr/mcpwasm",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "description": "Static MCP host: run untrusted MCP tool.js files sandboxed in QuickJS-wasm (Cloudflare Workers or Node), with explicit host capabilities (fetchOrigin, callInternal, extraCapabilities) and llms.txt executable-skills parsing.",
   "type": "module",
   "license": "MIT",
@@ -65,7 +65,7 @@
   "scripts": {
     "build": "node build.mjs",
     "test": "node build.mjs && node mf-test.mjs",
-  "test:security": "node test-security.mjs",
+    "test:security": "node test-security.mjs",
     "test:ephemeral": "node test-ephemeral.mjs",
     "spike": "node build-spike.mjs && node mf-spike.mjs",
     "gateway": "node build-gateway.mjs && node mf-gateway.mjs",
@@ -77,11 +77,14 @@
     "build:web": "node web/build.mjs",
     "test:web": "node test-web.mjs",
     "test:bundle": "node smoke-bundle.mjs",
-    "test:attest": "node build-gateway.mjs && node t-attest-offline.mjs","test:sqlite":"node test-sqlite.mjs",
-      "test:auth":"node test-auth.mjs",
+    "test:attest": "node build-gateway.mjs && node t-attest-offline.mjs",
+    "test:sqlite": "node test-sqlite.mjs",
+    "test:auth": "node test-auth.mjs",
     "check:bundle": "node scripts/check-bundle-fresh.mjs",
     "check:docs-site": "node scripts/check-docs-site-fresh.mjs",
-    "check:publishers": "node scripts/check-publishers-fresh.mjs"
+    "check:publishers": "node scripts/check-publishers-fresh.mjs",
+    "test:studio": "node test-studio.mjs",
+    "test:studio-e2e": "node test-studio-e2e.mjs"
   },
   "dependencies": {
     "@jitl/quickjs-wasmfile-release-asyncify": "^0.32.0",
@@ -107,4 +110,3 @@
     "wrangler": "^4.106.0"
   }
 }
-

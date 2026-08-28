@@ -57,6 +57,7 @@ import { handleMcpMessageAsync } from "../mcp-core-async.mjs";
 import { parseLlmsTxt } from "../llmstxt-parse.mjs";
 import { verifySigstoreAttestation } from "../sigstore-attest.mjs";
 import { makeSqliteCapability } from "../sqlite-capability.mjs";
+import { makePreviewCapability } from "../preview-capability.mjs";
 import { getCredential, clearCredential, wrapFetch } from "../auth-device.mjs";
 import { canonicalBase, resolveFromBase, wellKnownCandidates } from "../origin-scope.mjs";
 
@@ -116,6 +117,7 @@ let sqliteWrite = false; // --sqlite-write (habilita escrituras; requiere --sqli
 let authIssuer = null; // --auth <issuer> (opt-in: device flow RFC 8628)
 let authClientId = "mcpwasm"; // --auth-client-id <id>
 let authLogout = false; // --auth-logout (borrar credencial local)
+let previewsEnabled = false; // --previews (opt-in: cuentas temporales de Cloudflare)
 let authFetchImpl = null; // wrapper Authorization (device flow) — lo fija start()
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
@@ -128,6 +130,8 @@ for (let i = 0; i < argv.length; i++) {
       process.exit(2);
     }
     fixedPort = p;
+  } else if (a === "--previews") {
+    previewsEnabled = true;
   } else if (a === "--lock") {
     lockPath = argv[++i];
     if (!lockPath) {
@@ -924,6 +928,25 @@ async function start() {
       err("sqlite: " + (sqlitePath === ":memory:" ? ":memory:" : path.resolve(sqlitePath)) + " montada (" + (sqliteWrite ? "lectura+escritura" : "SOLO LECTURA") + ") -> host.sqlite inyectada");
     } catch (e) {
       err("--sqlite: " + String((e && e.message) || e) + " — abortando");
+      process.exit(2);
+    }
+  }
+
+  // Previews en cuentas temporales (opt-in --previews): el provisioning corre
+  // EN EL HOST (Node, crypto nativo) porque Cloudflare bloquea subrequests de
+  // Workers hacia su API de provisioning (1017 worker_subrequest_blocked).
+  // El apiToken vive SOLO en ~/.mcpwasm/previews.json — nunca cruza al sandbox
+  // ni al LLM. La herramienta del publicador orquesta via host.provisionPreview.
+  if (previewsEnabled) {
+    try {
+      const previewCap = makePreviewCapability();
+      for (const s of skills) {
+        const k = s.scope || "";
+        scopedCaps[k] = { ...(scopedCaps[k] || {}), provisionPreview: previewCap };
+      }
+      err("previews: capability inyectada -> host.provisionPreview (cuentas temporales de Cloudflare, TTL 60 min)");
+    } catch (e) {
+      err("--previews: " + String((e && e.message) || e) + " — abortando");
       process.exit(2);
     }
   }

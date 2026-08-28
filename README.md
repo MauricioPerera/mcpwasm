@@ -281,6 +281,45 @@ per process) — for per-origin isolation, run one runtime per database file.
 Tested by `npm run test:sqlite` (hermetic: unit + e2e over stdio, including
 persistence across restarts with `--sqlite-write`).
 
+#### OAuth device flow: `--auth <issuer>` (local runtime only)
+
+Publish authenticated, per-user data **without running an MCP server**. The
+user's config stays just an origin; on first activation the runtime performs
+the OAuth Device Flow (RFC 8628) — the flow designed for clients without a
+browser:
+
+```jsonc
+// the consumer's client config — NO token anywhere:
+{ "mcpServers": { "tienda": { "command": "npx", "args": ["-y", "@rckflr/mcpwasm", "https://api.example.com", "--auth", "https://api.example.com"] } } }
+```
+
+```
+first activation:  runtime -> {issuer}/.well-known/oauth-authorization-server (RFC 8414,
+                   fallback: {issuer}/device/code + /device/token)
+                   runtime prints the verification URL by STDERR (stdout is MCP protocol
+                   only) -> the HUMAN opens it, logs into the platform's real session,
+                   consents to scopes -> runtime polls and stores the token LOCALLY
+                   (~/.mcpwasm/credentials.json, 0600) -> every fetch (discovery +
+                   fetchOrigin) carries Authorization: Bearer.
+later activations: silent — the local token is reused; refresh_token renews it
+                   automatically; a 401 (revoked/expired) clears the local
+                   credential and re-runs the device flow exactly once.
+related flags:     --auth-client-id <id> (public OAuth client id, default "mcpwasm"),
+                   --auth-logout (requires --auth: delete the local credential).
+```
+
+Security policy (`auth-device.mjs`): the token lives ONLY in the consumer's
+runtime process and credential file — it **never crosses to the LLM** (stdout
+is reserved for the MCP protocol; diagnostics go to stderr) and never appears
+in the client config. Fail-closed: without a token, or on 401 without
+`--auth`, discovery aborts — the runtime never degrades to anonymous calls
+against an origin the publisher chose to protect. Platform side, this pairs
+naturally with the token-scoped origin pattern: serve `/u/<token>/llms.txt`,
+validate the bearer on every request, scope all data server-side.
+Tested by `npm run test:auth` (hermetic: fake RFC 8414/8628 platform +
+protected llms.txt/API; first activation, silent reactivation, revocation ->
+auto re-auth, and fail-closed without --auth — 14 checks).
+
 #### Developing your own skills: `--serve <dir>`
 
 Pointing the runtime at a raw GitHub URL does **not** work: `new URL(...).origin`

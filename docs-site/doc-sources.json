@@ -31,5 +31,11 @@
     "title": "mcpwasm — Static MCP (reference implementation README)",
     "source": "local",
     "path": "README.md"
+  },
+  {
+    "name": "publisher-guide",
+    "title": "mcpwasm — Publisher guide (static files to ephemeral deploys)",
+    "source": "local",
+    "path": "docs/publisher-guide.md"
   }
 ]

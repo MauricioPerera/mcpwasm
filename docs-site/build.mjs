@@ -61,6 +61,11 @@ const DOC_SOURCES = [
     title: "mcpwasm — Static MCP (reference implementation README)",
     local: join(__dirname, "..", "README.md"),
   },
+  {
+    name: "publisher-guide",
+    title: "mcpwasm — Publisher guide (static files to ephemeral deploys)",
+    local: join(__dirname, "..", "docs", "publisher-guide.md"),
+  },
 ];
 
 const COMMIT_BY_BRANCH = {

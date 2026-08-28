@@ -98,7 +98,12 @@ const DEMO_FILES = [{
 document.getElementById("demo-btn").addEventListener("click", (ev) => runButton(ev.currentTarget, async () => {
   log("info", "creando cuenta temporal + PoW + deploy (desde el navegador)…");
   const out = await tools.create_preview({ files: DEMO_FILES, main: "app.js" });
-  if (!out.ok) return log("err", out.error || "create_preview fallo");
+  if (!out.ok) {
+    if (String(out.error || "").includes("worker_subrequest_blocked") || String(out.error || "").includes("1017")) {
+      log("err", "este relay de Cloudflare no puede crear cuentas desde un Worker (error 1017). Falta configurar el relay externo: relay/README.md tiene el deploy en un clic.");
+    }
+    return log("err", out.error || "create_preview fallo");
+  }
   localStorage.setItem(ACTIVE_KEY, out.sid);
   log("ok", "preview listo: " + out.previewUrl + (out.registered === false ? " (plataforma sin registrar: modo local)" : ""));
   renderSession({ previewUrl: out.previewUrl, claimUrl: out.claimUrl, claimExpiresAt: out.claimExpiresAt, expiresAt: out.expiresAt, sid: out.sid, scriptName: out.scriptName });

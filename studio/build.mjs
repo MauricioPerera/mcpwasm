@@ -105,13 +105,42 @@ const consoleRoutes = CONSOLE_MODULES.map((name) => {
 `\n    if (path === "/console/console-main.mjs") { return new Response(CONSOLE_MAIN, { headers: { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" } }); }\n` +
 `    if (path === "/console" || path === "/console/index.html") {\n` +
 `      return new Response(CONSOLE_HTML, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });\n` +
+`    }` +
+`\n// proxy puro a la API de Cloudflare para la consola (api.cloudflare.com no\n` +
+`// habla CORS desde el navegador): POST/PUT/GET/DELETE /console/cf/<ruta>.\n` +
+`// Transparencia total: metodos/headers/body pasan sin tocar; SOLO\n` +
+`// api.cloudflare.com es alcanzable (el resto 404); nada se registra ni guarda.\n` +
+`    if (path.startsWith("/console/cf/")) {\n` +
+`      return handleCfProxy(request);\n` +
 `    }`;
+
+const cfProxyFn =
+  `\n// proxy puro api.cloudflare.com <-> consola (sin CORS del lado de CF).\n` +
+  `async function handleCfProxy(request, env) {\n` +
+  `  const url = new URL(request.url);\n` +
+  `  const target = "https://api.cloudflare.com/client/v4" + url.pathname.slice("/console/cf".length) + (url.search || "");\n` +
+  `  const headers = {};\n` +
+  `  for (const h of ["authorization", "content-type"]) {\n` +
+  `    const v = request.headers.get(h);\n` +
+  `    if (v) headers[h] = v;\n` +
+  `  }\n` +
+  `  const init = { method: request.method, headers };\n` +
+  `  if (request.method !== "GET" && request.method !== "HEAD") init.body = await request.arrayBuffer();\n` +
+  `  let up = null;\n` +
+  `  try {\n` +
+  `    up = await fetch(target, init);\n` +
+  `  } catch (e) {\n` +
+  `    return json({ error: "cf proxy: no se pudo alcanzar api.cloudflare.com" }, 502);\n` +
+  `  }\n` +
+  `  return new Response(up.body, { status: up.status, headers: { "content-type": up.headers.get("content-type") || "application/json", "cache-control": "no-store" } });\n` +
+  `}\n`;
 
 const worker =
   `// AUTOGENERADO por studio/build.mjs. No editar a mano.\n` +
   `import { ephemeral } from "../worker-ephemeral.mjs";\n\n` +
   `${toolConstants}\n\n` +
   `${moduleConstants}\n\n` +
+  `${cfProxyFn}\n\n` +
   `const LLMS_TXT = ${JSON.stringify(llmsTxt)};\n` +
   `const LANDING_HTML = ${JSON.stringify(landing)};\n\n` +
   `const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };\n` +

@@ -20,6 +20,8 @@ const store = {
 const tools = makeConsoleTools({
   fetchImpl: (url, init) => fetch(url, init),
   platformOrigin: location.origin,
+  // el proxy del worker mapea /console/cf/* -> https://api.cloudflare.com/*
+  apiBase: location.origin + "/console/cf",
   store,
 });
 

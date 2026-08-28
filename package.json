@@ -75,6 +75,7 @@
     "test:web": "node test-web.mjs",
     "test:bundle": "node smoke-bundle.mjs",
     "test:attest": "node build-gateway.mjs && node t-attest-offline.mjs","test:sqlite":"node test-sqlite.mjs",
+      "test:auth":"node test-auth.mjs",
     "check:bundle": "node scripts/check-bundle-fresh.mjs",
     "check:docs-site": "node scripts/check-docs-site-fresh.mjs",
     "check:publishers": "node scripts/check-publishers-fresh.mjs"

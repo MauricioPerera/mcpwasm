@@ -111,10 +111,14 @@ const COOKIE = "mcpwasm_preview_sid";
 const SESSION_TTL = 3600 + 120; // 60 min de vida + margen (KV expirationTtl)
 const LIMITS = { maxFiles: 20, maxTotalBytes: 8 * 1024 * 1024, maxName: 128 };
 
-function getSid(request) {
+function getSid(request, url, bodySid) {
   const cookie = request.headers.get("Cookie") || "";
   const m = cookie.match(new RegExp(`${COOKIE}=([A-Za-z0-9-]+)`));
-  return m ? m[1] : null;
+  if (m) return m[1];
+  // agentes (runtime local / gateway): sin cookie jar — sid explicito
+  if (url && url.searchParams.get("sid")) return url.searchParams.get("sid");
+  if (bodySid) return bodySid;
+  return null;
 }
 
 function sessionCookie(sid) {
@@ -146,7 +150,7 @@ function parseBody(body) {
     if (total > LIMITS.maxTotalBytes) throw new Error("total de archivos excede el limite");
   }
   if (!files.some((f) => f.name === parsed.main)) throw new Error("main no esta en files");
-  return { files, main: parsed.main, compat: parsed.compatibility_date, flags: parsed.compatibility_flags };
+  return { files, main: parsed.main, compat: parsed.compatibility_date, flags: parsed.compatibility_flags, sid: typeof parsed.sid === "string" ? parsed.sid : null };
 }
 
 function json(data, status = 200, extraHeaders = {}) {
@@ -174,13 +178,18 @@ async function mainHandler(request, env) {
   if (route !== "/preview" && !route.startsWith("/preview/")) {
     return json({ error: "ruta desconocida" }, 404);
   }
+  // POST /preview/discard: descarte via POST (fetchOrigin del sandbox solo permite GET|POST)
+  if (request.method === "POST" && route === "/preview/discard") {
+    return handleDelete(request, env);
+  }
 
-  // GET /preview: estado de la sesion (sin crear nada).
+  // GET /preview: estado de la sesion (sin crear nada). sid por cookie o ?sid=
   if (request.method === "GET") {
-    const sid = getSid(request);
+    const sid = getSid(request, url);
     const session = await loadSession(env, sid);
     if (!session) return json({ error: "sin sesion de preview" }, 404);
     return json({
+      sid,
       accountName: session.accountName,
       scriptName: session.scriptName,
       previewUrl: session.previewUrl,
@@ -200,7 +209,7 @@ async function mainHandler(request, env) {
     return json({ error: e.message }, 400);
   }
 
-  let sid = getSid(request);
+  let sid = getSid(request, url, spec.sid);
   let session = await loadSession(env, sid);
   const fresh = session && Date.parse(session.expiresAt) > Date.now() + 5 * 60 * 1000;
 
@@ -236,6 +245,7 @@ async function mainHandler(request, env) {
     ? `https://${scriptName}.${session.subdomain}.workers.dev`
     : null;
   const out = {
+    sid,
     accountName: session.accountName,
     scriptName,
     previewUrl,
@@ -252,7 +262,7 @@ async function mainHandler(request, env) {
 }
 
 async function handleDelete(request, env) {
-  const sid = getSid(request);
+  const sid = getSid(request, new URL(request.url));
   const session = await loadSession(env, sid);
   if (!session) return json({ error: "sin sesion de preview" }, 404);
   const base = env.CF_API_BASE || API_DEFAULT;
@@ -260,6 +270,9 @@ async function handleDelete(request, env) {
   await env.SESSIONS.delete(sessionKey(sid));
   return json({ deleted: ok, scriptName: session.scriptName });
 }
+
+// Handlers exportados para la plataforma (llmstxt-studio) que los monta en su router.
+export const ephemeral = { handlePreview: mainHandler, handleStatus: mainHandler, handleDelete };
 
 export default {
   async fetch(request, env) {
@@ -299,8 +312,13 @@ async function requestChallenge(base) {
 
 async function createTemporaryAccount(base) {
   const ch = await requestChallenge(base);
-  const seed = Uint8Array.from(atob(ch.seed.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+  const seedB64 = ch.seed.replace(/-/g, "+").replace(/_/g, "/");
+  // base64url suele venir sin padding: atob lo exige — reponerlo
+  const padded = seedB64 + "=".repeat((4 - (seedB64.length % 4)) % 4);
+  const seed = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0));
+  const t0 = Date.now();
   const checkpoints = solvePow(seed, ch.k, ch.g);
+  const powMs = Date.now() - t0;
   const res = await fetch(`${base}/provisioning/previews`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -311,7 +329,10 @@ async function createTemporaryAccount(base) {
       solution: { checkpoints: encodeCheckpoints(checkpoints) },
     }),
   });
-  if (!res.ok) throw new Error(`creacion de cuenta temporal HTTP ${res.status}`);
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`creacion de cuenta temporal HTTP ${res.status} (pow=${powMs}ms k=${ch.k} g=${ch.g} seedLen=${seed.length}) :: ${detail.slice(0, 300)}`);
+  }
   const { result } = await res.json();
   const account = result?.account, claim = result?.claim;
   if (!account?.id || !account?.apiToken || !account?.expiresAt || !claim?.url) {

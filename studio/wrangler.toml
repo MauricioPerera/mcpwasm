@@ -1,0 +1,8 @@
+name = "llmstxt-studio"
+main = "worker.mjs"
+compatibility_date = "2026-06-01"
+account_id = "091122c40cc6f8d0d421cbc90e2caca8"
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "a6a293c5e944474796598bb92814dc19"

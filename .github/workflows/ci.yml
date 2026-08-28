@@ -43,6 +43,8 @@ jobs:
         run: npm run test:studio
       - name: Run llmstxt-studio e2e (local runtime + sandbox tool + fake CF)
         run: npm run test:studio-e2e
+      - name: Run llmstxt-shop e-commerce suite (hermetic, Miniflare + D1)
+        run: npm run test:shop
       - name: Subpath publishers (project sites, both runtimes)
         run: npm run subpath
       - name: Web runtime smoke (same code the browser runs)

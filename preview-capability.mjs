@@ -148,8 +148,37 @@ async function deleteScript(base, apiToken, accountId, name) {
   return res.ok || res.status === 404;
 }
 
+// Registro en la plataforma (best effort): el deploy se anuncia en el KV del
+// worker para que el claim comercial funcione. SOLO metadatos — el apiToken
+// nunca sale del store local (el worker no puede redeployar ni borrar el
+// script: esas operaciones siguen siendo del runtime).
+async function registerRemote(origin, meta) {
+  if (!origin) return false;
+  try {
+    const res = await fetch(`${origin}/preview/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(meta),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function fetchRemoteStatus(origin, sid) {
+  if (!origin) return null;
+  try {
+    const res = await fetch(`${origin}/preview?sid=${encodeURIComponent(sid)}`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 // op "create": crea (o reusa por sid) cuenta temporal y despliega.
-async function opCreate(args) {
+async function opCreate(args, origin) {
   const base = process.env.CF_API_BASE || API_DEFAULT;
   const files = args?.files;
   if (!Array.isArray(files) || files.length === 0 || files.length > LIMITS.maxFiles) {
@@ -204,21 +233,37 @@ async function opCreate(args) {
   // el apiToken queda SOLO en el store local (0600); nunca cruza al sandbox/LLM
   store[sid] = { ...session, scriptName, previewUrl, savedAt: new Date().toISOString() };
   await writeStore(store);
+  // anunciamos el deploy a la plataforma (metadatos, sin token) para el claim
+  out.registered = await registerRemote(origin, {
+    sid, accountName: session.accountName, scriptName, previewUrl,
+    claimUrl: session.claimUrl, expiresAt: session.expiresAt, claimExpiresAt: session.claimExpiresAt,
+  });
   return out;
 }
 
-async function opStatus(args) {
+async function opStatus(args, origin) {
   const store = await readStore();
   const session = args?.sid ? store[args.sid] : null;
   if (!session) return { ok: false, error: "sesion no encontrada (puede haber expirado)" };
-  return {
+  const out = {
     ok: true, sid: args.sid, accountName: session.accountName, scriptName: session.scriptName,
     previewUrl: session.previewUrl, claimUrl: session.claimUrl, expiresAt: session.expiresAt,
     claimExpiresAt: session.claimExpiresAt, msToExpiry: Date.parse(session.expiresAt) - Date.now(),
   };
+  // el claim vive en la plataforma: si esta registrada, mezclamos su estado
+  const remote = await fetchRemoteStatus(origin, args.sid);
+  if (remote && remote.sid) {
+    out.claimed = remote.claimed ?? null;
+    out.claim_pending = remote.claim_pending ?? null;
+    if (remote.claimed && Date.parse(remote.expiresAt) > Date.parse(session.expiresAt)) {
+      out.expiresAt = remote.expiresAt; // el claim extendio el TTL en la plataforma
+      out.msToExpiry = Date.parse(remote.expiresAt) - Date.now();
+    }
+  }
+  return out;
 }
 
-async function opDiscard(args) {
+async function opDiscard(args, origin) {
   const store = await readStore();
   const session = args?.sid ? store[args.sid] : null;
   if (!session) return { ok: false, error: "sesion no encontrada (puede haber expirado)" };
@@ -226,10 +271,15 @@ async function opDiscard(args) {
   const deleted = await deleteScript(base, session.apiToken, session.accountId, session.scriptName);
   delete store[args.sid];
   await writeStore(store);
+  // la plataforma borra su registro (best effort; sin token del lado del worker)
+  if (origin) {
+    try { await fetch(`${origin}/preview/discard?sid=${encodeURIComponent(args.sid)}`, { method: "POST", body: "{}" }); } catch {}
+  }
   return { ok: true, deleted, scriptName: session.scriptName };
 }
 
-export function makePreviewCapability() {
+export function makePreviewCapability(opts = {}) {
+  const origin = opts.origin || null;
   return async function provisionPreviewCapability(argsJson) {
     let args = {};
     try { args = JSON.parse(argsJson); } catch { return { ok: false, error: "args no es JSON valido" }; }
@@ -237,9 +287,9 @@ export function makePreviewCapability() {
     const params = Array.isArray(args) ? args[0] : args;
     const op = params?.op;
     try {
-      if (op === "create") return await opCreate(params);
-      if (op === "status") return await opStatus(params);
-      if (op === "discard") return await opDiscard(params);
+      if (op === "create") return await opCreate(params, origin);
+      if (op === "status") return await opStatus(params, origin);
+      if (op === "discard") return await opDiscard(params, origin);
       return { ok: false, error: "op desconocida (create|status|discard)" };
     } catch (e) {
       return { ok: false, error: e?.message ?? String(e) };

@@ -112,6 +112,7 @@ const worker =
   `      if (productMatch) return await handleProduct(decodeURIComponent(productMatch[1]), env);\n` +
   `      if (path === "/api/orders" && request.method === "POST") return await handleCreateOrder(request, env);\n` +
   `      if (path === "/api/orders" && request.method === "GET") return await handleListOrders(request, env);
+      if (path === "/api/licenses" && request.method === "GET") return await handleListLicenses(request, env);
       const payPageMatch = path.match(/^\\/pay\\/(\\d+)$/);
       if (payPageMatch) return await handlePayPage(request, env, Number(payPageMatch[1]), url.searchParams.get("pt") || "");
       const payApiMatch = path.match(/^\\/api\\/pay\\/(\\d+)$/);
@@ -219,6 +220,18 @@ const worker =
   `  const limit = Number.isFinite(limitRaw) && limitRaw >= 1 && limitRaw <= 200 ? Math.floor(limitRaw) : 50;\n` +
   `  const { results } = await env.DB.prepare("SELECT order_id, sku, qty, email, total, status, client_order_id, created_at FROM orders ORDER BY order_id DESC LIMIT ?").bind(limit).all();\n` +
   `  return json({ orders: results, count: results.length });\n` +
+  `}\n\n` +
+  `async function handleListLicenses(request, env) {\n` +
+  `  const auth = request.headers.get("Authorization") || "";\n` +
+  `  const expected = "Bearer " + (env.ADMIN_TOKEN || "");\n` +
+  `  if (!env.ADMIN_TOKEN || auth !== expected) {\n` +
+  `    return json({ error: "unauthorized: merchant token required" }, 401);\n` +
+  `  }\n` +
+  `  const { results } = await env.DB.prepare("SELECT token, email, plan, price, uses_total, uses_left, status, created_at, expires_at FROM licenses ORDER BY created_at DESC LIMIT 200").all();\n` +
+  `  const active = results.filter((l) => l.status === "active");\n` +
+  `  const revenue = active.reduce((s, l) => s + l.price, 0);\n` +
+  `  const usesLeft = active.reduce((s, l) => s + l.uses_left, 0);\n` +
+  `  return json({ licenses: results, count: results.length, active: active.length, revenue, uses_left: usesLeft });\n` +
   `}\n\n` +
   `const paylinkPage = ${paylinkPage.toString()};\n\n` +
   `const handlePayPage = ${handlePayPage.toString()};\n\n` +

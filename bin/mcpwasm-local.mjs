@@ -939,7 +939,7 @@ async function start() {
   // ni al LLM. La herramienta del publicador orquesta via host.provisionPreview.
   if (previewsEnabled) {
     try {
-      const previewCap = makePreviewCapability();
+      const previewCap = makePreviewCapability({ origin });
       for (const s of skills) {
         const k = s.scope || "";
         scopedCaps[k] = { ...(scopedCaps[k] || {}), provisionPreview: previewCap };

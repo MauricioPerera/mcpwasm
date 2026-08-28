@@ -192,6 +192,10 @@ async function mainHandler(request, env) {
   if (request.method === "POST" && route === "/preview/claim") {
     return handleClaimStart(request, env);
   }
+  // POST /preview/register: anuncio de deploy desde el runtime local (metadatos)
+  if (request.method === "POST" && route === "/preview/register") {
+    return handleRegister(request, env);
+  }
 
   // GET /preview: estado de la sesion (sin crear nada). sid por cookie o ?sid=
   if (request.method === "GET") {
@@ -277,14 +281,40 @@ async function handleDelete(request, env) {
   const sid = getSid(request, new URL(request.url));
   const session = await loadSession(env, sid);
   if (!session) return json({ error: "sin sesion de preview" }, 404);
+  // sesion registrada por un runtime local (sin token): la credential vive en
+  // el runtime — aqui solo borramos el registro de la plataforma.
+  if (!session.apiToken) {
+    await env.SESSIONS.delete(sessionKey(sid));
+    return json({ deleted: true, scriptName: session.scriptName, registered_only: true });
+  }
   const base = env.CF_API_BASE || API_DEFAULT;
   const ok = await deleteScript(base, session.apiToken, session.accountId, session.scriptName);
   await env.SESSIONS.delete(sessionKey(sid));
   return json({ deleted: ok, scriptName: session.scriptName });
 }
 
+// POST /preview/register: el runtime local anuncia el deploy (SOLO metadatos,
+// sin apiToken) para que exista del lado de la plataforma y sea reclamable.
+async function handleRegister(request, env) {
+  let body = {};
+  try { body = await request.json(); } catch { body = {}; }
+  const sid = body && typeof body.sid === "string" ? body.sid : "";
+  if (!/^[0-9a-fA-F-]{8,64}$/.test(sid)) return json({ ok: false, error: "sid requerido" }, 400);
+  const existing = await loadSession(env, sid);
+  // si la sesion ya existe (creada server-side, con token) no la pisa el registro
+  if (existing) return json({ ok: true, already: true, registered: true });
+  const meta = {};
+  for (const k of ["accountName", "scriptName", "previewUrl", "claimUrl", "expiresAt", "claimExpiresAt"]) {
+    if (typeof body[k] === "string") meta[k] = body[k];
+  }
+  if (!meta.expiresAt) return json({ ok: false, error: "expiresAt requerido" }, 400);
+  const session = { ...meta, registered: true, noToken: true, createdAt: new Date().toISOString() };
+  await env.SESSIONS.put(sessionKey(sid), JSON.stringify(session), { expirationTtl: SESSION_TTL });
+  return json({ ok: true, registered: true, sid });
+}
+
 // Handlers exportados para la plataforma (llmstxt-studio) que los monta en su router.
-export const ephemeral = { handlePreview: mainHandler, handleStatus: mainHandler, handleDelete, handleClaimStart, handleClaimPage, handleClaimConfirm };
+export const ephemeral = { handlePreview: mainHandler, handleStatus: mainHandler, handleDelete, handleClaimStart, handleClaimPage, handleClaimConfirm, handleRegister };
 
 // --- claim comercial (paylink simulado -> sesion reclamada con TTL extendido) --
 

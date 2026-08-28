@@ -36,7 +36,7 @@ try {
   });
   console.log("[live] runtime listo contra " + ORIGIN);
   check(errTxt.includes("previews: capability inyectada"), "capability inyectada");
-  check(errTxt.includes("3 skill(s) verificadas"), "3 skills verificadas contra el ORIGIN REAL (hashes remotos)");
+  check(errTxt.includes("4 skill(s) verificadas"), "4 skills verificadas contra el ORIGIN REAL (hashes remotos)");
 
   await rpc(proc, 1, "initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "studio-live", version: "1.0.0" } });
 

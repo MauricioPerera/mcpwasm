@@ -163,6 +163,13 @@ async function main() {
   const noEmail = await runTool(mf, "buy_creator_access", {});
   check(noEmail.ok === false && noEmail.error.includes("email"), "buy_creator_access sin email -> error claro");
 
+  console.log("[9] panel merchant: licencias vendidas");
+  const licNoAuth = await call(mf, "/api/licenses");
+  check(licNoAuth.status === 401, "GET /api/licenses sin token -> 401");
+  const licList = await call(mf, "/api/licenses", { headers: { Authorization: "Bearer test-admin" } });
+  const licRow = licList.body?.licenses?.find((l) => l.token === licToken);
+  check(licList.status === 200 && licRow && licRow.status === "active" && licRow.uses_left === 23 && licList.body.revenue === 19, "panel: licencia activa con usos y revenue ($19)");
+
   const ok = CHECKS.every(Boolean);
   console.log(`TEST SHOP: ${ok ? "PASS" : "FALLO"} (${CHECKS.filter(Boolean).length}/${CHECKS.length})`);
   await mf.dispose();

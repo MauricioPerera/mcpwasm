@@ -375,13 +375,33 @@ function makeFetchImpl(env) {
 //      (manjeta bordes multi-byte UTF-8 entre chunks).
 // Lanza SizeLimitError si excede; el caller decide la semantica de rechazo por tipo.
 async function fetchText(url, timeoutMs, maxBytes, fetchImpl) {
-  // Cache-bust ?_gw=<ts>: bypass del edge cache de CF para origins externos por workers.dev
-  // (sin Cache-Control CF cachearia .txt/.js y serviria 404 stale). sha256 es sobre el body
-  // => el bust no afecta la verificacion. Cache API keys usan la URL LIMPIA (sin bust).
-  const sep = url.includes("?") ? "&" : "?";
-  const resp = await fetchImpl(url + sep + "_gw=" + Date.now(), {
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  // Redirects controlados: mismo ORIGIN permitido (www->apex, /path/ de proyecto),
+  // cross-origin PROHIBIDO. Sin esto, un origin hostil podia SUSTITUIR el origin:
+  // el consumidor eligio X, X redirige el descubrimiento a Y, y el gateway cargaria
+  // las skills de Y (los hashes casarian porque el llms.txt redirigido tambien
+  // vendria de Y). El cache-bust solo aplica al PRIMER request (el Location del
+  // redirect es autoritativo).
+  let current = url;
+  let resp = null;
+  let hops = 0;
+  for (;;) {
+    const sep = current.includes("?") ? "&" : "?";
+    const target = hops === 0 ? current + sep + "_gw=" + Date.now() : current;
+    resp = await fetchImpl(target, {
+      signal: AbortSignal.timeout(timeoutMs),
+      redirect: "manual",
+    });
+    if (resp.status < 300 || resp.status >= 400 || hops >= 5) break;
+    const loc = resp.headers.get("location");
+    if (!loc) break;
+    const next = new URL(loc, current);
+    if (next.origin !== new URL(current).origin) {
+      throw new Error("redirect cross-origin no permitido en el gateway: " + next.origin);
+    }
+    current = next.href;
+    hops++;
+    if (hops >= 5) throw new Error("demasiados redirects (posible loop): " + url);
+  }
   // (a) Content-Length precheck: rechazo inmediato sin leer el body.
   const cl = resp.headers.get("content-length");
   if (cl !== null) {

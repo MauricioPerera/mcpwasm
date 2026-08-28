@@ -460,3 +460,55 @@ Residual risks worth knowing (mitigable, documented):
   `--auth`, which keeps the token in a header)
 - the device-flow verification URL embeds the device code: sharing that URL
   authorizes the runtime — single-use + short expiry cap the damage
+
+## 15. Ephemeral Cloudflare accounts: deploys that die in an hour
+
+Cloudflare's temporary preview accounts (what `wrangler deploy --temporary`
+uses, and the workers.new playground behind it) are **pure HTTP with no
+login** — verified end-to-end against the live API
+(`scripts/spike-ephemeral-cf.mjs`, source of truth: wrangler 4.127.1):
+
+1. `POST /client/v4/provisioning/previews/challenge` with `{}` — no auth —
+   returns a proof-of-work challenge (`k=1000` checkpoints × `g=2000` sha256
+   steps ≈ 2M hashes ≈ 1.9 s of CPU: the anti-abuse is CPU, not identity)
+2. `POST /client/v4/provisioning/previews` with the solved checkpoints and
+   `acceptTermsOfService: "yes"` → returns `account {id, name, apiToken,
+   expiresAt}` **and** `claim {url, expiresAt}` — the API token for the
+   throwaway account rides in the creation response; nothing was ever logged in
+3. Deploy is the standard Workers module upload (`PUT
+   /accounts/{id}/workers/scripts/{name}`, multipart; the module part's
+   filename must equal `main_module`), then enable workers.dev (`POST
+   .../scripts/{name}/subdomain {"enabled":true}`) → a live public URL
+4. Both `expiresAt` values are server-set: 60 minutes in the spike. The
+   **claim URL** is the human-in-the-loop: open it while it lives, log in
+   with a real Cloudflare account, and the preview migrates to it
+
+The browser mapping (why this fits mcpwasm): a tool's `fetchOrigin` is
+scoped to the publisher origin, and the challenge/creation flow needs **no
+Cloudflare identity at all** — so the publisher hosts a thin proxy on their
+origin that runs steps 1–2 server-side, keeps the `apiToken` keyed to the
+browser session (never in the LLM context — the structural rule of §14),
+and returns only what the model may see: the preview URL and the claim URL.
+The tool in the browser is one intention — `deploy_preview(code)` →
+`{previewUrl, claimUrl, expiresAt}`. One hour later everything is gone
+unless a human claimed it: the TTL is the blast radius, the claim is the
+commitment, and your real account — on your computer, under your local
+runtime — is never touched from the browser. The same trust mirror as §11:
+strong credentials where the human executes, disposable identity where an
+agent explores. Verified end-to-end: a fresh temporary account hosted the
+**complete mcpwasm gateway** (220 KB bundle + QuickJS-WASM + minimemory,
+`CompiledWasm` module rules, `nodejs_compat`, no service bindings) —
+`initialize` 200, `tools/list` returned the demo site's real tools
+(sum_numbers, server_time, get_skill_guide) with hash verification, and
+`tools/call sum_numbers {a:2,b:40}` returned **42** from the QuickJS sandbox
+running inside the throwaway account
+(`scripts/spike-ephemeral-gateway.mjs`). The sandbox fits the free-tier CPU
+budget; the TTL makes it a self-cleaning preview environment. The proxy
+itself ships as `worker-ephemeral.mjs` (`POST /preview` create-or-reuse with
+httpOnly cookie sessions in KV, `GET` status, `DELETE` teardown): the
+ephemeral apiToken lives only in the worker's KV — responses carry
+`previewUrl`, `claimUrl` and expiry, never the token. Verified hermetically
+in `test-ephemeral.mjs` (23 checks: PoW correctness against node:crypto,
+session reuse, multi-tenant isolation, no-secret-in-response assertions).
+Production needs Workers Paid or extended CPU — the real challenge is
+k=1000 × g=2000 (~2M sha256 ≈ 2 s; tests use k=2/g=3).

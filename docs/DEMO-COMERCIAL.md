@@ -93,6 +93,16 @@ muestra `claimed` con tu email.
 
 ## Notas técnicas
 
+- **La consola en el navegador** (https://llmstxt-studio.rckflr.workers.dev/console):
+  Cloudflare rechaza la creación de cuentas temporales cuando la petición viene
+  de un Worker de CF (403 code 1017, verificado en producción). El deploy desde
+  el navegador pasa por un relay FUERA de Cloudflare (Deno Deploy gratis,
+  `relay/deno/main.ts`, reglas whitelist testadas: contrato `relay-rules`).
+  El apiToken de la cuenta temporal vive SOLO en el localStorage del tab.
+- **Verificación automática**: `node scripts/live-browser-e2e.mjs` abre la
+  consola en un Chromium real, pulsa el botón demo y verifica el deploy
+  completo desde el tab (PoW en el navegador, iframe, preview 200) — 8/8 PASS.
+  `node scripts/live-claim-e2e.mjs` ejercita el claim de extremo a extremo (11/11).
 - Pagos simulados: el botón del paylink confirma en el servidor sin cobrar.
   Al conectar Stripe, este mismo flujo pasa a cobrar de verdad — el playbook
   no cambia.

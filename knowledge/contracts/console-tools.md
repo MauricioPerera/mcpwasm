@@ -14,7 +14,7 @@ budget:
   lines_max: 140
   params_max: 1
 tests: "tests/test-console-tools.mjs"
-tests_sha256: "bd0b40368a01d64177e0722b2192498e31f56350bc6b7cdc7696ed3ba8db1486"
+tests_sha256: "dc697e07d2c80a438a56f6143ab4881d7b0d9dd91b62e2132bf10befcf032efa"
 touch_only: ['web/console-tools.mjs']
 deps_allowed: ['web/deploy-preview-web.mjs']
 forbids: ['subprocess', 'fs-write']

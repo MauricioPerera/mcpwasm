@@ -24,7 +24,7 @@ function jsonRes(status, obj) {
 function makeStore(initial) {
   const mem = new Map(Object.entries(initial || {}));
   return {
-    get: (sid) => (sid in mem ? mem.get(sid) : null),
+    get: (sid) => (mem.has(sid) ? mem.get(sid) : null),
     set: (sid, session) => { mem.set(sid, session); },
     remove: (sid) => { mem.delete(sid); },
     keys: () => [...mem.keys()],

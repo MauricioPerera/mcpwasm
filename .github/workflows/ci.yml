@@ -37,6 +37,8 @@ jobs:
         run: npm run test:auth
       - name: Run security suite (redirect scope, hostile origin)
         run: npm run test:security
+      - name: Run ephemeral preview proxy suite (hermetic, Miniflare)
+        run: npm run test:ephemeral
       - name: Subpath publishers (project sites, both runtimes)
         run: npm run subpath
       - name: Web runtime smoke (same code the browser runs)

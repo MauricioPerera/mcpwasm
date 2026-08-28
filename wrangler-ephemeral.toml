@@ -1,0 +1,27 @@
+# wrangler-ephemeral.toml — Proxy de previews en cuentas temporales de Cloudflare.
+#
+# Despliegue (requiere Workers Paid o plan con CPU extendida: el PoW de creacion
+# de cuenta puede costar ~2M hashes sha256 en el primer deploy de cada sesion):
+#   wrangler kv namespace create PREVIEWS
+#   # pegar el id devuelto en [[kv_namespaces]].id
+#   wrangler deploy -c wrangler-ephemeral.toml
+#
+# La tool del navegador llama fetchOrigin("/preview", {method:"POST", body}) a
+# este worker (mismo origin del publicador -> scope de fetchOrigin satisfecho).
+# El apiToken de la cuenta temporal vive SOLO en KV; ninguna respuesta lo
+# contiene (regla estructural: credenciales nunca en el contexto del LLM).
+
+name = "mcpwasm-ephemeral-proxy"
+main = "worker-ephemeral.mjs"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Prefijo del nombre de script desplegado en cada cuenta temporal.
+[vars]
+SCRIPT_PREFIX = "mcpwasm-preview-"
+# CF_API_BASE es opcional (default https://api.cloudflare.com/client/v4);
+# solo se define en tests (test-ephemeral.mjs usa un fake via outboundService).
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "REEMPLAZAR_CON_ID_DE_TU_NAMESPACE" # wrangler kv namespace create PREVIEWS

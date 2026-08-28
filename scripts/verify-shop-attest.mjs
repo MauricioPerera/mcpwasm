@@ -37,7 +37,7 @@ const names = (await res.json()).result?.tools?.map((t) => t.name) ?? [];
 const verdict = res.headers.get("x-gw-attestations");
 console.log("gateway enforcing -> X-Gw-Attestations:", verdict, "| tools:", names.join(", ") || "(ninguna)");
 
-const ok = /4attested/.test(verdict || "") && names.includes("search_catalog") && names.includes("create_order");
+const ok = /7attested/.test(verdict || "") && names.includes("search_catalog") && names.includes("create_order") && names.includes("create_product");
 console.log(ok ? "VERIFY SHOP ATTESTATIONS: PASS" : "VERIFY SHOP ATTESTATIONS: FALLO");
 await mf.dispose();
 process.exit(ok ? 0 : 1);

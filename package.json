@@ -84,7 +84,9 @@
     "check:docs-site": "node scripts/check-docs-site-fresh.mjs",
     "check:publishers": "node scripts/check-publishers-fresh.mjs",
     "test:studio": "node test-studio.mjs",
-    "test:studio-e2e": "node test-studio-e2e.mjs"
+    "test:studio-e2e": "node test-studio-e2e.mjs",
+    "test:shop": "node test-shop.mjs",
+    "shop:live-e2e": "node scripts/live-shop-e2e.mjs"
   },
   "dependencies": {
     "@jitl/quickjs-wasmfile-release-asyncify": "^0.32.0",

@@ -1,0 +1,10 @@
+[
+  { "sku": "mcpwasm-stickers", "name": "mcpwasm sticker pack", "description": "Diez vinilos del runtime MCP estatico: el wasm pensante, el sha256 verificador y la linea executable-skill del llms.txt. Resistentes a laptop y termo.", "category": "merch", "price": 6.0, "stock": 120 },
+  { "sku": "llmstxt-poster", "name": "llms.txt poster A2", "description": "Poster A2 con el manifiesto de skills ejecutables anotado a mano: discovery, hashes, attestations y el flujo del sandbox. Papel mate 250g.", "category": "merch", "price": 18.0, "stock": 45 },
+  { "sku": "wasm-mug", "name": "QuickJS mug", "description": "Taza 350ml con el logo del sandbox. El interruptDeadline te avisa cuando tu cafe se paso de tiempo.", "category": "merch", "price": 14.0, "stock": 60 },
+  { "sku": "byoa-tee", "name": "BYOA tee", "description": "Remera algodon organico con el diagrama SaaS-cerrado vs BYOA-abierto en la espalda. Talles S-XXL.", "category": "merch", "price": 25.0, "stock": 38 },
+  { "sku": "agent-keycaps", "name": "Agent keycaps", "description": "Set de 4 keycaps PBT: MCP, WASM, D1 y KV. Para el teclado del que orquesta agentes a diario.", "category": "hardware", "price": 32.0, "stock": 22 },
+  { "sku": "ephemeral-clock", "name": "Ephemeral desk clock", "description": "Reloj de escritorio que empieza a contar 60:00 al tocarlo, como las cuentas temporales de Cloudflare. Cuando llega a cero, suena una vez.", "category": "hardware", "price": 48.0, "stock": 8 },
+  { "sku": "d1-coaster", "name": "D1 coasters (x4)", "description": "Posavasos de corcho con el esquema de la tabla orders grabado. Porque las transacciones tambien se ponen en la mesa.", "category": "merch", "price": 12.0, "stock": 90 },
+  { "sku": "static-sshirt", "name": "Static-first hoodie", "description": "Buzon gris chirris: 'mis skills son archivos y mis archivos tienen hash'. Capucha reforzada, bolsillo interno con bolsillo.", "category": "merch", "price": 55.0, "stock": 15 }
+]

@@ -1,0 +1,9 @@
+name = "llmstxt-shop"
+main = "worker.mjs"
+compatibility_date = "2026-06-01"
+account_id = "091122c40cc6f8d0d421cbc90e2caca8"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "llmstxt-shop-db"
+database_id = "208940ae-f124-43f2-994d-e0d86f3c403a"

@@ -435,3 +435,28 @@ compute for public tools (CDN only), no accounts for public discovery, and
 with `--auth`, no OAuth knowledge on the consumer's side (one URL + one
 click). The publisher's marginal cost per tool call is a CDN line; the
 sandbox runs on the machine of whoever asked for the execution.
+
+## 14. Security notes (threat model, verified)
+
+Four hostile parties, four sets of controls — each verified empirically, not
+by assertion:
+
+| Hostile party | Vector | Control (verified) |
+|---|---|---|
+| **Publisher** (malicious tools) | hostile `tool.js` | QuickJS sandbox: no imports/DOM/Node, 64 MB / ~2 s / 20k gas; hash in `llms.txt` + `index.json` cross-check + `--lock` pin-on-first-use (anti rug-pull) + optional Sigstore attestations |
+| **Publisher** (scope escape) | `../` traversal, absolute paths, full URLs, protocol-relative URLs in tool args | `isUnderBase` + origin check reject all four; a legitimate relative path passes (`test:security`) |
+| **Publisher** (exfiltration via redirects) | hostile origin 30x-redirects a tool's fetch cross-origin — undici does **not** strip `Authorization` on cross-origin redirects and 307/308 also forwards the body | redirects followed **manually**, every hop re-validated with the same scope rules; 301/302/303 degrade to GET without body; a third-party capture server receives **zero** requests (`test:security` — this was a real finding, fixed in the runtime) |
+| **Consumer** (abusing your API) | replayed tokens, scope creep | token per request validated server-side (hash, expiry, scope, rate limit); revocation is fail-closed; every `tools/call` is one auditable request |
+| **Network** | interception | HTTPS; redirect hops re-validated |
+| **The LLM itself** (prompt injection) | malicious tool *descriptions* or API *responses* steering the model | structural: credentials never enter the LLM context (config/runtime/server only); the sandbox cannot be injected (fixed code, hash-pinned); scope what tools *return* server-side — the model is the leakiest channel, so it should never hold a secret |
+
+Residual risks worth knowing (mitigable, documented):
+
+- `~/.mcpwasm/credentials.json` is 0600 on POSIX; on Windows `chmod` is a
+  no-op — same risk class as `~/.npmrc` (user-session malware, not sandbox
+  escape)
+- token-as-origin puts the bearer in the URL path → it appears in *your*
+  server access logs (scrub them, prefer short-lived tokens, or adopt
+  `--auth`, which keeps the token in a header)
+- the device-flow verification URL embeds the device code: sharing that URL
+  authorizes the runtime — single-use + short expiry cap the damage

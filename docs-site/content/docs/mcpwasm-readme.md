@@ -1,4 +1,4 @@
-# mcpwasm — Static MCP
+# mcpwasm
 
 [![CI](https://github.com/MauricioPerera/mcpwasm/actions/workflows/ci.yml/badge.svg)](https://github.com/MauricioPerera/mcpwasm/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/%40rckflr%2Fmcpwasm)](https://www.npmjs.com/package/@rckflr/mcpwasm)

@@ -12,3 +12,7 @@ mcp-bookstore.local.json
 
 # la demo web SI versiona sus assets wasm (Pages los sirve)
 !docs/demo/minimemory_bg.wasm
+
+__pycache__/
+*.pyc
+.tmp/

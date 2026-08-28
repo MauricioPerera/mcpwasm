@@ -8,7 +8,7 @@ the git log).
 
 ## [Unreleased]
 
-## [0.9.0] — 2026-07-26
+## v0.9.0 — 2026-07-26
 
 Everything below came out of one audit of the reference implementation. The
 headline for consumers: publishers that live under a path now work, the three
@@ -169,7 +169,7 @@ longer looks like a runaway tool.
   #48. Simpler than docs-site: these builds only read `content/` from the repo,
   so no `--no-fetch` equivalent is needed for reproducibility.
 
-## [0.8.0] — 2026-07-10
+## v0.8.0 — 2026-07-10
 
 ### Added
 - **Consumer lockfile (`--lock <file>`) — pin-on-first-use for declared
@@ -189,7 +189,7 @@ longer looks like a runaway tool.
     (fail-closed). With `--serve`, entries key on the served path.
   - Without `--lock`, behavior is byte-identical to 0.7.0.
 
-## [0.7.0] — 2026-07-10
+## v0.7.0 — 2026-07-10
 
 ### Added
 - **Browser runtime (`mcpwasm-web`) — the THIRD runtime.** The same contract
@@ -212,7 +212,7 @@ longer looks like a runaway tool.
   - Memory hits keep runtime parity: `{ text, score, title, concept_id }`,
     args as `[q, k]` or `{q, k}` — same shape as local/gateway.
 
-## [0.6.0] — 2026-07-10
+## v0.6.0 — 2026-07-10
 
 ### Added
 - **Scopes: multiple projects on one origin — both runtimes.** Implements
@@ -246,7 +246,7 @@ longer looks like a runaway tool.
   (`snapshotText` ⇒ `{"": text}`); no cache flush needed.
 - No `scope` anywhere ⇒ behavior identical to 0.5.0.
 
-## [0.5.0] — 2026-07-10
+## v0.5.0 — 2026-07-10
 
 ### Added
 - **Skill recipes (SKILL.md) as MCP resources — both runtimes.** An executable
@@ -268,7 +268,7 @@ longer looks like a runaway tool.
   `MAX_SKILLMD_BYTES` (default 256 KB). `parseLlmsTxt()` skills gain
   `skillPath`/`skillSha256` (additive).
 
-## [0.4.0] — 2026-07-10
+## v0.4.0 — 2026-07-10
 
 ### Added
 - **Origin memory in the local runtime** (`bin/mcpwasm-local.mjs`): if the
@@ -314,26 +314,26 @@ longer looks like a runaway tool.
   `UV_HANDLE_CLOSING` assertion on Windows (exit 127 instead of 1); now sets
   `process.exitCode` and lets Node exit naturally.
 
-## [0.3.1] — 2026-07-09
+## v0.3.1 — 2026-07-09
 
 ### Fixed
 - `--serve` crashed on exit on Windows (exit code 127, the same libuv
   double-close race, on the graceful-shutdown path).
 
-## [0.3.0] — 2026-07-09
+## v0.3.0 — 2026-07-09
 
 ### Added
 - `--serve <dir> [--port N]`: internal static file server (127.0.0.1 only)
   over a local directory, so a cloned skills repo becomes a connectable origin
   in one step — the publisher's local development loop.
 
-## [0.2.1] — 2026-07-08
+## v0.2.1 — 2026-07-08
 
 ### Fixed
 - Gateway `serverInfo` reporting, local runtime size caps measured in bytes,
   and strict attestation date validation (analysis follow-ups).
 
-## [0.2.0] — 2026-07-08
+## v0.2.0 — 2026-07-08
 
 ### Added
 - **Local MCP runtime** (`bin/mcpwasm-local.mjs`, the `mcpwasm` bin): stdio
@@ -342,7 +342,7 @@ longer looks like a runaway tool.
   and serves `tools/list` / `tools/call` — `npx -y @rckflr/mcpwasm <origin>`,
   zero infrastructure on either side.
 
-## [0.1.0] — 2026-07-08
+## v0.1.0 — 2026-07-08
 
 ### Added
 - Initial npm release: embeddable host (`AsyncToolHost` / sync `ToolHost`),

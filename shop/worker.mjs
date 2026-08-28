@@ -10,6 +10,44 @@ const ORDER_STATUS_SKILL_MD = "---\nname: order_status\nversion: 1.0.0\nlicense:
 
 const LLMS_TXT = "# llmstxt-shop\n\n> The BYOA storefront: your agent browses the catalog, buys with your approval, and orders are idempotent — retries never duplicate. Read tools hit a live D1 catalog; create_order is a real-world effect and always asks the human first.\n\n## Skills\n\n- [search_catalog](/skills/search_catalog/SKILL.md): Search the shop catalog by text, category and/or max price. Returns products with sku, price and live stock. <!-- skill: {\"version\":\"1.0.0\",\"sha256\":\"4a7f75400ca6879f562e996a8570a578b6dabd916db8a45856eece36383246d1\",\"tool\":\"/skills/search_catalog/tool.js\",\"tool_sha256\":\"74d717454cbc86599fbe00e49eec0d7fd2c982a5a066a2bc6188d9b89ed48e39\"} -->\n- [get_product](/skills/get_product/SKILL.md): Get full details of one product by SKU (name, description, price, live stock). Returns {found:false} if unknown. <!-- skill: {\"version\":\"1.0.0\",\"sha256\":\"e133b8e26cbd5f531f074ab0683ee487a37883385598d555211ffc56eb875060\",\"tool\":\"/skills/get_product/tool.js\",\"tool_sha256\":\"4c556c51b53670c96dd033ac79a8e92539bb8c23f77eec12f75e25404823030e\"} -->\n- [create_order](/skills/create_order/SKILL.md): Create an order (atomic stock decrement). IDEMPOTENT via client_order_id: retries return the same order. 409 when unknown SKU or insufficient stock. ALWAYS confirm product, qty and email with the human first. <!-- skill: {\"version\":\"1.0.0\",\"sha256\":\"20dc4b8665e9feaf576ac5d2073ad3c3c8b4bdcb4901269908cd78462017f1e1\",\"tool\":\"/skills/create_order/tool.js\",\"tool_sha256\":\"10fbd3f7432098aa6f3313f510856a686b6e376cd0edb3afcf1589c7119c618e\"} -->\n- [order_status](/skills/order_status/SKILL.md): Look up one order by numeric id. Confirms whether a doubtful purchase actually landed before retrying. <!-- skill: {\"version\":\"1.0.0\",\"sha256\":\"541d81ffebaf49c628e7163db1a45d684fe72f0c57a4098a2c3d4b3142365a42\",\"tool\":\"/skills/order_status/tool.js\",\"tool_sha256\":\"78e95c013ce63e9decd4e37218c8fc9d955f14c0c716ce55fb81eb0f96203336\"} -->\n";
 const LANDING_HTML = "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>llmstxt-shop — the BYOA storefront</title>\n<style>body{font-family:system-ui,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem;line-height:1.55;color:#14181f;background:#fafbfc}code{background:#eef1f4;padding:.1rem .35rem;border-radius:4px;font-size:.92em}a{color:#0b62a4}h1{border-bottom:2px solid #e4e8ec;padding-bottom:.4rem}table{border-collapse:collapse;width:100%;margin:1rem 0}td,th{border:1px solid #e4e8ec;padding:.45rem .6rem;text-align:left;font-size:.95rem}th{background:#eef1f4}pre{background:#14181f;color:#d7e2ec;padding:.8rem 1rem;border-radius:8px;overflow-x:auto}footer{margin-top:2.5rem;color:#66707b;font-size:.9rem;border-top:1px solid #e4e8ec;padding-top:1rem}.pill{display:inline-block;background:#0b62a4;color:#fff;border-radius:99px;padding:.1rem .6rem;font-size:.85rem;margin-right:.4rem}</style>\n</head>\n<body>\n<h1>llmstxt-shop</h1>\n<p>The <strong>BYOA storefront</strong>: no cart UI, no checkout wizard. Your agent browses the catalog, proposes the purchase, <em>you approve</em>, and the order is real — atomic stock, idempotent retries, an <code>order_id</code> you can query forever. Built on <a href=\"https://github.com/MauricioPerera/mcpwasm\">mcpwasm</a>: static discovery with verified hashes, tools that run sandboxed on the consumer's machine.</p>\n<h2>Point your agent here</h2>\n<pre>npx -y @rckflr/mcpwasm https://llmstxt-shop.rckflr.workers.dev</pre>\n<p>...or through the gateway: <code>POST https://llmstxt-gateway.rckflr.workers.dev/mcp?origin=https%3A%2F%2Fllmstxt-shop.rckflr.workers.dev</code></p>\n<h2>Skills</h2>\n<ul>\n      <li><code>search_catalog</code> — <a href=\"/skills/search_catalog/SKILL.md\">SKILL.md</a> · <a href=\"/skills/search_catalog/tool.js\">tool.js</a></li>\n      <li><code>get_product</code> — <a href=\"/skills/get_product/SKILL.md\">SKILL.md</a> · <a href=\"/skills/get_product/tool.js\">tool.js</a></li>\n      <li><code>create_order</code> — <a href=\"/skills/create_order/SKILL.md\">SKILL.md</a> · <a href=\"/skills/create_order/tool.js\">tool.js</a></li>\n      <li><code>order_status</code> — <a href=\"/skills/order_status/SKILL.md\">SKILL.md</a> · <a href=\"/skills/order_status/tool.js\">tool.js</a></li>\n  </ul>\n<h2>Catalog (live)</h2>\n<table>\n      <tr><th>SKU</th><th>Product</th><th>Price</th><th>Stock</th></tr>\n      <tr><td><code>mcpwasm-stickers</code></td><td>mcpwasm sticker pack</td><td>$6.00</td><td>120</td></tr>\n      <tr><td><code>llmstxt-poster</code></td><td>llms.txt poster A2</td><td>$18.00</td><td>45</td></tr>\n      <tr><td><code>wasm-mug</code></td><td>QuickJS mug</td><td>$14.00</td><td>60</td></tr>\n      <tr><td><code>byoa-tee</code></td><td>BYOA tee</td><td>$25.00</td><td>38</td></tr>\n      <tr><td><code>agent-keycaps</code></td><td>Agent keycaps</td><td>$32.00</td><td>22</td></tr>\n      <tr><td><code>ephemeral-clock</code></td><td>Ephemeral desk clock</td><td>$48.00</td><td>8</td></tr>\n      <tr><td><code>d1-coaster</code></td><td>D1 coasters (x4)</td><td>$12.00</td><td>90</td></tr>\n      <tr><td><code>static-sshirt</code></td><td>Static-first hoodie</td><td>$55.00</td><td>15</td></tr>\n    </table>\n<h2>For merchants</h2>\n<p>Orders live in D1. List them with the admin token: <code>GET /api/orders?limit=50</code> + <code>Authorization: Bearer &lt;ADMIN_TOKEN&gt;</code>. And if you want a storefront of your own: your agent can build and deploy one in seconds on <a href=\"https://llmstxt-studio.rckflr.workers.dev\">llmstxt-studio</a> (throwaway account, claim to keep it).</p>\n<footer>Generated by shop/build.mjs — do not edit the worker by hand. BYOA: your agent, your model, our catalog and orders.</footer>\n</body>\n</html>";
+  const ATTESTATIONS = [
+  {
+    "origin": "https://llmstxt-shop.rckflr.workers.dev",
+    "skill": "search_catalog",
+    "tool_sha256": "74d717454cbc86599fbe00e49eec0d7fd2c982a5a066a2bc6188d9b89ed48e39",
+    "attester": "human:mauricio-3",
+    "signed_on": "2026-08-28",
+    "valid_until": "2027-08-28",
+    "signature": "nVK9fD6kMvPS5WiS1zVqe0//N7mlwWfqBJTmljQOtMDxwUuHu5bYtsmJbZDF8Nx08UMwBoZampRBbzPshwCJDQ=="
+  },
+  {
+    "origin": "https://llmstxt-shop.rckflr.workers.dev",
+    "skill": "get_product",
+    "tool_sha256": "4c556c51b53670c96dd033ac79a8e92539bb8c23f77eec12f75e25404823030e",
+    "attester": "human:mauricio-3",
+    "signed_on": "2026-08-28",
+    "valid_until": "2027-08-28",
+    "signature": "jBr5KCSX8jquKkSglGTDERVDxGKFmm/2QwEeF+5HrbWxowuluSXXOX3dVr1F130kN2/nOlOi6B05LDDBATXlDw=="
+  },
+  {
+    "origin": "https://llmstxt-shop.rckflr.workers.dev",
+    "skill": "create_order",
+    "tool_sha256": "10fbd3f7432098aa6f3313f510856a686b6e376cd0edb3afcf1589c7119c618e",
+    "attester": "human:mauricio-3",
+    "signed_on": "2026-08-28",
+    "valid_until": "2027-08-28",
+    "signature": "6Z1NUEUAMQaFQVIdx8CH3+B/BXeklNeh7vtHvDhIhrtQOHdd0nx4NfXhkOsR/sRNulNOeQU8OpbHHUk1RPjfDw=="
+  },
+  {
+    "origin": "https://llmstxt-shop.rckflr.workers.dev",
+    "skill": "order_status",
+    "tool_sha256": "78e95c013ce63e9decd4e37218c8fc9d955f14c0c716ce55fb81eb0f96203336",
+    "attester": "human:mauricio-3",
+    "signed_on": "2026-08-28",
+    "valid_until": "2027-08-28",
+    "signature": "hvww04Y9CtOJ3WCmlT+SxJaczLKIE0Mbw/OtmKZUQ23Z1Cvkt600iGC7BCZiGpseoPGR/f4gZoYwVhTw6GdwBQ=="
+  }
+];
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8" };
 const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status, headers: JSON_HEADERS });
@@ -46,6 +84,10 @@ export default {
     if (path === "/skills/create_order/SKILL.md") { return new Response(CREATE_ORDER_SKILL_MD, { headers: { "content-type": "text/markdown; charset=utf-8", "cache-control": "no-store" } }); }
     if (path === "/skills/order_status/tool.js") { return new Response(ORDER_STATUS_TOOL_JS, { headers: { "content-type": "application/javascript; charset=utf-8", "cache-control": "no-store" } }); }
     if (path === "/skills/order_status/SKILL.md") { return new Response(ORDER_STATUS_SKILL_MD, { headers: { "content-type": "text/markdown; charset=utf-8", "cache-control": "no-store" } }); }
+
+  if (path === "/.well-known/agent-skills/attestations.json") {
+      return new Response(JSON.stringify(ATTESTATIONS), { headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+    }
 
     return json({ error: "Not Found", path }, 404);
   }

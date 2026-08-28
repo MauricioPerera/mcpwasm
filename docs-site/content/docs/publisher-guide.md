@@ -512,3 +512,45 @@ in `test-ephemeral.mjs` (23 checks: PoW correctness against node:crypto,
 session reuse, multi-tenant isolation, no-secret-in-response assertions).
 Production needs Workers Paid or extended CPU — the real challenge is
 k=1000 × g=2000 (~2M sha256 ≈ 2 s; tests use k=2/g=3).
+## 16. llmstxt-studio: the codex-alternative platform (v0.11.0)
+
+The reference deployment of section 15: **https://llmstxt-studio.rckflr.workers.dev**
+— a static surface (landing + `llms.txt` v0.4) with three executable skills
+(`create_preview`, `preview_status`, `discard_preview`) that let an agent
+deploy a small web app to a throwaway Cloudflare account (TTL 60 min). The
+human gets `previewUrl` (public, works immediately) and `claimUrl` (migrates
+the app to their real account); unclaimed accounts self-destruct.
+
+**Architectural constraint (verified in production):** Cloudflare blocks
+Workers from subrequesting its own provisioning API — error
+`1017 worker_subrequest_blocked` (worker llmstxt-studio v01b807f7). A proxy
+Worker cannot provision. Also, the challenge is k=1000×g=2000 (~2M sha256):
+pure JS needs ~280s of CPU; node's native `crypto` does it in ~2s. The PoW
+therefore must run OUTSIDE Cloudflare.
+
+**The v0.11.0 answer:** the provisioning runs in the consumer's LOCAL runtime
+host as an opt-in capability:
+
+```
+npx -y @rckflr/mcpwasm https://llmstxt-studio.rckflr.workers.dev --previews
+```
+
+`--previews` injects `host.provisionPreview` into every skill scope
+(`preview-capability.mjs`). The tool calls
+`host.provisionPreview({op:"create"|"status"|"discard", ...})`; the host does
+challenge → PoW → account creation → module upload → workers.dev enablement.
+Sessions persist in `~/.mcpwasm/previews.json` (0600). The ephemeral
+`apiToken` NEVER crosses to the sandbox or the LLM — the tool sees only
+`{sid, previewUrl, claimUrl, expiresAt}`. The claim flow is the human's:
+`claimUrl` opens a Cloudflare login that migrates the app.
+
+`worker-ephemeral.mjs` (the proxy) remains as a self-hosted option for
+non-Cloudflare deployments (any VPS can call the provisioning API); it gained
+sid-by-query/body (agents have no cookie jar) and `POST /preview/discard`
+(the sandbox's fetchOrigin only allows GET|POST).
+
+Verification ladder: `npm run test:studio` (platform surface, Miniflare, 28
+checks) → `npm run test:studio-e2e` (real runtime + real sandbox tool + fake
+CF API, 12) → `node scripts/live-e2e.mjs` (real Cloudflare end to end, 9:
+real account, previewUrl HTTP 200 serving the agent's app, sid redeploy
+reuse, discard cleanup, no apiToken in any MCP response).

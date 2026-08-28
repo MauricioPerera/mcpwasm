@@ -2169,21 +2169,49 @@ var AsyncToolHost = class {
           fetchOpts.body = body;
           fetchOpts.headers = { "content-type": contentType };
         }
+        fetchOpts.redirect = "manual";
         fetchOpts.signal = AbortSignal.timeout(fetchTimeoutMs);
         const TIMEOUT_TAG = "__fetchOriginTimeout__";
         let timerId;
         const timeoutP = new Promise((_, reject) => {
           timerId = setTimeout(() => reject(new Error(TIMEOUT_TAG)), fetchTimeoutMs);
         });
+        const hopOnce = async (href) => {
+          try {
+            return await Promise.race([fetchImpl(href, fetchOpts), timeoutP]);
+          } catch (e) {
+            const msg = String(e && e.message || e);
+            if (msg === TIMEOUT_TAG || fetchOpts.signal && fetchOpts.signal.aborted || /timeout|aborted|abort/i.test(msg)) {
+              throw new Error("fetchOrigin timeout");
+            }
+            throw e;
+          }
+        };
         let resp;
         try {
-          resp = await Promise.race([fetchImpl(url.href, fetchOpts), timeoutP]);
-        } catch (e) {
-          const msg = String(e && e.message || e);
-          if (msg === TIMEOUT_TAG || fetchOpts.signal && fetchOpts.signal.aborted || /timeout|aborted|abort/i.test(msg)) {
-            throw new Error("fetchOrigin timeout");
+          resp = await hopOnce(url.href);
+          let hops = 0;
+          while (resp.status >= 300 && resp.status < 400 && hops < 5) {
+            const loc = resp.headers.get("location");
+            if (!loc) break;
+            const next = new URL(loc, url.href);
+            if (next.origin !== new URL(allowedOrigin).origin) {
+              throw new Error("redirect cross-origin no permitido (scope del sandbox): " + next.origin);
+            }
+            if (!isUnderBase(allowedOrigin, next.href)) {
+              throw new Error("redirect fuera del scope del publicador (" + basePath(allowedOrigin) + "): " + next.pathname);
+            }
+            if (resp.status === 303 || resp.status !== 307 && resp.status !== 308 && method === "POST") {
+              fetchOpts.method = "GET";
+              delete fetchOpts.body;
+              delete fetchOpts.headers;
+            }
+            hops++;
+            resp = await hopOnce(next.href);
           }
-          throw e;
+          if (hops >= 5) {
+            throw new Error("demasiados redirects (posible loop): " + url.href);
+          }
         } finally {
           clearTimeout(timerId);
         }
@@ -2511,7 +2539,22 @@ async function sha256Hex(text) {
 }
 var resolvePath = resolveFromBase;
 async function fetchText(url, maxBytes, label) {
-  const res = await fetch(url);
+  let current = url;
+  let res = null;
+  let hops = 0;
+  for (; ; ) {
+    res = await fetch(current, { redirect: "manual" });
+    if (res.status < 300 || res.status >= 400 || hops >= 5) break;
+    const loc = res.headers.get("location");
+    if (!loc) break;
+    const next = new URL(loc, current);
+    if (next.origin !== new URL(current).origin) {
+      throw new Error(`${label}: redirect cross-origin no permitido: ${next.origin}`);
+    }
+    current = next.href;
+    hops++;
+    if (hops >= 5) throw new Error(`${label}: demasiados redirects (posible loop)`);
+  }
   if (!res.ok) throw new Error(`${label}: HTTP ${res.status}`);
   const text = await res.text();
   if (new TextEncoder().encode(text).length > maxBytes) {

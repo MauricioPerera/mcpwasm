@@ -51,7 +51,26 @@ async function sha256Hex(text) {
 const resolvePath = resolveFromBase;
 
 async function fetchText(url, maxBytes, label) {
-  const res = await fetch(url);
+  // Redirects controlados: mismo ORIGIN permitido (www->apex, /path/ de
+  // proyecto), cross-origin PROHIBIDO. Los navegadores si eliminan Authorization
+  // en redirects cross-origin (spec), pero la SUSTITUCION de origin sigue siendo
+  // posible: el consumidor eligio X y no debe cargar skills servidas por Y.
+  let current = url;
+  let res = null;
+  let hops = 0;
+  for (;;) {
+    res = await fetch(current, { redirect: "manual" });
+    if (res.status < 300 || res.status >= 400 || hops >= 5) break;
+    const loc = res.headers.get("location");
+    if (!loc) break;
+    const next = new URL(loc, current);
+    if (next.origin !== new URL(current).origin) {
+      throw new Error(`${label}: redirect cross-origin no permitido: ${next.origin}`);
+    }
+    current = next.href;
+    hops++;
+    if (hops >= 5) throw new Error(`${label}: demasiados redirects (posible loop)`);
+  }
   if (!res.ok) throw new Error(`${label}: HTTP ${res.status}`);
   const text = await res.text();
   if (new TextEncoder().encode(text).length > maxBytes) {

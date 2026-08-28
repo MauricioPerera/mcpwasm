@@ -74,7 +74,7 @@
     "build:web": "node web/build.mjs",
     "test:web": "node test-web.mjs",
     "test:bundle": "node smoke-bundle.mjs",
-    "test:attest": "node build-gateway.mjs && node t-attest-offline.mjs",
+    "test:attest": "node build-gateway.mjs && node t-attest-offline.mjs","test:sqlite":"node test-sqlite.mjs",
     "check:bundle": "node scripts/check-bundle-fresh.mjs",
     "check:docs-site": "node scripts/check-docs-site-fresh.mjs",
     "check:publishers": "node scripts/check-publishers-fresh.mjs"
@@ -103,3 +103,4 @@
     "wrangler": "^4.106.0"
   }
 }
+

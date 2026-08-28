@@ -17,11 +17,21 @@ const store = {
   remove(sid) { try { localStorage.removeItem(PREFIX + sid); } catch {} },
 };
 
+// el origen del relay de provisioning (deno deploy) lo inyecta el build en
+// <meta name="console-relay">; sin relay configurado cae al proxy del worker
+// (challenge ok, create bloqueado por CF con 1017 — verificado).
+function relayBase() {
+  try {
+    const meta = document.querySelector('meta[name="console-relay"]');
+    const v = meta && meta.content && meta.content.trim();
+    return v || "";
+  } catch { return ""; }
+}
+
 const tools = makeConsoleTools({
   fetchImpl: (url, init) => fetch(url, init),
   platformOrigin: location.origin,
-  // el proxy del worker mapea /console/cf/* -> https://api.cloudflare.com/*
-  apiBase: location.origin + "/console/cf",
+  apiBase: relayBase() ? relayBase() + "/client/v4" : location.origin + "/console/cf",
   store,
 });
 

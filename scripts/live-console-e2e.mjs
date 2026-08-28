@@ -6,7 +6,10 @@
 import { deployPreviewWeb } from "../web/deploy-preview-web.mjs";
 
 const ORIGIN = process.env.CONSOLE_ORIGIN || "https://llmstxt-studio.rckflr.workers.dev";
-const API_BASE = ORIGIN + "/console/cf";
+// apiBase: el relay de provisioning (CF_RELAY del round): p.ej.
+//   https://<relay>.deno.dev/client/v4   (deno deploy)
+//   http://localhost:8000/client/v4      (relay local)
+const API_BASE = process.env.CONSOLE_API_BASE || ORIGIN + "/console/cf";
 
 const APP_FILES = [{
   name: "app.js",
@@ -45,9 +48,17 @@ if (JSON.stringify(visible).includes(out.account.apiToken)) {
   process.exit(1);
 }
 
-// verificacion del deploy: el preview responde en publico
-const res = await fetch(out.previewUrl);
-const text = await res.text();
+// verificacion del deploy: el preview responde en publico (el subdomain recien
+// creado tarda unos segundos en propagarse: reintentos con espera)
+let res = null;
+let text = "";
+for (let i = 0; i < 6; i++) {
+  await new Promise((r) => setTimeout(r, 4000));
+  res = await fetch(out.previewUrl);
+  text = await res.text();
+  if (res.status === 200) break;
+  console.log(`  preview HTTP ${res.status} — reintento ${i + 1}/6 (propagacion del subdomain)…`);
+}
 console.log(`preview HTTP: ${res.status} — contenido: ${text.includes("desplegada") || text.includes("Hola") ? "ok" : text.slice(0, 80)}`);
 
 // verificacion del registro: la plataforma conoce la sesion (GET /preview?sid=)

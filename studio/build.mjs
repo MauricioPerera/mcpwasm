@@ -80,7 +80,10 @@ for (const name of CONSOLE_MODULES) {
   consoleModuleSources[name] = src;
 }
 const consoleMain = read("console-main.mjs");
-const consoleHtml = read("console.html");
+// el origen del relay de provisioning (deno deploy) via env del build y queda
+// en <meta name="console-relay">: RELAY_ORIGIN=https://xxx.deno.dev node studio/build.mjs
+const RELAY_ORIGIN = (process.env.RELAY_ORIGIN || "").replace(/\/+$/, "");
+const consoleHtml = read("console.html").replace("__RELAY_ORIGIN__", RELAY_ORIGIN);
 
 // --- worker autogenerado ------------------------------------------------------
 const toolConstants = SKILLS.map(

@@ -110,11 +110,30 @@ async function main() {
   const statusMissing = await runTool(mf, "order_status", { order_id: 99999 });
   check(statusMissing.found === false, "order_status inexistente -> {found:false}");
 
-  console.log("[6] merchant panel con token");
+  console.log("[6] paylink: orden -> pago simulado -> paid");
+  const pOrder = await runTool(mf, "create_order", { sku: "wasm-mug", qty: 1, email: "pagador@example.com", client_order_id: "pay-1" });
+  check(pOrder.ok === true && typeof pOrder.payment_url === "string" && pOrder.payment_url.startsWith("https://llmstxt-shop"), `payment_url absoluta: ${(pOrder.payment_url || "").slice(0, 55)}...`);
+  const pt = (pOrder.payment_url || "").split("pt=")[1] || "";
+  const wrongPay = await call(mf, "/api/pay/" + pOrder.order_id, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_token: "token-falso" }) });
+  check(wrongPay.status === 403, "pago con token incorrecto -> 403");
+  const page = await mf.dispatchFetch("http://localhost" + pOrder.payment_url.replace("https://llmstxt-shop.rckflr.workers.dev", ""));
+  const pageHtml = await page.text();
+  check(page.status === 200 && (page.headers.get("content-type") || "").includes("text/html"), "GET paylink -> HTML");
+  check(pageHtml.includes("SIMULACION") && pageHtml.includes("Pagar") && pageHtml.includes("llmstxt-shop"), "paylink: pagina con boton de pago simulado");
+  const pay = await call(mf, "/api/pay/" + pOrder.order_id, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_token: pt }) });
+  check(pay.status === 200 && pay.body.ok === true && pay.body.status === "paid", "POST /api/pay con token correcto -> paid");
+  const payAgain = await call(mf, "/api/pay/" + pOrder.order_id, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ payment_token: pt }) });
+  check(payAgain.body.already === true, "pago repetido -> already:true");
+  const statusPaid = await runTool(mf, "order_status", { order_id: pOrder.order_id });
+  check(statusPaid.found === true && statusPaid.order.status === "paid", "order_status refleja PAID");
+  const noPt = await call(mf, "/api/pay/" + pOrder.order_id, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  check(noPt.status === 403, "pago sin token -> 403");
+
+  console.log("[7] merchant panel con token");
   const noAuth = await call(mf, "/api/orders");
   check(noAuth.status === 401, "GET /api/orders sin token -> 401");
   const withAuth = await call(mf, "/api/orders?limit=10", { headers: { Authorization: "Bearer test-admin" } });
-  check(withAuth.status === 200 && withAuth.body.count === 1 && withAuth.body.orders[0].client_order_id === coid, "con token -> la orden del agente, con su client_order_id");
+  check(withAuth.status === 200 && withAuth.body.count === 2 && withAuth.body.orders.map((o) => o.status).includes("paid"), "con token -> ordenes (incluida la PAGADA del paylink)");
 
   const ok = CHECKS.every(Boolean);
   console.log(`TEST SHOP: ${ok ? "PASS" : "FALLO"} (${CHECKS.filter(Boolean).length}/${CHECKS.length})`);

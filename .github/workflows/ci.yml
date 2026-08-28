@@ -45,6 +45,8 @@ jobs:
         run: npm run test:studio-e2e
       - name: Run llmstxt-shop e-commerce suite (hermetic, Miniflare + D1)
         run: npm run test:shop
+      - name: Run byoa-kit template suite (scaffold + build + CRUD + tools, hermetic)
+        run: npm run test:kit
       - name: Subpath publishers (project sites, both runtimes)
         run: npm run subpath
       - name: Web runtime smoke (same code the browser runs)

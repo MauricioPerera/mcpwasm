@@ -105,7 +105,11 @@ const worker =
   `      const productMatch = path.match(/^\\/api\\/product\\/([^/]+)$/);\n` +
   `      if (productMatch) return await handleProduct(decodeURIComponent(productMatch[1]), env);\n` +
   `      if (path === "/api/orders" && request.method === "POST") return await handleCreateOrder(request, env);\n` +
-  `      if (path === "/api/orders" && request.method === "GET") return await handleListOrders(request, env);\n` +
+  `      if (path === "/api/orders" && request.method === "GET") return await handleListOrders(request, env);
+      const payPageMatch = path.match(/^\\/pay\\/(\\d+)$/);
+      if (payPageMatch) return await handlePayPage(request, env, Number(payPageMatch[1]), url.searchParams.get("pt") || "");
+      const payApiMatch = path.match(/^\\/api\\/pay\\/(\\d+)$/);
+      if (payApiMatch && request.method === "POST") return await handlePay(request, env, Number(payApiMatch[1]));\n` +
   `      const orderMatch = path.match(/^\\/api\\/orders\\/(\\d+)$/);\n` +
   `      if (orderMatch) return await handleGetOrder(Number(orderMatch[1]), env);\n` +
   `    } catch (e) {\n` +
@@ -159,8 +163,11 @@ const worker =
   `  }\n` +
   `  // Idempotencia: mismo client_order_id -> la orden original (nunca duplicado).\n` +
   `  if (clientOrderId) {\n` +
-  `    const existing = await env.DB.prepare("SELECT order_id, sku, qty, email, total, status, created_at FROM orders WHERE client_order_id = ?").bind(clientOrderId).first();\n` +
-  `    if (existing) return json(Object.assign({ idempotent: true }, existing), 200);\n` +
+  `    const existing = await env.DB.prepare("SELECT order_id, sku, qty, email, total, status, payment_token, created_at FROM orders WHERE client_order_id = ?").bind(clientOrderId).first();\n` +
+  `    if (existing) {\n` +
+  `      const payUrl = existing.payment_token ? "/pay/" + existing.order_id + "?pt=" + existing.payment_token : null;\n` +
+  `      return json(Object.assign({ idempotent: true }, existing, { payment_url: payUrl }), 200);\n` +
+  `    }\n` +
   `  }\n` +
   `  const product = await env.DB.prepare("SELECT sku, price, stock FROM products WHERE sku = ?").bind(sku).first();\n` +
   `  if (!product) return json({ error: "product not found", sku }, 409);\n` +
@@ -168,9 +175,10 @@ const worker =
   `    return json({ error: "insufficient stock", requested: qty, available: product.stock }, 409);\n` +
   `  }\n` +
   `  const now = new Date().toISOString();\n` +
+  `  const paymentToken = crypto.randomUUID();\n` +
   `  const results = await env.DB.batch([\n` +
-  `    env.DB.prepare("INSERT INTO orders (sku, qty, email, total, client_order_id, status, created_at) VALUES (?, ?, ?, ?, ?, 'confirmed', ?)")\n` +
-  `      .bind(sku, qty, email, product.price * qty, clientOrderId, now),\n` +
+  `    env.DB.prepare("INSERT INTO orders (sku, qty, email, total, client_order_id, status, payment_token, created_at) VALUES (?, ?, ?, ?, ?, 'confirmed', ?, ?)")\n` +
+  `      .bind(sku, qty, email, product.price * qty, clientOrderId, paymentToken, now),\n` +
   `    env.DB.prepare("UPDATE products SET stock = stock - ? WHERE sku = ? AND stock >= ?").bind(qty, sku, qty),\n` +
   `  ]);\n` +
   `  const orderId = results[0] && results[0].meta && results[0].meta.last_row_id;\n` +
@@ -178,12 +186,15 @@ const worker =
   `  if (!changes) {\n` +
   `    return json({ error: "insufficient stock (race)", requested: qty, available: product.stock }, 409);\n` +
   `  }\n` +
-  `  return json({ order_id: orderId, sku, qty, total: product.price * qty, remaining_stock: product.stock - qty, order_status: "confirmed", idempotent: false }, 200);\n` +
+  `  const paymentUrl = "/pay/" + orderId + "?pt=" + paymentToken;\n` +
+  `  return json({ order_id: orderId, sku, qty, total: product.price * qty, remaining_stock: product.stock - qty, order_status: "confirmed", payment_url: paymentUrl, idempotent: false }, 200);\n` +
   `}\n\n` +
   `async function handleGetOrder(id, env) {\n` +
-  `  const order = await env.DB.prepare("SELECT order_id, sku, qty, email, total, status, created_at FROM orders WHERE order_id = ?").bind(id).first();\n` +
+  `  const order = await env.DB.prepare("SELECT order_id, sku, qty, email, total, status, payment_token, created_at FROM orders WHERE order_id = ?").bind(id).first();\n` +
   `  if (!order) return json({ error: "Not Found", id }, 404);\n` +
-  `  return json(order);\n` +
+  `  const out = { order_id: order.order_id, sku: order.sku, qty: order.qty, email: order.email, total: order.total, status: order.status, created_at: order.created_at };\n` +
+  `  if (order.payment_token && order.status !== "paid") out.payment_url = "/pay/" + order.order_id + "?pt=" + order.payment_token;\n` +
+  `  return json(out);\n` +
   `}\n\n` +
   `async function handleListOrders(request, env) {\n` +
   `  const auth = request.headers.get("Authorization") || "";\n` +
@@ -195,9 +206,53 @@ const worker =
   `  const limit = Number.isFinite(limitRaw) && limitRaw >= 1 && limitRaw <= 200 ? Math.floor(limitRaw) : 50;\n` +
   `  const { results } = await env.DB.prepare("SELECT order_id, sku, qty, email, total, status, client_order_id, created_at FROM orders ORDER BY order_id DESC LIMIT ?").bind(limit).all();\n` +
   `  return json({ orders: results, count: results.length });\n` +
-  `}\n`;
+  `}\n\n` +
+  `const paylinkPage = ${paylinkPage.toString()};\n\n` +
+  `const handlePayPage = ${handlePayPage.toString()};\n\n` +
+  `const handlePay = ${handlePay.toString()};\n`;
 
 writeFileSync(join(__dirname, "worker.mjs"), worker, "utf8");
 
 console.log("Generated: shop/worker.mjs");
 for (const name of SKILLS) console.log(`  ${name}: tool_sha256=${skills[name].hash}`);
+// --- funciones embebidas en el worker via .toString() -------------------------
+
+function paylinkPage(order) {
+  const paid = order.status === "paid";
+  const btn = paid
+    ? '<p class="ok">\u2705 Esta orden ya esta PAGADA.</p>'
+    : '<button id="btn" onclick="pay()">Pagar $' + order.total.toFixed(2) + " (simulado)</button>" +
+      '<p id="msg"></p>' +
+      '<p class="tag">SIMULACION: no se cobra dinero real. Este paylink autoriza marcar la orden como pagada.</p>';
+  return "<!doctype html><html lang=\"es\"><head><meta charset=\"utf-8\">" +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    "<title>Pagar orden #" + order.order_id + "</title>" +
+    "<style>body{font-family:system-ui,sans-serif;max-width:28rem;margin:3rem auto;padding:0 1rem;line-height:1.6;color:#14181f;background:#fafbfc}code{background:#eef1f4;padding:.1rem .35rem;border-radius:4px}.box{border:1px solid #e4e8ec;border-radius:10px;padding:1.2rem;margin:1rem 0}button{background:#0b62a4;color:#fff;border:0;border-radius:8px;padding:.7rem 1.4rem;font-size:1rem;cursor:pointer;width:100%}button:disabled{opacity:.5}.ok{color:#0a7d32;font-weight:700}.tag{color:#66707b;font-size:.85rem}</style></head><body>" +
+    "<h1>llmstxt-shop</h1><div class=\"box\"><h2>Orden #" + order.order_id + "</h2>" +
+    "<p><code>" + order.sku + "</code> x" + order.qty + " \u2014 <strong>$" + order.total.toFixed(2) + "</strong></p>" +
+    "<p>Confirmacion a: " + order.email + "</p>" +
+    btn +
+    "<script>function pay(){var b=document.getElementById('btn');b.disabled=true;b.textContent='Procesando...';fetch('/api/pay/" + order.order_id + "',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({payment_token:'" + order.payment_token + "'})}).then(function(r){return r.json()}).then(function(j){if(j.ok){document.getElementById('msg').textContent='\u2705 Pago registrado \u2014 orden ' + j.order_id + ' pagada';b.textContent='Pagado \u2713';}else{document.getElementById('msg').textContent='Error: ' + (j.error||'desconocido');b.disabled=false;}});}<\/script>" +
+    "</div></body></html>";
+}
+
+async function handlePayPage(request, env, id, pt) {
+  const order = await env.DB.prepare("SELECT order_id, sku, qty, email, total, status, payment_token FROM orders WHERE order_id = ?").bind(id).first();
+  if (!order) return json({ error: "Not Found", id }, 404);
+  if (!order.payment_token || pt !== order.payment_token) {
+    return json({ error: "paylink invalido o expirado" }, 403);
+  }
+  return new Response(paylinkPage(order), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+}
+
+async function handlePay(request, env, id) {
+  let body = {};
+  try { body = await request.json(); } catch { body = {}; }
+  const pt = body && typeof body.payment_token === "string" ? body.payment_token : new URL(request.url).searchParams.get("pt") || "";
+  const order = await env.DB.prepare("SELECT order_id, status, payment_token FROM orders WHERE order_id = ?").bind(id).first();
+  if (!order) return json({ ok: false, error: "order not found" }, 404);
+  if (!order.payment_token || pt !== order.payment_token) return json({ ok: false, error: "paylink invalido" }, 403);
+  if (order.status === "paid") return json({ ok: true, order_id: order.order_id, status: "paid", already: true });
+  await env.DB.prepare("UPDATE orders SET status = 'paid' WHERE order_id = ? AND status = 'confirmed'").bind(order.order_id).run();
+  return json({ ok: true, order_id: order.order_id, status: "paid" });
+}

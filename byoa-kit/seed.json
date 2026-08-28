@@ -1,0 +1,4 @@
+[
+  { "id": 1, "name": "starter-widget", "description": "El ejemplo semilla del kit: renombra o borra estos items en seed.json.", "price": 5, "stock": 100 },
+  { "id": 2, "name": "demo-gadget", "description": "Segundo item de ejemplo con stock generoso.", "price": 12.5, "stock": 40 }
+]

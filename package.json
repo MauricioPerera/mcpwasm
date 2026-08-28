@@ -86,7 +86,11 @@
     "test:studio": "node test-studio.mjs",
     "test:studio-e2e": "node test-studio-e2e.mjs",
     "test:shop": "node test-shop.mjs",
-    "shop:live-e2e": "node scripts/live-shop-e2e.mjs"
+    "shop:live-e2e": "node scripts/live-shop-e2e.mjs",
+    "test:kit": "node test-kit.mjs",
+    "e2e:shop": "node scripts/live-shop-e2e.mjs",
+    "e2e:pay": "node scripts/live-pay-e2e.mjs",
+    "byoa-init": "node scripts/byoa-init.mjs"
   },
   "dependencies": {
     "@jitl/quickjs-wasmfile-release-asyncify": "^0.32.0",

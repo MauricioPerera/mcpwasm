@@ -33,6 +33,10 @@ registerTool({
     if (r.status >= 400) {
       return Object.assign({ ok: false, status: r.status }, parsed);
     }
+    // payment_url es RELATIVA al origin: absolutizarla para el humano
+    if (parsed.payment_url && typeof parsed.payment_url === "string") {
+      parsed.payment_url = "https://llmstxt-shop.rckflr.workers.dev" + parsed.payment_url;
+    }
     return Object.assign({ ok: true }, parsed);
   }
 });

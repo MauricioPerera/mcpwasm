@@ -1,0 +1,12 @@
+{
+  "name": "llmstxt-byoa-kit",
+  "title": "llmstxt-kit",
+  "description": "Plantilla BYOA generica: catalogo de items en D1 con discovery verificado (llms.txt v0.4 + hashes), SKILL.md y API CRUD. Renombra la entidad, edita las tools y despliega tu propia plataforma.",
+  "origin": "https://llmstxt-byoa-kit.rckflr.workers.dev",
+  "skills": ["list_items", "get_item", "create_item"],
+  "entity": {
+    "singular": "item",
+    "plural": "items",
+    "fields": ["name", "description", "price", "stock"]
+  }
+}

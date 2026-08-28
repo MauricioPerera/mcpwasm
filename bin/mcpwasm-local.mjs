@@ -57,6 +57,7 @@ import { handleMcpMessageAsync } from "../mcp-core-async.mjs";
 import { parseLlmsTxt } from "../llmstxt-parse.mjs";
 import { verifySigstoreAttestation } from "../sigstore-attest.mjs";
 import { makeSqliteCapability } from "../sqlite-capability.mjs";
+import { getCredential, clearCredential, wrapFetch } from "../auth-device.mjs";
 import { canonicalBase, resolveFromBase, wellKnownCandidates } from "../origin-scope.mjs";
 
 const PKG = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
@@ -94,7 +95,14 @@ const USAGE =
   "         las skills. SOLO LECTURA por defecto (conexion readonly a nivel SQLite\n" +
   "         + policy SELECT/PRAGMA/EXPLAIN); un origin NUNCA la recibe sin que el\n" +
   "         usuario la monte. Solo runtime local: Workers no tiene node:sqlite.)\n" +
-  "     --sqlite-write  (habilita INSERT/UPDATE/DELETE/DDL; requiere --sqlite)";
+  "     --sqlite-write  (habilita INSERT/UPDATE/DELETE/DDL; requiere --sqlite)\n" +
+  "     --auth <issuer>  (OPT-IN: OAuth Device Flow RFC 8628 con ese issuer — en la\n" +
+  "         primera activacion el runtime abre el flujo, el usuario se autentica en\n" +
+  "         su navegador y el token se guarda LOCAL (~/.mcpwasm/credentials.json);\n" +
+  "         se inyecta Authorization: Bearer en descubrimiento + fetchOrigin. El\n" +
+  "         token JAMAS cruza al LLM. Refresh automatico con refresh_token.)\n" +
+  "     --auth-client-id <id>   (client_id OAuth publico; default 'mcpwasm')\n" +
+  "     --auth-logout   (borra la credencial local del issuer; requiere --auth)";
 
 const argv = process.argv.slice(2);
 let originArg = null;
@@ -105,6 +113,10 @@ let lockPath = null; // --lock <archivo> (opt-in, pin-on-first-use)
 let lockUpdate = false; // --lock-update (aceptar cambios y re-pinnear)
 let sqlitePath = null; // --sqlite <archivo|:memory:> (opt-in del CONSUMIDOR)
 let sqliteWrite = false; // --sqlite-write (habilita escrituras; requiere --sqlite)
+let authIssuer = null; // --auth <issuer> (opt-in: device flow RFC 8628)
+let authClientId = "mcpwasm"; // --auth-client-id <id>
+let authLogout = false; // --auth-logout (borrar credencial local)
+let authFetchImpl = null; // wrapper Authorization (device flow) — lo fija start()
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === "--serve") {
@@ -144,12 +156,31 @@ for (let i = 0; i < argv.length; i++) {
     }
   } else if (a === "--sqlite-write") {
     sqliteWrite = true;
+  } else if (a === "--auth") {
+    authIssuer = argv[++i];
+    if (!authIssuer) {
+      err("--auth requiere el issuer (URL base del servidor OAuth)");
+      process.exit(2);
+    }
+    if (canonicalBase(authIssuer) === null) {
+      err("--auth: issuer invalido (http/https requerido): " + authIssuer);
+      process.exit(2);
+    }
+    authIssuer = canonicalBase(authIssuer);
+  } else if (a === "--auth-client-id") {
+    authClientId = argv[++i] || "mcpwasm";
+  } else if (a === "--auth-logout") {
+    authLogout = true;
   } else if (originArg === null && serveDir === null) {
     originArg = a;
   }
 }
 if (sqliteWrite && !sqlitePath) {
   err("--sqlite-write requiere --sqlite <archivo|:memory:>");
+  process.exit(2);
+}
+if (authLogout && !authIssuer) {
+  err("--auth-logout requiere --auth <issuer>");
   process.exit(2);
 }
 if (!originArg && !serveDir) {
@@ -251,8 +282,8 @@ function serveDirectory(dir, port) {
 
 let internalServer = null;
 
-async function fetchText(url, maxBytes) {
-  const res = await fetch(url, {
+async function fetchText(url, maxBytes, f) {
+  const res = await (f || authFetchImpl || fetch)(url, {
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     redirect: "follow",
   });
@@ -696,7 +727,7 @@ const GUIDE_TOOL_NAME = "get_skill_guide";
 class LocalPerSkillHost {
   // scopedCaps: { "<scope|''>": extraCapabilities | undefined } — cada skill
   // recibe las capabilities de SU scope (ext v0.5: memoria por scope).
-  constructor(quickjs, skills, scopedCaps, docs) {
+  constructor(quickjs, skills, scopedCaps, docs, fetchImpl) {
     this._quickjs = quickjs;
     this._skills = skills;
     this._scopedCaps = scopedCaps || {};
@@ -704,6 +735,7 @@ class LocalPerSkillHost {
     this._byName = new Map(); // publicName de la SKILL -> AsyncToolHost
     this._routes = new Map(); // publicName de cada TOOL -> { host, internal }
     this._order = []; // publicNames de tools, en orden de carga
+    this._fetchImpl = fetchImpl; // wrapper de auth (Authorization) o undefined
   }
 
   async init() {
@@ -712,6 +744,7 @@ class LocalPerSkillHost {
         quickjs: this._quickjs,
         allowedOrigin: origin,
         extraCapabilities: this._scopedCaps[s.scope || ""],
+        fetchImpl: this._fetchImpl,
       });
       await h.init();
       h.loadToolSource(s.code);
@@ -803,7 +836,45 @@ async function start() {
     err("sirviendo " + path.resolve(serveDir) + " en " + origin + " (solo 127.0.0.1, no expuesto a la red)");
   }
   err("descubriendo skills de " + origin + " …");
-  const { skills, snapshots, docs } = await discover();
+
+  // OAuth Device Flow (RFC 8628, opt-in --auth): credencial LOCAL del consumidor,
+  // inyectada como Authorization en descubrimiento + fetchOrigin. El token nunca
+  // cruza al LLM (stdout es EXCLUSIVO del protocolo MCP) ni vive en la config:
+  // se guarda en ~/.mcpwasm/credentials.json, mismo modelo de confianza que --sqlite.
+  if (authIssuer) {
+    if (authLogout) {
+      clearCredential(authIssuer);
+      err("auth: credencial eliminada para " + authIssuer);
+      process.exit(0);
+    }
+    try {
+      const cred = await getCredential({ issuer: authIssuer, clientId: authClientId });
+      authFetchImpl = wrapFetch(cred.access_token);
+      err("auth: token " + (cred.fresh ? "obtenido (device flow)" : "cargado (local)") + " — " + authIssuer);
+    } catch (e) {
+      err("--auth: " + String((e && e.message) || e) + " — abortando");
+      process.exit(1);
+    }
+  }
+  let discovered;
+  try {
+    discovered = await discover();
+  } catch (e) {
+    // 401 con --auth: el token fue revocado/expirado en el servidor ->
+    // limpiar credencial local y re-autenticar UNA vez (como hace un cliente
+    // OAuth con refresh fallido). Sin --auth, el 401 aborta (fail-closed).
+    const msg = String((e && e.message) || e);
+    if (authFetchImpl && /HTTP 401/.test(msg)) {
+      err("auth: descubrimiento 401 — token revocado o expirado, re-autenticando…");
+      clearCredential(authIssuer);
+      const cred = await getCredential({ issuer: authIssuer, clientId: authClientId, forceNew: true });
+      authFetchImpl = wrapFetch(cred.access_token);
+      discovered = await discover();
+    } else {
+      throw e;
+    }
+  }
+  const { skills, snapshots, docs } = discovered;
 
   // Origin memory (ext v0.5): un closure memorySearch POR scope con snapshot
   // verificado; cada skill recibe el de su scope. Engine ausente => sin memoria.
@@ -838,7 +909,7 @@ async function start() {
   }
 
   const quickjs = await newQuickJSAsyncWASMModuleFromVariant(newVariant(baseAsyncifyVariant, {}));
-  host = new LocalPerSkillHost(quickjs, skills, scopedCaps, docs);
+  host = new LocalPerSkillHost(quickjs, skills, scopedCaps, docs, authFetchImpl);
   await host.init();
   err("listo: " + skills.length + " skill(s) verificadas y cargadas (" + skills.map((s) => s.publicName).join(", ") + ")");
   if (docs && docs.length > 0) {

@@ -206,11 +206,16 @@ async function main() {
   const r8 = await call("/preview", { method: "GET" }, cookie1);
   check(r8.status === 404, "sesion borrada -> GET 404");
 
-  console.log(`TEST EPHEMERAL PROXY: ${CHECKS.every(Boolean) ? "PASS" : "FALLO"} (${CHECKS.filter(Boolean).length}/${CHECKS.length})`);
-  process.exit(CHECKS.every(Boolean) ? 0 : 1);
+  const ok = CHECKS.every(Boolean);
+  console.log(`TEST EPHEMERAL PROXY: ${ok ? "PASS" : "FALLO"} (${CHECKS.filter(Boolean).length}/${CHECKS.length})`);
+  // disponer Miniflare ANTES de exit: sin esto, workerd en Windows choca en
+  // teardown (uv_async "handle->flags & UV_HANDLE_CLOSING") y sale con codigo 1
+  await mf.dispose();
+  process.exit(ok ? 0 : 1);
 }
 
-main().catch((e) => {
+main().catch(async (e) => {
   console.error("TEST EPHEMERAL PROXY: ERROR —", e.message);
+  try { await mf.dispose(); } catch { /* ya muerto */ }
   process.exit(1);
 });

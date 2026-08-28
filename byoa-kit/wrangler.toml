@@ -1,0 +1,14 @@
+name = "llmstxt-byoa-kit"
+main = "worker.mjs"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+account_id = "091122c40cc6f8d0d421cbc90e2caca8"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "llmstxt-byoa-kit-db"
+database_id = "REEMPLAZA-CON-EL-ID-DE-TU-D1"
+
+[vars]
+# ATTESTATION_MODE y REVIEWERS viven en el gateway, no aqui.
+# ADMIN_TOKEN se setea con: npx wrangler secret put ADMIN_TOKEN -c wrangler.toml

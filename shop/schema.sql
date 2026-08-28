@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS orders (
   total REAL NOT NULL,
   client_order_id TEXT UNIQUE,
   status TEXT NOT NULL DEFAULT 'confirmed',
+  payment_token TEXT,
   created_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_client_order_id ON orders(client_order_id) WHERE client_order_id IS NOT NULL;

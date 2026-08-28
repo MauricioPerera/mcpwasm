@@ -249,6 +249,38 @@ real Sigstore signature over this repo's own canonical payload, verifying as
 headlessly — untested is the happy path specifically, not the security-critical
 rejection paths.
 
+#### First-class SQLite: `--sqlite` (local runtime only)
+
+> **Opt-in by the CONSUMER.** The database is a file (or `:memory:`) the person
+> running the runtime mounts explicitly — an origin NEVER receives the
+> capability unless the user passes the flag. Same trust model as choosing the
+> origin itself; same honest platform asymmetry as Sigstore: node:sqlite is a
+> Node builtin (≥ 22.5), so this capability does not exist on Workers.
+
+```bash
+npx -y @rckflr/mcpwasm https://usuario.github.io --sqlite ./data.db
+npx -y @rckflr/mcpwasm https://usuario.github.io --sqlite ./data.db --sqlite-write
+```
+
+`host.sqlite` is injected into **every** skill (all scopes):
+
+```js
+const r = await host.sqlite({ sql: "SELECT name, price FROM items WHERE price > ?", params: [100] });
+// read: { rows: [...], count, truncated? }   (maxRows 500 default)
+// write (--sqlite-write): { changes, lastInsertRowid }
+```
+
+Security policy (`sqlite-capability.mjs`): read-only by default — file
+connections open with `SQLITE_OPEN_READONLY` **and** a policy check rejects
+non-SELECT/PRAGMA/EXPLAIN with a clear in-sandbox error; writes require
+`--sqlite-write` (the consumer's explicit choice over their own local file);
+one statement per call (anti SQL-stacking guard); every failure returns
+`{ error }` (fail-controlled, surfaces as a readable result, never a crash).
+Skills share the one mounted database (it is the consumer's data, mounted once
+per process) — for per-origin isolation, run one runtime per database file.
+Tested by `npm run test:sqlite` (hermetic: unit + e2e over stdio, including
+persistence across restarts with `--sqlite-write`).
+
 #### Developing your own skills: `--serve <dir>`
 
 Pointing the runtime at a raw GitHub URL does **not** work: `new URL(...).origin`

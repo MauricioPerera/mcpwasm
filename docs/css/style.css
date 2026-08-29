@@ -293,6 +293,7 @@ code {
   display: grid;
   gap: 20px;
 }
+.cards-1 { grid-template-columns: minmax(0, 1fr); }
 .cards-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .cards-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 

@@ -22,7 +22,7 @@ capability the host injects. No capability, no access.
 
 This repo integrates with the [llms-txt-skills](https://github.com/MauricioPerera/llms-txt-skills)
 standard via two provisional extensions adopted in the spec: **executable
-skills** (v0.4, with *origin memory*) and **skill attestations** (v0.4). See
+skills** (v0.5, with *origin memory*) and **skill attestations** (v0.4). See
 the dedicated sections below.
 
 ## Use it now — any static site → an MCP server

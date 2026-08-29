@@ -401,7 +401,7 @@ async function fetchAttestations() {
   }
 }
 
-// ---- origin memory (Executable Skills v0.4 §2.4) ---------------------------
+// ---- origin memory (Executable Skills v0.5 §2.4) ---------------------------
 // Engine BM25 (@rckflr/minimemory, wasm). optionalDependency: import perezoso;
 // si no esta instalada, se degrada a "sin memoria" con aviso por stderr (la
 // capability queda ausente y las skills que la usen fallan controlado).

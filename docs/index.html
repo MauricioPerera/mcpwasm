@@ -316,26 +316,33 @@ host.dispose();</code></pre>
   <!-- ============ TRUST MODEL ============ -->
   <section id="trust" class="section reveal">
     <div class="wrap">
-      <h2 data-i18n="trust.h2">Three rings of trust</h2>
-      <p class="section-lede" data-i18n="trust.lede">None of them alone is enough. Together, they bound what a third-party tool can do — and who vouches for it.</p>
+      <h2 data-i18n="trust.h2">Four rings of trust</h2>
+      <p class="section-lede" data-i18n="trust.lede__html">None of them alone is enough. Together they bound what a published skill can claim — the same four rings <a href="https://mauricioperera.github.io/static-agent-web/">the whole ecosystem</a> uses, for any runtime that implements the spec.</p>
 
-      <div class="cards cards-3">
+      <div class="cards cards-4">
         <article class="card">
           <div class="ring-num">01</div>
-          <h3 data-i18n="trust.card1H3">Content integrity</h3>
+          <h3 data-i18n="trust.card1H3">Integrity</h3>
           <p data-i18n="trust.card1P__html">Every <code>tool.js</code> is pinned by SHA-256 in <code>llms.txt</code>. A single flipped byte and the skill is excluded — not degraded, not executed.</p>
         </article>
         <article class="card">
           <div class="ring-num">02</div>
-          <h3 data-i18n="trust.card2H3">Sandbox isolation</h3>
-          <p data-i18n="trust.card2P__html">Each skill runs in its own QuickJS-wasm context: no <code>fetch</code>, no <code>process</code>, no disk. The only bridge out is an explicit, origin-scoped <code>host.fetchOrigin</code>.</p>
+          <h3 data-i18n="trust.card2H3">Authenticity</h3>
+          <p data-i18n="trust.card2P__html">Signed human review — pre-registered Ed25519 keys or keyless <strong>Sigstore</strong> identities (the spec's recommended default since v0.4). <strong>Honest today:</strong> one registered reviewer. The mechanism scales; the reviewer network hasn't yet.</p>
         </article>
         <article class="card">
           <div class="ring-num">03</div>
-          <h3 data-i18n="trust.card3H3">Signed attestations</h3>
-          <p data-i18n="trust.card3P__html">Signed human review with an expiry window — pre-registered Ed25519 keys or keyless <strong>Sigstore</strong> identities (the spec's recommended default since v0.4). <strong>Honest today:</strong> one registered reviewer. The mechanism scales; the reviewer network hasn't yet.</p>
+          <h3 data-i18n="trust.card3H3">Freshness</h3>
+          <p data-i18n="trust.card3P__html">An attestation isn't a one-time stamp: it carries an expiry window and voids itself the moment the attested file changes — "still true" has a shelf life, not a permanent seal.</p>
+        </article>
+        <article class="card">
+          <div class="ring-num">04</div>
+          <h3 data-i18n="trust.card4H3">Stability</h3>
+          <p data-i18n="trust.card4P__html">A consumer <a href="https://github.com/MauricioPerera/mcpwasm#consumer-lockfile---lock--what-if-the-publisher-is-the-attacker"><code>--lock</code></a> lockfile pins each skill's hash on first use — a later change is rejected loudly, not applied silently, even if it's the publisher's own account that changed it. Local runtime today; gateway and browser don't support it yet.</p>
         </article>
       </div>
+
+      <p class="section-lede" data-i18n="trust.runtimeNote__html" style="margin-top: 28px;">These four rings describe the published <strong>skill itself</strong> — verifiable by any runtime that implements the spec, independent of who's running it. mcpwasm adds one more layer when it actually <strong>executes</strong> a verified skill: each one runs isolated in its own QuickJS-wasm context — no <code>fetch</code>, no <code>process</code>, no disk, only an explicit, origin-scoped <code>host.fetchOrigin</code> out.</p>
     </div>
   </section>
 

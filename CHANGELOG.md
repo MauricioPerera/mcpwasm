@@ -8,6 +8,17 @@ the git log).
 
 ## [Unreleased]
 
+## v0.11.1 — 2026-08-29
+
+### Fixed
+- `package.json`'s `files` array was missing `preview-capability.mjs`, which
+  `bin/mcpwasm-local.mjs` imports — every published tarball since it was
+  introduced shipped a CLI that crashed at startup with
+  `ERR_MODULE_NOT_FOUND` for consumers running `npx @rckflr/mcpwasm` (or any
+  fresh install). Found via a real CI run in a downstream repo pinned to the
+  published package. Verified with a full pack/extract/run round-trip against
+  the actual tarball, not just from source.
+
 ## v0.9.0 — 2026-07-26
 
 Everything below came out of one audit of the reference implementation. The

@@ -1,6 +1,6 @@
 {
   "name": "@rckflr/mcpwasm",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "Static MCP host: run untrusted MCP tool.js files sandboxed in QuickJS-wasm (Cloudflare Workers or Node), with explicit host capabilities (fetchOrigin, callInternal, extraCapabilities) and llms.txt executable-skills parsing.",
   "type": "module",
   "license": "MIT",
@@ -53,6 +53,7 @@
     "mcp-core-async.mjs",
     "llmstxt-parse.mjs",
     "origin-scope.mjs",
+    "preview-capability.mjs",
     "sigstore-attest.mjs",
     "sqlite-capability.mjs",
     "auth-device.mjs",
